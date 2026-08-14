@@ -11,6 +11,8 @@ import {
   CmsProvider,
   DmtProvider,
   DmtTransferInput,
+  GenericServiceInput,
+  GenericServiceProvider,
   ProviderResult,
   RechargeInput,
   RechargeProvider,
@@ -170,6 +172,17 @@ export const aggregatorCardSwipe: CardSwipeProvider = {
       card_network: input.cardNetwork,
       card_type: input.cardType,
       tid: input.tid,
+    });
+  },
+};
+
+export const aggregatorGeneric: GenericServiceProvider = {
+  name: 'aggregator',
+  execute(service: string, input: GenericServiceInput): Promise<ProviderResult> {
+    return post(`/${service.replace(/_/g, '-')}`, {
+      reference: input.reference,
+      amount: input.amountPaise / 100,
+      ...(input.meta ?? {}),
     });
   },
 };

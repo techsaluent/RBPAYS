@@ -13,6 +13,8 @@ import {
   DmtProvider,
   DmtTransferInput,
   GatewayProvider,
+  GenericServiceInput,
+  GenericServiceProvider,
   PayoutInput,
   PayoutProvider,
   ProviderResult,
@@ -112,6 +114,23 @@ export const sandboxCardSwipe: CardSwipeProvider = {
       providerRef: ref('sbxpos'),
       rrn: status === 'success' ? ref('RRN').toUpperCase() : undefined,
       message: `sandbox card swipe ${status}`,
+    };
+  },
+};
+
+// Services that return a retrieval reference number on success.
+const RRN_SERVICES = new Set(['matm', 'aadhaar_pay']);
+
+export const sandboxGeneric: GenericServiceProvider = {
+  name: 'sandbox',
+  async execute(service: string, input: GenericServiceInput): Promise<ProviderResult> {
+    const status = outcome(input.amountPaise);
+    return {
+      status,
+      providerRef: ref(`sbx${service}`),
+      utr: service === 'upi' && status === 'success' ? ref('UTR').toUpperCase() : undefined,
+      rrn: RRN_SERVICES.has(service) && status === 'success' ? ref('RRN').toUpperCase() : undefined,
+      message: `sandbox ${service} ${status}`,
     };
   },
 };

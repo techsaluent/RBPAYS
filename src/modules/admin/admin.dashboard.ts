@@ -8,6 +8,10 @@ const SERVICE_TABLES: Record<string, string> = {
   aeps: 'aeps_transactions',
   cms: 'cms_transactions',
   card_swipe: 'card_swipe_transactions',
+  upi: 'upi_transactions',
+  matm: 'matm_transactions',
+  aadhaar_pay: 'aadhaar_pay_transactions',
+  pan_card: 'pan_card_transactions',
 };
 
 /** Aggregate stats for the admin dashboard. */

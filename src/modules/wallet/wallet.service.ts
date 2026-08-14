@@ -16,7 +16,12 @@ export type WalletSource =
   | 'activation_fee'
   | 'aeps'
   | 'cms'
-  | 'card_swipe';
+  | 'card_swipe'
+  | 'upi'
+  | 'matm'
+  | 'aadhaar_pay'
+  | 'pan_card'
+  | 'wallet_transfer';
 
 interface WalletRow {
   id: string;

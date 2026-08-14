@@ -60,7 +60,7 @@ export function createApp() {
       name: 'RBPAYS API',
       version: '0.1.0',
       docs: '/api/v1',
-      modules: ['auth', 'wallet', 'beneficiaries', 'dmt', 'bbps', 'recharge', 'payout', 'aeps', 'cms', 'card-swipe', 'payment-gateway', 'transactions', 'kyc', 'network', 'admin', 'webhooks'],
+      modules: ['auth', 'wallet', 'beneficiaries', 'dmt', 'bbps', 'recharge', 'payout', 'aeps', 'cms', 'card-swipe', 'upi', 'matm', 'aadhaar-pay', 'pan-card', 'wallet-transfer', 'payment-gateway', 'transactions', 'kyc', 'network', 'admin', 'webhooks'],
     });
   });
 

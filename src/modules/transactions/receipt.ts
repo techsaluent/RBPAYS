@@ -62,6 +62,16 @@ function detailRows(service: string, d: Detail): [string, string][] {
         ['RRN', s(d.rrn)],
         ['Terminal', s(d.tid)],
       ];
+    case 'upi':
+      return [['Payee VPA', s(d.vpa)], ['Payee', s(d.payee_name)], ['UTR', s(d.utr)]];
+    case 'matm':
+      return [['Card', `${s(d.card_network)}`.trim()], ['Card No.', d.card_last4 ? `**** ${d.card_last4}` : '-'], ['RRN', s(d.rrn)]];
+    case 'aadhaar_pay':
+      return [['Aadhaar', s(d.aadhaar_ref)], ['Bank IIN', s(d.bank_iin)], ['RRN', s(d.rrn)]];
+    case 'pan_card':
+      return [['Type', s(d.application_type)], ['Portal', s(d.portal)], ['Applicant', s(d.applicant_name)], ['Ack No.', s(d.ack_number)]];
+    case 'wallet_transfer':
+      return [['Note', s(d.note)]];
     case 'payment_gateway':
       return [['Purpose', 'Wallet top-up']];
     default:
@@ -77,6 +87,11 @@ const SERVICE_TITLE: Record<string, string> = {
   aeps: 'AEPS',
   cms: 'Cash Management',
   card_swipe: 'Card Swipe',
+  upi: 'UPI Payout',
+  matm: 'Micro ATM',
+  aadhaar_pay: 'Aadhaar Pay',
+  pan_card: 'PAN Card',
+  wallet_transfer: 'Wallet Transfer',
   payment_gateway: 'Wallet Top-up',
 };
 

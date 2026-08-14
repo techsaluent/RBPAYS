@@ -138,6 +138,21 @@ export interface CardSwipeProvider {
   swipe(input: CardSwipeInput): Promise<ProviderResult>;
 }
 
+export interface GenericServiceInput {
+  reference: string;
+  amountPaise: number;
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * Generic provider for simpler services (UPI, mATM, Aadhaar Pay, PAN card).
+ * Avoids a bespoke interface per service — the service code is passed in.
+ */
+export interface GenericServiceProvider {
+  readonly name: string;
+  execute(service: string, input: GenericServiceInput): Promise<ProviderResult>;
+}
+
 export interface GatewayProvider {
   readonly name: string;
   createOrder(input: CreateOrderInput): Promise<CreateOrderResult>;

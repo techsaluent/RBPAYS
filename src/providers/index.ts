@@ -6,6 +6,7 @@ import {
   CmsProvider,
   DmtProvider,
   GatewayProvider,
+  GenericServiceProvider,
   PayoutProvider,
   RechargeProvider,
 } from './types';
@@ -16,6 +17,7 @@ import {
   sandboxCms,
   sandboxDmt,
   sandboxGateway,
+  sandboxGeneric,
   sandboxPayout,
   sandboxRecharge,
 } from './sandbox';
@@ -26,6 +28,7 @@ import {
   aggregatorCardSwipe,
   aggregatorCms,
   aggregatorDmt,
+  aggregatorGeneric,
   aggregatorRecharge,
 } from './aggregator';
 
@@ -80,6 +83,18 @@ export function getCmsProvider(): CmsProvider {
 
 export function getCardSwipeProvider(): CardSwipeProvider {
   return env.PROVIDER_CARD_SWIPE === 'aggregator' ? aggregatorCardSwipe : sandboxCardSwipe;
+}
+
+// Simple services share one generic provider, chosen per-service via env.
+const GENERIC_CHOICE: Record<string, string> = {
+  upi: env.PROVIDER_UPI,
+  matm: env.PROVIDER_MATM,
+  aadhaar_pay: env.PROVIDER_AADHAAR_PAY,
+  pan_card: env.PROVIDER_PAN_CARD,
+};
+
+export function getGenericProvider(service: string): GenericServiceProvider {
+  return GENERIC_CHOICE[service] === 'aggregator' ? aggregatorGeneric : sandboxGeneric;
 }
 
 export function getGatewayProvider(): GatewayProvider {

@@ -2,10 +2,12 @@
 
 Backend API for the RBPAYS fintech platform. Provides user **signup/login** and
 core modules for **DMT** (Domestic Money Transfer), **BBPS** (Bharat Bill
-Payment System), **Recharge**, **Payout**, **AEPS** (Aadhaar Enabled Payment
-System), **CMS** (Cash Management Services), **Card Swipe** (mPOS), and
-**Payment Gateway** collection — all settled against a per-user **wallet** with
-an append-only ledger.
+Payment System — Fastag, insurance, LPG, electricity, credit-card, loan, …),
+**Recharge**, **Payout**, **AEPS** (Aadhaar Enabled Payment System), **CMS**
+(Cash Management Services), **Card Swipe** (mPOS), **UPI** payout, **Micro ATM**,
+**Aadhaar Pay**, **PAN Card**, **Wallet-to-Wallet transfer**, and **Payment
+Gateway** collection — all settled against a per-user **wallet** with an
+append-only ledger.
 
 - **Stack:** Node.js + TypeScript + Express
 - **Database:** self-hosted PostgreSQL on your VPS
@@ -63,6 +65,8 @@ src/
     webhooks/               # signed async callbacks (razorpay, aggregator)
     dmt/  bbps/  recharge/  payout/  payment-gateway/
     aeps/  cms/  card-swipe/  # AEPS (credit), CMS (debit), Card Swipe (credit)
+    upi/  matm/  aadhaar-pay/  pan-card/  wallet-transfer/
+  providers/generic          # shared provider for the simpler services
     kyc/                    # document submission + admin review
     members/                # shared onboarding + downline queries
     network/                # retailer/distributor/MD panel + onboarding
@@ -196,6 +200,37 @@ MDR**: on success the wallet is credited `amount − MDR`.
 - `POST /` — `{ amount, card_network?, card_type?, card_last4?, tid? }`.
 - `GET /`, `GET /:id`.
 
+### UPI — `/upi` (debit)
+
+- `POST /pay` — payout to a VPA. `{ vpa, amount, payee_name?, charge? }`.
+- `GET /`, `GET /:id`.
+
+### Micro ATM — `/matm` (credit)
+
+- `POST /withdrawal` — card cash withdrawal. `{ amount, card_network?, card_last4? }`.
+  Wallet credited `amount + commission`. `GET /`, `GET /:id`.
+
+### Aadhaar Pay — `/aadhaar-pay` (credit)
+
+- `POST /` — merchant collection via Aadhaar. `{ aadhaar_ref, bank_iin, amount, mobile? }`.
+  Wallet credited `amount − charge` (+ commission). `GET /`, `GET /:id`.
+
+### PAN Card — `/pan-card` (debit)
+
+- `POST /apply` — NSDL/UTI application. `{ applicant_name, amount, application_type?, portal?, pan_number?, charge? }`.
+  `GET /`, `GET /:id`.
+
+### Wallet transfer — `/wallet-transfer` (P2P)
+
+- `POST /` — transfer to another member. `{ to (phone or email), amount, charge?, note? }`.
+  Debits the sender `amount + charge`, credits the receiver `amount`, atomically.
+  Idempotent on `reference` / `Idempotency-Key`. `GET /` lists sent + received.
+
+### BBPS billers — `/bbps/billers`, `/bbps/categories`
+
+Discover billers for Fastag, insurance, LPG, electricity, gas, water, broadband,
+DTH, credit-card, loan, municipal and education, then pay via `POST /bbps/pay`.
+
 ### Transactions — `/transactions`
 
 A single ledger across every service (`transactions` table), one row per
@@ -309,8 +344,8 @@ commission and any charge:
 
 | Flow | Services | Wallet effect on success |
 | --- | --- | --- |
-| **debit** | DMT, BBPS, Recharge, Payout, CMS | `net_debit = amount + charge − retailer_commission` |
-| **credit** | AEPS, Card Swipe | `net_credit = amount + retailer_commission − charge` |
+| **debit** | DMT, BBPS, Recharge, Payout, CMS, UPI, PAN Card | `net_debit = amount + charge − retailer_commission` |
+| **credit** | AEPS, Card Swipe, Micro ATM, Aadhaar Pay | `net_credit = amount + retailer_commission − charge` |
 
 - **DMT** charges the retailer a fee (`charge > 0`) — standard debit.
 - **CMS** earns commission — the retailer is debited `amount − commission`.

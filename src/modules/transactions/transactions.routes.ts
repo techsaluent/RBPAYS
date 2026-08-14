@@ -19,6 +19,11 @@ const DETAIL_TABLE: Record<string, string> = {
   aeps: 'aeps_transactions',
   cms: 'cms_transactions',
   card_swipe: 'card_swipe_transactions',
+  upi: 'upi_transactions',
+  matm: 'matm_transactions',
+  aadhaar_pay: 'aadhaar_pay_transactions',
+  pan_card: 'pan_card_transactions',
+  wallet_transfer: 'wallet_transfers',
   payment_gateway: 'pg_orders',
 };
 
@@ -38,7 +43,10 @@ function serialize(t: Record<string, unknown>) {
 
 const listSchema = z.object({
   service: z
-    .enum(['dmt', 'bbps', 'recharge', 'payout', 'aeps', 'cms', 'card_swipe', 'payment_gateway'])
+    .enum([
+      'dmt', 'bbps', 'recharge', 'payout', 'aeps', 'cms', 'card_swipe',
+      'upi', 'matm', 'aadhaar_pay', 'pan_card', 'wallet_transfer', 'payment_gateway',
+    ])
     .optional(),
   status: z.enum(['pending', 'success', 'failed', 'refunded']).optional(),
   direction: z.enum(['debit', 'credit']).optional(),

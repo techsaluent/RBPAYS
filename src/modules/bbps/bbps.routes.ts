@@ -29,6 +29,34 @@ const listSchema = z.object({
   status: z.enum(['pending', 'success', 'failed', 'refunded']).optional(),
 });
 
+// Biller catalogue — Fastag, insurance, LPG, electricity, credit card, loan, etc.
+// are all BBPS biller categories, discoverable here and paid via POST /bbps/pay.
+router.get(
+  '/billers',
+  validate(z.object({ category: z.string().trim().max(40).optional() }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const category = (req.query as { category?: string }).category ?? null;
+    const { rows } = await query(
+      `SELECT biller_id, name, category, coverage FROM billers
+        WHERE enabled = true AND ($1::text IS NULL OR category = $1)
+        ORDER BY category, name`,
+      [category],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+// Distinct biller categories offered.
+router.get(
+  '/categories',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      'SELECT category, COUNT(*)::int AS billers FROM billers WHERE enabled = true GROUP BY category ORDER BY category',
+    );
+    res.json({ items: rows });
+  }),
+);
+
 // Pay a bill via BBPS: debit wallet (amount + charge), record the payment.
 router.post(
   '/pay',

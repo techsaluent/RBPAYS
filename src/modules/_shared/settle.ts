@@ -13,6 +13,10 @@ const SERVICE_TABLE: Record<string, { table: string; utr?: boolean; rrn?: boolea
   cms: { table: 'cms_transactions' },
   aeps: { table: 'aeps_transactions', rrn: true, balance: true },
   card_swipe: { table: 'card_swipe_transactions', rrn: true },
+  upi: { table: 'upi_transactions', utr: true },
+  matm: { table: 'matm_transactions', rrn: true },
+  aadhaar_pay: { table: 'aadhaar_pay_transactions', rrn: true },
+  pan_card: { table: 'pan_card_transactions' },
 };
 
 interface TxnRow {
