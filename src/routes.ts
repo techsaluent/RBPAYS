@@ -10,6 +10,7 @@ import pgRoutes from './modules/payment-gateway/pg.routes';
 import kycRoutes from './modules/kyc/kyc.routes';
 import networkRoutes from './modules/network/network.routes';
 import adminRoutes from './modules/admin/admin.routes';
+import transactionRoutes from './modules/transactions/transactions.routes';
 
 const router = Router();
 
@@ -21,6 +22,7 @@ router.use('/bbps', bbpsRoutes);
 router.use('/recharge', rechargeRoutes);
 router.use('/payout', payoutRoutes);
 router.use('/payment-gateway', pgRoutes);
+router.use('/transactions', transactionRoutes);
 router.use('/kyc', kycRoutes);
 router.use('/network', networkRoutes);
 router.use('/admin', adminRoutes);

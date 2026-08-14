@@ -22,7 +22,9 @@ It also models a full **distribution hierarchy** — `admin > master_distributor
 distributor > retailer > user` — with an **admin dashboard**, **KYC** review,
 per-member **service activation**, configurable **commission plans**, and an
 engine that **distributes commission up the chain** on every successful
-transaction.
+transaction. Retailers are **net-charged** (debited the amount minus their own
+commission); every transaction lands in a **unified ledger** with a **printable
+receipt**, and requests are **idempotent** to prevent double transactions.
 
 ---
 
@@ -53,7 +55,9 @@ src/
     auth/                   # signup, login, refresh, logout, me
     wallet/                 # balance + ledger; debit()/credit()/reverse()
     beneficiaries/          # saved bank beneficiaries (DMT & payout)
-    _shared/settle.ts       # apply provider result; reverse + distribute commission
+    _shared/transaction.ts  # orchestrator: idempotency + net debit + settle
+    _shared/settle.ts       # apply provider result; reverse + upline credits
+    transactions/           # unified ledger, list/get, printable receipt
     webhooks/               # signed async callbacks (razorpay, aggregator)
     dmt/  bbps/  recharge/  payout/  payment-gateway/
     kyc/                    # document submission + admin review
@@ -161,6 +165,23 @@ return `{"status":"duplicate"}`).
   AGGREGATOR_WEBHOOK_SECRET)`. Body `{ reference, service, status, provider_ref?,
   utr?, message? }` settles the matching DMT/BBPS/recharge/payout transaction.
 
+### Transactions — `/transactions`
+
+A single ledger across every service (`transactions` table), one row per
+transaction with `amount / charge / commission / net`.
+
+- `GET /?service=&status=&direction=&limit=&offset=` — my history (admins may
+  pass `user_id` to view any member).
+- `GET /:id` — one transaction.
+- `GET /:id/receipt` — **printable HTML receipt** (thermal-printer friendly, with
+  a Print button). Add `?format=json` for structured receipt data.
+
+**Idempotency (avoid double transactions).** Every debit service accepts a
+`reference` (body) or an **`Idempotency-Key`** header. Re-submitting the same key
+returns the **original** transaction (`200`, `idempotent: true`) instead of
+charging again; the unique `reference` also protects against concurrent
+double-clicks.
+
 ### KYC — `/kyc`
 
 - `POST /` — submit a document. Body: `doc_type(aadhaar|pan|gst|shop_photo|
@@ -249,17 +270,27 @@ user**. Each member has a `parent_id` (who onboarded them) and a
 
 A **commission plan** holds **slab rules** per service and amount range. Each rule
 sets the customer `charge` and the commission each level earns, as `flat` (rupees)
-or `percent` (of the transaction amount). On every **successful** service
-transaction, the engine (`commission/commission.service.ts`) resolves the
-performer's plan + matching slab and credits, up the ancestor chain:
+or `percent` (of the transaction amount).
 
-- **retailer** level → the performer (always earns the base)
-- **distributor** / **master_distributor** level → the nearest ancestor of that role
-- **admin** level → the nearest admin ancestor, else the global admin
+**Net commission (retailer is netted).** The breakdown is computed *before* the
+debit, and the retailer is charged **net of their own commission**:
 
-Each payout is written to `commission_entries` (unique per `txn + level`, so
-distribution is idempotent) and credited to the beneficiary's wallet with source
-`commission`. Members see their earnings at `GET /network/earnings`.
+```
+net_debit = amount + charge − retailer_commission
+```
+
+So a ₹100 recharge at 2% retailer commission debits ₹98 in a single ledger entry
+(not ₹100 then a ₹2 credit). On **success**, only the **upline** wallets are
+credited from platform margin, up the ancestor chain:
+
+- **retailer** level → the performer — realised as the reduced debit (recorded for
+  earnings, not credited again)
+- **distributor** / **master_distributor** → nearest ancestor of that role → wallet credit
+- **admin** → nearest admin ancestor (else global admin) → wallet credit
+
+Every level is written to `commission_entries` (unique per `txn + level`, so
+distribution is idempotent). On **failure**, the **net** amount is reversed
+exactly once. Members see earnings at `GET /network/earnings`.
 
 **Service gating.** Every transaction route is guarded by `requireService`: the
 account must be `active`, the service globally `enabled`, and — if the member has

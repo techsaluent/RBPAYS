@@ -4,12 +4,10 @@ import { requireAuth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
-import { withTransaction, query } from '../../../db';
-import { debit } from '../wallet/wallet.service';
+import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
-import { makeReference } from '../../utils/reference';
 import { getPayoutProvider } from '../../providers';
-import { settleServiceTxn } from '../_shared/settle';
+import { runServiceTransaction } from '../_shared/transaction';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -41,50 +39,39 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
-    const chargePaise = rupeesToPaise(body.charge);
-    const reference = body.reference ?? makeReference('PO');
-
-    const debitPaise = amountPaise + chargePaise;
-    // 1) Reserve funds: create the txn and debit the wallet atomically.
-    const txn = await withTransaction(async (client) => {
-      const { rows } = await client.query(
-        `INSERT INTO payout_transactions
-           (user_id, beneficiary_name, account_number, ifsc, amount_paise, charge_paise, mode, reference, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
-         RETURNING *`,
-        [userId, body.beneficiary_name, body.account_number, body.ifsc, amountPaise, chargePaise, body.mode, reference],
-      );
-      const created = rows[0];
-      await debit(client, {
-        userId,
-        amountPaise: debitPaise,
-        source: 'payout',
-        referenceId: created.id,
-        description: `Payout to ${body.beneficiary_name} via ${body.mode} (${reference})`,
-      });
-      return created;
-    });
-
-    // 2) Call the payout provider, then settle the outcome.
     const provider = getPayoutProvider();
-    const result = await provider.payout({
-      reference,
-      amountPaise,
-      beneficiaryName: body.beneficiary_name,
-      accountNumber: body.account_number,
-      ifsc: body.ifsc,
-      mode: body.mode,
-    });
-    await settleServiceTxn({
-      table: 'payout_transactions',
-      txnId: txn.id,
+
+    const { transaction, idempotent } = await runServiceTransaction({
       userId,
+      serviceCode: 'payout',
+      table: 'payout_transactions',
+      prefix: 'PO',
+      reference: req.header('Idempotency-Key') || body.reference,
+      amountPaise,
+      clientChargePaise: rupeesToPaise(body.charge),
+      description: `Payout to ${body.beneficiary_name} via ${body.mode}`,
       providerName: provider.name,
-      result,
+      insertServiceRow: async (client, ctx) => {
+        const { rows } = await client.query<{ id: string }>(
+          `INSERT INTO payout_transactions
+             (user_id, beneficiary_name, account_number, ifsc, amount_paise, charge_paise, mode, reference, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending') RETURNING id`,
+          [userId, body.beneficiary_name, body.account_number, body.ifsc, amountPaise, ctx.chargePaise, body.mode, ctx.reference],
+        );
+        return rows[0].id;
+      },
+      callProvider: ({ reference }) =>
+        provider.payout({
+          reference,
+          amountPaise,
+          beneficiaryName: body.beneficiary_name,
+          accountNumber: body.account_number,
+          ifsc: body.ifsc,
+          mode: body.mode,
+        }),
     });
 
-    const { rows } = await query('SELECT * FROM payout_transactions WHERE id = $1', [txn.id]);
-    res.status(201).json({ transaction: rows[0] });
+    res.status(idempotent ? 200 : 201).json({ transaction, idempotent });
   }),
 );
 

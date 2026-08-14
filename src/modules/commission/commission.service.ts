@@ -1,10 +1,22 @@
 import { PoolClient } from 'pg';
 import { query } from '../../../db';
-import { logger } from '../../config/logger';
 import { credit } from '../wallet/wallet.service';
 
-type Level = 'retailer' | 'distributor' | 'master_distributor' | 'admin';
+export type Level = 'retailer' | 'distributor' | 'master_distributor' | 'admin';
 const LEVELS: Level[] = ['retailer', 'distributor', 'master_distributor', 'admin'];
+
+export interface CommissionEntry {
+  level: Level;
+  beneficiaryId: string;
+  amountPaise: number;
+}
+
+export interface Distribution {
+  ruleMatched: boolean;
+  chargePaise: number; // customer charge from the plan
+  retailerPaise: number; // retailer commission (netted into the debit)
+  entries: CommissionEntry[]; // all levels with a beneficiary and positive amount
+}
 
 interface RuleRow {
   charge_type: string;
@@ -19,23 +31,12 @@ interface RuleRow {
   admin_value: string;
 }
 
-interface ChainRow {
-  id: string;
-  role: string;
-  depth: number;
-}
-
-/** Compute a commission/charge value in paise from a rule component. */
 function valueToPaise(type: string, value: string, amountPaise: number): number {
   const v = Number(value);
   if (type === 'percent') return Math.round((amountPaise * v) / 100);
   return Math.round(v * 100); // flat rupees -> paise
 }
 
-/**
- * Resolve the commission plan + slab rule for a performer, service and amount.
- * Falls back to the default plan when the performer has none.
- */
 async function resolveRule(
   performerId: string,
   serviceCode: string,
@@ -57,93 +58,96 @@ async function resolveRule(
   return rows[0] ?? null;
 }
 
-/** Fetch the performer + ancestor chain (depth 0 = performer). */
-async function ancestorChain(performerId: string): Promise<ChainRow[]> {
-  const { rows } = await query<ChainRow>(
+async function ancestorChain(performerId: string): Promise<{ id: string; role: string }[]> {
+  const { rows } = await query<{ id: string; role: string }>(
     `WITH RECURSIVE chain AS (
         SELECT id, role, parent_id, 0 AS depth FROM users WHERE id = $1
         UNION ALL
         SELECT u.id, u.role, u.parent_id, c.depth + 1
           FROM users u JOIN chain c ON u.id = c.parent_id
          WHERE c.depth < 10)
-      SELECT id, role, depth FROM chain ORDER BY depth`,
+      SELECT id, role FROM chain ORDER BY depth`,
     [performerId],
   );
   return rows;
 }
 
 /**
- * Distribute commission for a successful service transaction.
+ * Compute the charge and commission breakdown for a transaction WITHOUT any
+ * side effects. Called before debiting so the retailer can be netted.
  *
- * Mapping (nearest wins):
- *   - retailer level           -> the performer (always earns the base)
- *   - distributor level        -> nearest ancestor with role 'distributor'
- *   - master_distributor level -> nearest ancestor with role 'master_distributor'
- *   - admin level              -> nearest ancestor 'admin', else the global admin
- *
- * Idempotent: commission_entries has UNIQUE(service_txn_id, level), and we skip
- * if entries already exist for this transaction. MUST run inside a DB txn.
+ * Beneficiaries (nearest wins): retailer level -> the performer; distributor /
+ * master_distributor -> nearest ancestor of that role; admin -> nearest admin
+ * ancestor, else the global admin.
  */
-export async function distributeCommission(
-  client: PoolClient,
-  p: { performerId: string; serviceCode: string; amountPaise: number; txnId: string },
-): Promise<void> {
-  // Already distributed for this txn? (idempotency guard)
-  const existing = await client.query(
-    'SELECT 1 FROM commission_entries WHERE service_txn_id = $1 LIMIT 1',
-    [p.txnId],
-  );
-  if (existing.rowCount) return;
-
-  const rule = await resolveRule(p.performerId, p.serviceCode, p.amountPaise);
+export async function computeDistribution(
+  performerId: string,
+  serviceCode: string,
+  amountPaise: number,
+): Promise<Distribution> {
+  const rule = await resolveRule(performerId, serviceCode, amountPaise);
   if (!rule) {
-    logger.debug({ ...p }, 'no commission rule matched; skipping distribution');
-    return;
+    return { ruleMatched: false, chargePaise: 0, retailerPaise: 0, entries: [] };
   }
 
-  const chain = await ancestorChain(p.performerId);
-  const nearestByRole = (role: string): string | undefined =>
-    chain.find((c) => c.role === role)?.id;
+  const chain = await ancestorChain(performerId);
+  const nearest = (role: string) => chain.find((c) => c.role === role)?.id;
 
-  // Resolve a global admin if none is in the chain.
-  let adminId = nearestByRole('admin');
+  let adminId = nearest('admin');
   if (!adminId) {
-    const { rows } = await client.query<{ id: string }>(
+    const { rows } = await query<{ id: string }>(
       "SELECT id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1",
     );
     adminId = rows[0]?.id;
   }
 
   const beneficiaryFor: Record<Level, string | undefined> = {
-    retailer: p.performerId,
-    distributor: nearestByRole('distributor'),
-    master_distributor: nearestByRole('master_distributor'),
+    retailer: performerId,
+    distributor: nearest('distributor'),
+    master_distributor: nearest('master_distributor'),
     admin: adminId,
   };
 
+  const entries: CommissionEntry[] = [];
   for (const level of LEVELS) {
-    const beneficiary = beneficiaryFor[level];
-    if (!beneficiary) continue;
+    const beneficiaryId = beneficiaryFor[level];
+    if (!beneficiaryId) continue;
     const type = rule[`${level}_type` as keyof RuleRow] as string;
     const value = rule[`${level}_value` as keyof RuleRow] as string;
-    const amountPaise = valueToPaise(type, value, p.amountPaise);
-    if (amountPaise <= 0) continue;
+    const amt = valueToPaise(type, value, amountPaise);
+    if (amt > 0) entries.push({ level, beneficiaryId, amountPaise: amt });
+  }
 
-    // Record the entry (idempotent per level) then credit the wallet.
-    const inserted = await client.query(
+  const chargePaise = valueToPaise(rule.charge_type, rule.charge_value, amountPaise);
+  const retailerPaise = entries.find((e) => e.level === 'retailer')?.amountPaise ?? 0;
+  return { ruleMatched: true, chargePaise, retailerPaise, entries };
+}
+
+/**
+ * On a successful transaction, record every commission entry (for earnings
+ * reporting) and credit the UPLINE wallets only — the retailer's commission was
+ * already realised as a reduced (net) debit, so we never credit it again.
+ * Idempotent via UNIQUE(service_txn_id, level). MUST run inside a DB txn.
+ */
+export async function applyUplineCredits(
+  client: PoolClient,
+  p: { serviceTxnId: string; service: string; performerId: string; entries: CommissionEntry[] },
+): Promise<void> {
+  for (const e of p.entries) {
+    const ins = await client.query(
       `INSERT INTO commission_entries
          (service_txn_id, service_code, performer_id, beneficiary_id, level, amount_paise)
        VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT (service_txn_id, level) DO NOTHING`,
-      [p.txnId, p.serviceCode, p.performerId, beneficiary, level, amountPaise],
+      [p.serviceTxnId, p.service, p.performerId, e.beneficiaryId, e.level, e.amountPaise],
     );
-    if (inserted.rowCount === 1) {
+    if (ins.rowCount === 1 && e.level !== 'retailer') {
       await credit(client, {
-        userId: beneficiary,
-        amountPaise,
+        userId: e.beneficiaryId,
+        amountPaise: e.amountPaise,
         source: 'commission',
-        referenceId: p.txnId,
-        description: `${level} commission for ${p.serviceCode} (${p.txnId})`,
+        referenceId: p.serviceTxnId,
+        description: `${e.level} commission for ${p.service} (${p.serviceTxnId})`,
       });
     }
   }

@@ -119,6 +119,14 @@ router.post(
           description: `Wallet top-up via ${row.gateway} (${row.reference})`,
         });
       }
+      // Record in the unified ledger (idempotent on reference).
+      await client.query(
+        `INSERT INTO transactions
+           (user_id, service, direction, service_txn_id, reference, amount_paise, net_paise, status, provider, status_message)
+         VALUES ($1,'payment_gateway','credit',$2,$3,$4,$4,'success',$5,'payment verified')
+         ON CONFLICT (reference) DO NOTHING`,
+        [userId, row.id, row.reference, Number(row.amount_paise), row.gateway],
+      );
       return row;
     });
 

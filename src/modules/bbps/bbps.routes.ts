@@ -4,12 +4,10 @@ import { requireAuth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
-import { withTransaction, query } from '../../../db';
-import { debit } from '../wallet/wallet.service';
+import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
-import { makeReference } from '../../utils/reference';
 import { getBbpsProvider } from '../../providers';
-import { settleServiceTxn } from '../_shared/settle';
+import { runServiceTransaction } from '../_shared/transaction';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -41,49 +39,38 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
-    const chargePaise = rupeesToPaise(body.charge);
-    const reference = body.reference ?? makeReference('BBPS');
-
-    const debitPaise = amountPaise + chargePaise;
-    // 1) Reserve funds: create the txn and debit the wallet atomically.
-    const txn = await withTransaction(async (client) => {
-      const { rows } = await client.query(
-        `INSERT INTO bbps_transactions
-           (user_id, biller_id, biller_name, category, consumer_number, amount_paise, charge_paise, reference, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
-         RETURNING *`,
-        [userId, body.biller_id, body.biller_name ?? null, body.category ?? null, body.consumer_number, amountPaise, chargePaise, reference],
-      );
-      const created = rows[0];
-      await debit(client, {
-        userId,
-        amountPaise: debitPaise,
-        source: 'bbps',
-        referenceId: created.id,
-        description: `BBPS ${body.category ?? 'bill'} ${body.consumer_number} (${reference})`,
-      });
-      return created;
-    });
-
-    // 2) Call the BBPS provider, then settle the outcome.
     const provider = getBbpsProvider();
-    const result = await provider.pay({
-      reference,
-      amountPaise,
-      billerId: body.biller_id,
-      consumerNumber: body.consumer_number,
-      category: body.category,
-    });
-    await settleServiceTxn({
-      table: 'bbps_transactions',
-      txnId: txn.id,
+
+    const { transaction, idempotent } = await runServiceTransaction({
       userId,
+      serviceCode: 'bbps',
+      table: 'bbps_transactions',
+      prefix: 'BBPS',
+      reference: req.header('Idempotency-Key') || body.reference,
+      amountPaise,
+      clientChargePaise: rupeesToPaise(body.charge),
+      description: `BBPS ${body.category ?? 'bill'} ${body.consumer_number}`,
       providerName: provider.name,
-      result,
+      insertServiceRow: async (client, ctx) => {
+        const { rows } = await client.query<{ id: string }>(
+          `INSERT INTO bbps_transactions
+             (user_id, biller_id, biller_name, category, consumer_number, amount_paise, charge_paise, reference, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending') RETURNING id`,
+          [userId, body.biller_id, body.biller_name ?? null, body.category ?? null, body.consumer_number, amountPaise, ctx.chargePaise, ctx.reference],
+        );
+        return rows[0].id;
+      },
+      callProvider: ({ reference }) =>
+        provider.pay({
+          reference,
+          amountPaise,
+          billerId: body.biller_id,
+          consumerNumber: body.consumer_number,
+          category: body.category,
+        }),
     });
 
-    const { rows } = await query('SELECT * FROM bbps_transactions WHERE id = $1', [txn.id]);
-    res.status(201).json({ transaction: rows[0] });
+    res.status(idempotent ? 200 : 201).json({ transaction, idempotent });
   }),
 );
 

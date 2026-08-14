@@ -6,7 +6,7 @@ import { query, withTransaction } from '../../../db';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { credit } from '../wallet/wallet.service';
-import { settleServiceByReference, ServiceTable } from '../_shared/settle';
+import { settleByReference } from '../_shared/settle';
 import { getGatewayProvider } from '../../providers';
 import { ProviderResult } from '../../providers/types';
 
@@ -65,6 +65,13 @@ async function creditTopupByGatewayOrderId(gatewayOrderId: string, paymentId: st
         description: `Wallet top-up via ${order.gateway} webhook (${order.reference})`,
       });
     }
+    await client.query(
+      `INSERT INTO transactions
+         (user_id, service, direction, service_txn_id, reference, amount_paise, net_paise, status, provider, status_message)
+       VALUES ($1,'payment_gateway','credit',$2,$3,$4,$4,'success',$5,'captured via webhook')
+       ON CONFLICT (reference) DO NOTHING`,
+      [order.user_id, order.id, order.reference, Number(order.amount_paise), order.gateway],
+    );
   });
 }
 
@@ -114,11 +121,11 @@ router.post(
         const status: ProviderResult['status'] =
           payout.status === 'processed' ? 'success' : 'failed';
         if (payout?.reference_id) {
-          await settleServiceByReference({
-            table: 'payout_transactions',
-            reference: payout.reference_id,
-            providerName: 'razorpay',
-            result: { status, providerRef: payout.id, utr: payout.utr, message: `payout ${payout.status}` },
+          await settleByReference(payout.reference_id, 'razorpay', {
+            status,
+            providerRef: payout.id,
+            utr: payout.utr,
+            message: `payout ${payout.status}`,
           });
         }
         break;
@@ -136,12 +143,7 @@ router.post(
 // Aggregator webhook: X-Webhook-Signature = HMAC_SHA256(rawBody, secret)
 // Body: { reference, service, status, provider_ref?, utr?, message? }
 // ---------------------------------------------------------------------
-const SERVICE_TABLES: Record<string, ServiceTable> = {
-  dmt: 'dmt_transactions',
-  bbps: 'bbps_transactions',
-  recharge: 'recharge_transactions',
-  payout: 'payout_transactions',
-};
+const AGGREGATOR_SERVICES = new Set(['dmt', 'bbps', 'recharge', 'payout']);
 
 router.post(
   '/aggregator',
@@ -168,8 +170,9 @@ router.post(
       utr?: string;
       message?: string;
     };
-    const table = SERVICE_TABLES[body.service];
-    if (!table) throw ApiError.badRequest(`Unknown service: ${body.service}`);
+    if (!AGGREGATOR_SERVICES.has(body.service)) {
+      throw ApiError.badRequest(`Unknown service: ${body.service}`);
+    }
 
     const externalId = `${body.service}:${body.reference}:${body.status}`;
     if (!(await recordEvent('aggregator', body.service, externalId, body))) {
@@ -180,11 +183,11 @@ router.post(
     const status: ProviderResult['status'] =
       body.status === 'success' ? 'success' : body.status === 'failed' ? 'failed' : 'pending';
 
-    await settleServiceByReference({
-      table,
-      reference: body.reference,
-      providerName: 'aggregator',
-      result: { status, providerRef: body.provider_ref, utr: body.utr, message: body.message },
+    await settleByReference(body.reference, 'aggregator', {
+      status,
+      providerRef: body.provider_ref,
+      utr: body.utr,
+      message: body.message,
     });
 
     await markProcessed('aggregator', externalId);

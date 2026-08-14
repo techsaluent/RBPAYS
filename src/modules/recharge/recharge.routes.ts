@@ -4,12 +4,10 @@ import { requireAuth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
-import { withTransaction, query } from '../../../db';
-import { debit } from '../wallet/wallet.service';
+import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
-import { makeReference } from '../../utils/reference';
 import { getRechargeProvider } from '../../providers';
-import { settleServiceTxn } from '../_shared/settle';
+import { runServiceTransaction } from '../_shared/transaction';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -41,50 +39,39 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
-    const chargePaise = rupeesToPaise(body.charge);
-    const reference = body.reference ?? makeReference('RCH');
-
-    const debitPaise = amountPaise + chargePaise;
-    // 1) Reserve funds: create the txn and debit the wallet atomically.
-    const txn = await withTransaction(async (client) => {
-      const { rows } = await client.query(
-        `INSERT INTO recharge_transactions
-           (user_id, operator, circle, recharge_type, number, amount_paise, charge_paise, reference, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
-         RETURNING *`,
-        [userId, body.operator, body.circle ?? null, body.recharge_type, body.number, amountPaise, chargePaise, reference],
-      );
-      const created = rows[0];
-      await debit(client, {
-        userId,
-        amountPaise: debitPaise,
-        source: 'recharge',
-        referenceId: created.id,
-        description: `${body.recharge_type} recharge ${body.operator} ${body.number} (${reference})`,
-      });
-      return created;
-    });
-
-    // 2) Call the recharge provider, then settle the outcome.
     const provider = getRechargeProvider();
-    const result = await provider.recharge({
-      reference,
-      amountPaise,
-      operator: body.operator,
-      number: body.number,
-      rechargeType: body.recharge_type,
-      circle: body.circle,
-    });
-    await settleServiceTxn({
-      table: 'recharge_transactions',
-      txnId: txn.id,
+
+    const { transaction, idempotent } = await runServiceTransaction({
       userId,
+      serviceCode: 'recharge',
+      table: 'recharge_transactions',
+      prefix: 'RCH',
+      reference: req.header('Idempotency-Key') || body.reference,
+      amountPaise,
+      clientChargePaise: rupeesToPaise(body.charge),
+      description: `${body.recharge_type} recharge ${body.operator} ${body.number}`,
       providerName: provider.name,
-      result,
+      insertServiceRow: async (client, ctx) => {
+        const { rows } = await client.query<{ id: string }>(
+          `INSERT INTO recharge_transactions
+             (user_id, operator, circle, recharge_type, number, amount_paise, charge_paise, reference, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending') RETURNING id`,
+          [userId, body.operator, body.circle ?? null, body.recharge_type, body.number, amountPaise, ctx.chargePaise, ctx.reference],
+        );
+        return rows[0].id;
+      },
+      callProvider: ({ reference }) =>
+        provider.recharge({
+          reference,
+          amountPaise,
+          operator: body.operator,
+          number: body.number,
+          rechargeType: body.recharge_type,
+          circle: body.circle,
+        }),
     });
 
-    const { rows } = await query('SELECT * FROM recharge_transactions WHERE id = $1', [txn.id]);
-    res.status(201).json({ transaction: rows[0] });
+    res.status(idempotent ? 200 : 201).json({ transaction, idempotent });
   }),
 );
 

@@ -60,7 +60,7 @@ export function createApp() {
       name: 'RBPAYS API',
       version: '0.1.0',
       docs: '/api/v1',
-      modules: ['auth', 'wallet', 'beneficiaries', 'dmt', 'bbps', 'recharge', 'payout', 'payment-gateway', 'webhooks'],
+      modules: ['auth', 'wallet', 'beneficiaries', 'dmt', 'bbps', 'recharge', 'payout', 'payment-gateway', 'transactions', 'kyc', 'network', 'admin', 'webhooks'],
     });
   });
 
