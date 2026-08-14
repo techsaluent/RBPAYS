@@ -9,8 +9,9 @@ function defaultApiBase() {
   if (window.RBPAYS_API) return window.RBPAYS_API;
   const h = location.hostname;
   if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:8080/api/v1';
-  if (h.endsWith('rbpays.in')) return 'https://api.rbpays.in/api/v1';
-  return 'https://api.tutipays.com/api/v1'; // tutipays.com and anything else
+  // Same-origin, path-based: the site proxies /api -> the API app.
+  // e.g. panel at tutipays.com/panel calls tutipays.com/api/v1 (no CORS needed).
+  return location.origin + '/api/v1';
 }
 const Cfg = { API: defaultApiBase() };
 
