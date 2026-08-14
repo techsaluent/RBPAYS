@@ -10,10 +10,13 @@ all settled against a per-user **wallet** with an append-only ledger.
 - **Auth:** JWT access tokens + rotating refresh tokens (bcrypt password hashing)
 - **Money:** stored as `BIGINT` paise (minor units) — never floats
 
-> This is the initial skeleton: authentication, the wallet engine, and CRUD for
-> every module. The service-provider integrations (actual DMT/BBPS/recharge/
-> payout/gateway API calls) are left as clearly-marked stubs — transactions are
-> created in `pending` state and the wallet is debited/credited atomically.
+Each service call goes through a **provider layer**: funds are reserved on the
+wallet, the external provider is called, and the result is **settled** back onto
+the transaction — crediting the wallet again automatically if the provider
+fails. Async provider callbacks are handled by signed **webhooks**. Providers
+default to a built-in **sandbox** so the whole API runs with zero external
+credentials; switch to real providers (Razorpay/RazorpayX, an aggregator switch)
+via `PROVIDER_*` env vars.
 
 ---
 
@@ -41,9 +44,17 @@ src/
   utils/                    # jwt, password, money (paise), reference, ApiError
   modules/
     auth/                   # signup, login, refresh, logout, me
-    wallet/                 # balance + ledger; debit()/credit() engine
+    wallet/                 # balance + ledger; debit()/credit()/reverse()
     beneficiaries/          # saved bank beneficiaries (DMT & payout)
+    _shared/settle.ts       # apply provider result; auto-reverse on failure
+    webhooks/               # signed async callbacks (razorpay, aggregator)
     dmt/  bbps/  recharge/  payout/  payment-gateway/
+  providers/                # provider abstraction + adapters
+    types.ts                #   interfaces + result types
+    sandbox.ts              #   default no-credentials provider
+    razorpay.ts             #   gateway (orders + signature) + RazorpayX payout
+    aggregator.ts           #   Paysprint/EKO-style DMT/BBPS/recharge switch
+    index.ts                #   registry: getDmtProvider(), ...
   routes.ts                 # mounts every module under /api/v1
   app.ts  index.ts          # express app + server bootstrap
 ```
@@ -116,11 +127,27 @@ Refresh tokens are **rotated** on every `/refresh` (old one is revoked).
 
 ### Payment Gateway — `/payment-gateway`
 
-- `POST /orders` — create a collection order. Body: `amount, gateway(razorpay|cashfree|payu), purpose?`
-- `POST /orders/:id/confirm` — confirm payment; on `success` + `wallet_topup`,
-  credits the wallet. Body: `gateway_payment_id, gateway_order_id?, status`.
-  **In production, verify the gateway signature here before trusting `status`.**
+- `POST /orders` — create a collection order at the gateway. Body: `amount,
+  gateway(razorpay|cashfree|payu), purpose?`. Returns the order plus a `checkout`
+  object (key id, order id) for the client SDK.
+- `POST /orders/:id/confirm` — confirm payment. Body: `gateway_payment_id,
+  signature`. The **gateway signature is verified** (`HMAC-SHA256`); only on a
+  valid signature is the order marked `success` and, for `wallet_topup`, the
+  wallet credited. An invalid signature returns `400` and marks the order failed.
 - `GET /orders`, `GET /orders/:id`.
+
+### Webhooks — `/webhooks` (no auth; HMAC-signed)
+
+Mounted with a raw body parser so signatures verify against the exact bytes.
+Events are recorded in `provider_events` and de-duplicated (idempotent replays
+return `{"status":"duplicate"}`).
+
+- `POST /razorpay` — header `X-Razorpay-Signature`. Handles `payment.captured` /
+  `order.paid` (credits a wallet-topup order) and `payout.processed|failed|reversed`
+  (settles the payout, reversing the wallet on failure).
+- `POST /aggregator` — header `X-Webhook-Signature = HMAC-SHA256(rawBody,
+  AGGREGATOR_WEBHOOK_SECRET)`. Body `{ reference, service, status, provider_ref?,
+  utr?, message? }` settles the matching DMT/BBPS/recharge/payout transaction.
 
 ### Error shape
 
@@ -142,6 +169,32 @@ Refresh tokens are **rotated** on every `/refresh` (old one is revoked).
   (client-supplied or auto-generated `RB-<MODULE>-<hex>`).
 - **Token security.** Refresh tokens are opaque random strings; only their
   SHA-256 hash is stored, so a DB leak can't be replayed.
+- **Provider settlement.** Each service creates a `pending` txn + wallet debit
+  atomically, then calls the provider. The result is settled: `success` finalizes
+  it, `failed` marks it failed **and reverses the wallet exactly once** (guarded
+  by `reversed_at`), `pending` waits for a webhook. Same-outcome webhook + poll
+  collapse safely — terminal rows are never re-settled.
+
+## Providers
+
+Selected per module via `PROVIDER_*` env vars; unknown values fall back to
+sandbox.
+
+| Module | `sandbox` (default) | Real adapter |
+| --- | --- | --- |
+| DMT / BBPS / Recharge | deterministic outcomes | `aggregator` — configurable Paysprint/EKO-style switch |
+| Payout | deterministic outcomes | `razorpay` — RazorpayX (contact → fund account → payout) |
+| Payment Gateway | sha256 test signature | `razorpay` — Orders API + real HMAC signature/webhook verification |
+
+**Sandbox test hooks** (drive outcomes by amount, for testing): **₹13** → failed
+(triggers reversal), **₹7** → pending (settle later via webhook), anything else →
+success.
+
+To plug in a real aggregator, set `PROVIDER_DMT=aggregator` (etc.) and the
+`AGGREGATOR_*` vars; adjust endpoint paths / response mapping in
+`src/providers/aggregator.ts` to match your vendor's API. For Razorpay set
+`PROVIDER_GATEWAY=razorpay` / `PROVIDER_PAYOUT=razorpay` and the `RAZORPAY_*`
+vars.
 
 ---
 

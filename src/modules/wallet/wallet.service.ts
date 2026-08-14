@@ -111,6 +111,18 @@ export async function credit(client: PoolClient, p: LedgerParams): Promise<numbe
   return newBalance;
 }
 
+/**
+ * Reverse a previously debited amount back into the wallet (e.g. a service
+ * transaction failed at the provider). Writes a 'reversal' ledger row.
+ * MUST run inside withTransaction. Returns the new balance in paise.
+ */
+export async function reverse(
+  client: PoolClient,
+  p: Omit<LedgerParams, 'source'>,
+): Promise<number> {
+  return credit(client, { ...p, source: 'reversal' });
+}
+
 /** Paginated ledger for a user's wallet. */
 export async function listLedger(userId: string, limit = 20, offset = 0) {
   const { rows } = await query(

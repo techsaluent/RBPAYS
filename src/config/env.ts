@@ -53,4 +53,28 @@ export const env = {
   // Rate limiting
   RATE_LIMIT_WINDOW_MS: int('RATE_LIMIT_WINDOW_MS', 60_000),
   RATE_LIMIT_MAX: int('RATE_LIMIT_MAX', 120),
+
+  // ---- Provider selection (per module) --------------------------------
+  // sandbox | razorpay | aggregator. Defaults to sandbox so the API runs
+  // out of the box; set real providers once you have credentials.
+  PROVIDER_DMT: optional('PROVIDER_DMT', 'sandbox'),
+  PROVIDER_BBPS: optional('PROVIDER_BBPS', 'sandbox'),
+  PROVIDER_RECHARGE: optional('PROVIDER_RECHARGE', 'sandbox'),
+  PROVIDER_PAYOUT: optional('PROVIDER_PAYOUT', 'sandbox'),
+  PROVIDER_GATEWAY: optional('PROVIDER_GATEWAY', 'sandbox'),
+
+  HTTP_TIMEOUT_MS: int('HTTP_TIMEOUT_MS', 20_000),
+
+  // ---- Razorpay / RazorpayX ------------------------------------------
+  RAZORPAY_KEY_ID: optional('RAZORPAY_KEY_ID', ''),
+  RAZORPAY_KEY_SECRET: optional('RAZORPAY_KEY_SECRET', ''),
+  RAZORPAY_WEBHOOK_SECRET: optional('RAZORPAY_WEBHOOK_SECRET', ''),
+  RAZORPAYX_ACCOUNT_NUMBER: optional('RAZORPAYX_ACCOUNT_NUMBER', ''),
+
+  // ---- Aggregator (DMT / BBPS / Recharge switch, e.g. Paysprint) ------
+  AGGREGATOR_BASE_URL: optional('AGGREGATOR_BASE_URL', ''),
+  AGGREGATOR_API_KEY: optional('AGGREGATOR_API_KEY', ''),
+  AGGREGATOR_AUTH_TOKEN: optional('AGGREGATOR_AUTH_TOKEN', ''),
+  AGGREGATOR_PARTNER_ID: optional('AGGREGATOR_PARTNER_ID', ''),
+  AGGREGATOR_WEBHOOK_SECRET: optional('AGGREGATOR_WEBHOOK_SECRET', ''),
 } as const;

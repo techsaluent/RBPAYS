@@ -1,0 +1,103 @@
+import crypto from 'crypto';
+import {
+  BbpsPayInput,
+  BbpsProvider,
+  CreateOrderInput,
+  CreateOrderResult,
+  DmtProvider,
+  DmtTransferInput,
+  GatewayProvider,
+  PayoutInput,
+  PayoutProvider,
+  ProviderResult,
+  RechargeInput,
+  RechargeProvider,
+  VerifyPaymentInput,
+} from './types';
+
+/**
+ * Sandbox providers. Fully functional for local/dev use with deterministic
+ * outcomes driven by the amount, so tests can exercise every branch:
+ *   - ₹13 exactly  -> failed  (triggers wallet reversal)
+ *   - ₹7  exactly  -> pending (settled later via webhook/poll)
+ *   - anything else -> success
+ */
+function outcome(amountPaise: number): ProviderResult['status'] {
+  if (amountPaise === 1300) return 'failed';
+  if (amountPaise === 700) return 'pending';
+  return 'success';
+}
+
+function ref(prefix: string): string {
+  return `${prefix}_${crypto.randomBytes(8).toString('hex')}`;
+}
+
+export const sandboxDmt: DmtProvider = {
+  name: 'sandbox',
+  async transfer(input: DmtTransferInput): Promise<ProviderResult> {
+    const status = outcome(input.amountPaise);
+    return {
+      status,
+      providerRef: ref('sbxdmt'),
+      utr: status === 'success' ? ref('UTR').toUpperCase() : undefined,
+      message: `sandbox DMT ${status}`,
+    };
+  },
+};
+
+export const sandboxPayout: PayoutProvider = {
+  name: 'sandbox',
+  async payout(input: PayoutInput): Promise<ProviderResult> {
+    const status = outcome(input.amountPaise);
+    return {
+      status,
+      providerRef: ref('sbxpo'),
+      utr: status === 'success' ? ref('UTR').toUpperCase() : undefined,
+      message: `sandbox payout ${status}`,
+    };
+  },
+};
+
+export const sandboxBbps: BbpsProvider = {
+  name: 'sandbox',
+  async pay(input: BbpsPayInput): Promise<ProviderResult> {
+    const status = outcome(input.amountPaise);
+    return { status, providerRef: ref('sbxbb'), message: `sandbox BBPS ${status}` };
+  },
+};
+
+export const sandboxRecharge: RechargeProvider = {
+  name: 'sandbox',
+  async recharge(input: RechargeInput): Promise<ProviderResult> {
+    const status = outcome(input.amountPaise);
+    return { status, providerRef: ref('sbxrc'), message: `sandbox recharge ${status}` };
+  },
+};
+
+export const sandboxGateway: GatewayProvider = {
+  name: 'sandbox',
+  async createOrder(input: CreateOrderInput): Promise<CreateOrderResult> {
+    return {
+      gatewayOrderId: ref('order'),
+      checkout: { provider: 'sandbox', amount: input.amountPaise, currency: input.currency },
+    };
+  },
+  // Sandbox accepts the deterministic signature sha256(orderId|paymentId).
+  verifyPayment(input: VerifyPaymentInput): boolean {
+    const expected = crypto
+      .createHash('sha256')
+      .update(`${input.gatewayOrderId}|${input.gatewayPaymentId}`)
+      .digest('hex');
+    return safeEqual(expected, input.signature);
+  },
+  verifyWebhook(rawBody: string, signature: string): boolean {
+    const expected = crypto.createHash('sha256').update(rawBody).digest('hex');
+    return safeEqual(expected, signature);
+  },
+};
+
+function safeEqual(a: string, b: string): boolean {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
+}

@@ -8,6 +8,8 @@ import { withTransaction, query } from '../../../db';
 import { debit } from '../wallet/wallet.service';
 import { rupeesToPaise } from '../../utils/money';
 import { makeReference } from '../../utils/reference';
+import { getDmtProvider } from '../../providers';
+import { settleServiceTxn } from '../_shared/settle';
 
 const router = Router();
 router.use(requireAuth);
@@ -40,6 +42,8 @@ router.post(
     const chargePaise = rupeesToPaise(body.charge);
     const reference = body.reference ?? makeReference('DMT');
 
+    const debitPaise = amountPaise + chargePaise;
+    // 1) Reserve funds: create the txn and debit the wallet atomically.
     const txn = await withTransaction(async (client) => {
       const { rows } = await client.query(
         `INSERT INTO dmt_transactions
@@ -51,7 +55,7 @@ router.post(
       const created = rows[0];
       await debit(client, {
         userId,
-        amountPaise: amountPaise + chargePaise,
+        amountPaise: debitPaise,
         source: 'dmt',
         referenceId: created.id,
         description: `DMT to ${body.beneficiary_name} (${reference})`,
@@ -59,7 +63,27 @@ router.post(
       return created;
     });
 
-    res.status(201).json({ transaction: txn });
+    // 2) Call the provider (outside the DB txn), then settle the outcome.
+    const provider = getDmtProvider();
+    const result = await provider.transfer({
+      reference,
+      amountPaise,
+      beneficiaryName: body.beneficiary_name,
+      accountNumber: body.account_number,
+      ifsc: body.ifsc,
+      mode: body.mode,
+    });
+    await settleServiceTxn({
+      table: 'dmt_transactions',
+      txnId: txn.id,
+      userId,
+      providerName: provider.name,
+      result,
+    });
+
+    // 3) Return the finalized row.
+    const { rows } = await query('SELECT * FROM dmt_transactions WHERE id = $1', [txn.id]);
+    res.status(201).json({ transaction: rows[0] });
   }),
 );
 

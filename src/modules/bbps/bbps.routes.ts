@@ -8,6 +8,8 @@ import { withTransaction, query } from '../../../db';
 import { debit } from '../wallet/wallet.service';
 import { rupeesToPaise } from '../../utils/money';
 import { makeReference } from '../../utils/reference';
+import { getBbpsProvider } from '../../providers';
+import { settleServiceTxn } from '../_shared/settle';
 
 const router = Router();
 router.use(requireAuth);
@@ -40,6 +42,8 @@ router.post(
     const chargePaise = rupeesToPaise(body.charge);
     const reference = body.reference ?? makeReference('BBPS');
 
+    const debitPaise = amountPaise + chargePaise;
+    // 1) Reserve funds: create the txn and debit the wallet atomically.
     const txn = await withTransaction(async (client) => {
       const { rows } = await client.query(
         `INSERT INTO bbps_transactions
@@ -51,7 +55,7 @@ router.post(
       const created = rows[0];
       await debit(client, {
         userId,
-        amountPaise: amountPaise + chargePaise,
+        amountPaise: debitPaise,
         source: 'bbps',
         referenceId: created.id,
         description: `BBPS ${body.category ?? 'bill'} ${body.consumer_number} (${reference})`,
@@ -59,7 +63,25 @@ router.post(
       return created;
     });
 
-    res.status(201).json({ transaction: txn });
+    // 2) Call the BBPS provider, then settle the outcome.
+    const provider = getBbpsProvider();
+    const result = await provider.pay({
+      reference,
+      amountPaise,
+      billerId: body.biller_id,
+      consumerNumber: body.consumer_number,
+      category: body.category,
+    });
+    await settleServiceTxn({
+      table: 'bbps_transactions',
+      txnId: txn.id,
+      userId,
+      providerName: provider.name,
+      result,
+    });
+
+    const { rows } = await query('SELECT * FROM bbps_transactions WHERE id = $1', [txn.id]);
+    res.status(201).json({ transaction: rows[0] });
   }),
 );
 

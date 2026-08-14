@@ -8,6 +8,8 @@ import { withTransaction, query } from '../../../db';
 import { debit } from '../wallet/wallet.service';
 import { rupeesToPaise } from '../../utils/money';
 import { makeReference } from '../../utils/reference';
+import { getRechargeProvider } from '../../providers';
+import { settleServiceTxn } from '../_shared/settle';
 
 const router = Router();
 router.use(requireAuth);
@@ -40,6 +42,8 @@ router.post(
     const chargePaise = rupeesToPaise(body.charge);
     const reference = body.reference ?? makeReference('RCH');
 
+    const debitPaise = amountPaise + chargePaise;
+    // 1) Reserve funds: create the txn and debit the wallet atomically.
     const txn = await withTransaction(async (client) => {
       const { rows } = await client.query(
         `INSERT INTO recharge_transactions
@@ -51,7 +55,7 @@ router.post(
       const created = rows[0];
       await debit(client, {
         userId,
-        amountPaise: amountPaise + chargePaise,
+        amountPaise: debitPaise,
         source: 'recharge',
         referenceId: created.id,
         description: `${body.recharge_type} recharge ${body.operator} ${body.number} (${reference})`,
@@ -59,7 +63,26 @@ router.post(
       return created;
     });
 
-    res.status(201).json({ transaction: txn });
+    // 2) Call the recharge provider, then settle the outcome.
+    const provider = getRechargeProvider();
+    const result = await provider.recharge({
+      reference,
+      amountPaise,
+      operator: body.operator,
+      number: body.number,
+      rechargeType: body.recharge_type,
+      circle: body.circle,
+    });
+    await settleServiceTxn({
+      table: 'recharge_transactions',
+      txnId: txn.id,
+      userId,
+      providerName: provider.name,
+      result,
+    });
+
+    const { rows } = await query('SELECT * FROM recharge_transactions WHERE id = $1', [txn.id]);
+    res.status(201).json({ transaction: rows[0] });
   }),
 );
 
