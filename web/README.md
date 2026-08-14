@@ -1,61 +1,50 @@
-# RBPAYS Panel (web)
+# TutiPays web (landing + panel)
 
-A zero-build, static web panel for the RBPAYS API — **login/signup**, an
-**admin dashboard** (users, KYC, commissions, services) and a **partner portal**
-(wallet, run any service, transactions + receipts, downline, earnings). It is
-plain HTML + CSS + vanilla JS (`index.html` + `app.js`) that calls the API over
-HTTPS, so it can be hosted on any static site — including a **CloudPanel static
-site** on your VPS.
+The public front end for TutiPays — a marketing **landing page** with Login /
+Sign Up, plus the **partner & admin panel**. Zero build: plain HTML/CSS/JS that
+calls the API over HTTPS, hostable on any static site (e.g. a CloudPanel Static
+Site at **tutipays.com**).
 
-## What it points at
+| File | What it is |
+| --- | --- |
+| `index.html` | Landing page (hero, services, Login / Sign Up buttons) |
+| `app.html` | The panel — login/signup screen + dashboard (admin & partner) |
+| `app.js` | Shared logic; auto-targets `https://api.tutipays.com/api/v1` |
 
-`app.js` picks the API base automatically:
-- on `localhost` → `http://localhost:8080/api/v1`
-- anywhere else → `https://api.rbpays.in/api/v1`
+Flow: **tutipays.com** (landing) → *Login* → `app.html` → dashboard.
+*Sign Up* → `app.html?signup=1` (signup tab pre-selected). Landing and panel are
+the **same origin**, so the auth token is shared between them.
 
-Override without editing code by adding `?api=` to the URL, or set
-`window.RBPAYS_API` before `app.js` loads.
+`app.js` picks the API base from the hostname (`*.tutipays.com` → `api.tutipays.com`,
+`*.rbpays.in` → `api.rbpays.in`, `localhost` → local). Override with `?api=` or
+`window.RBPAYS_API`.
 
-## Deploy it as `panel.rbpays.in` (CloudPanel)
+## Deploy on tutipays.com (CloudPanel)
 
-1. **Cloudflare** → add an `A` record: `panel` → your VPS IP (proxied 🟠), same as `api`.
-2. **CloudPanel** → **Sites → Add Site → Create a Static Site** → domain `panel.rbpays.in`.
-   Issue SSL for it (Origin cert import, or DNS-only + Let's Encrypt — same as the API).
-3. **Copy these two files** into that site's web root
-   (`/home/<panel-user>/htdocs/panel.rbpays.in/`):
+1. **Cloudflare** (tutipays.com) → add `A` records: `@`/`www` (or just the root)
+   and `api`, both → your VPS IP, proxied 🟠. Also `api` for the API.
+2. **CloudPanel** → **Add Site → Create a Static Site** → `tutipays.com`.
+   Issue SSL (import the `*.tutipays.com` Cloudflare Origin cert).
+3. Copy the three files into its web root:
    ```bash
    SRC=/home/rbpays-api/htdocs/api.rbpays.in/app/web
-   DEST=$(ls -d /home/*/htdocs/panel.rbpays.in)
-   cp "$SRC/index.html" "$SRC/app.js" "$DEST/"
-   chown "$(stat -c '%U' "$DEST")": "$DEST/index.html" "$DEST/app.js"
+   DEST=$(ls -d /home/*/htdocs/tutipays.com)
+   cp "$SRC/index.html" "$SRC/app.html" "$SRC/app.js" "$DEST/"
+   chown "$(stat -c '%U' "$DEST")": "$DEST"/index.html "$DEST"/app.html "$DEST"/app.js
    ```
-4. **Allow the panel origin in the API's CORS.** On the API server, edit the API
-   `.env` and add the panel origin, then restart:
-   ```ini
-   CORS_ORIGINS=https://rbpays.in,https://www.rbpays.in,https://panel.rbpays.in
-   ```
-   ```bash
-   sudo -u rbpays-api bash -lc 'cd ~/htdocs/api.rbpays.in/app && pm2 restart rbpays-api'
-   ```
-5. Open **https://panel.rbpays.in** and log in with your admin
-   (`admin@rbpays.in`).
-
-> Prefer to serve it from the API server instead of a separate subdomain? You can,
-> but keeping the panel on its own origin (or folding it into your existing site)
-> is cleaner. Wherever it lives, its origin must be in `CORS_ORIGINS`.
+4. **Allow the origin in the API's CORS** — add `https://tutipays.com` to
+   `CORS_ORIGINS` in the API `.env` and `pm2 restart rbpays-api`.
+5. Open **https://tutipays.com** → Login / Sign Up → dashboard.
 
 ## Local preview
 
 ```bash
 cd web && python3 -m http.server 8777
-# open http://localhost:8777/?api=https://api.rbpays.in/api/v1
+# open http://localhost:8777/?api=https://api.tutipays.com/api/v1
 ```
-(Use the `?api=` override so the browser talks to the live API; that origin must
-be allowed in the API's `CORS_ORIGINS`, e.g. add `http://localhost:8777`.)
 
 ## Notes
 
-- **Top up (test gateway)** only works while `PROVIDER_GATEWAY=sandbox`. With real
-  Razorpay, wallet top-ups go through Razorpay Checkout instead.
-- This is a functional v1 covering the core flows; extend `Screens` / `SERVICES`
-  in `app.js` to add more.
+- Sandbox "top up" works only while `PROVIDER_GATEWAY=sandbox`; with real Razorpay
+  it goes through Razorpay Checkout.
+- Landing copy/branding is original (TutiPays) — swap in your own logo/text freely.
