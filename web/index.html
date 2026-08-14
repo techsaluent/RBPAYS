@@ -1,137 +1,235 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>RBPAYS Panel</title>
+  <title>TutiPays — One platform for recharge, AEPS, money transfer & bill payments</title>
+  <meta name="description" content="TutiPays is a B2B fintech platform for retailers and distributors — mobile & DTH recharge, AEPS, DMT money transfer, BBPS bill payments, Micro ATM, payouts and more, with instant settlement and the best commissions." />
   <style>
-    :root {
-      --bg:#f4f6fb; --card:#ffffff; --ink:#1a2233; --muted:#6b7488; --line:#e5e9f2;
-      --brand:#2b57ff; --brand-ink:#fff; --ok:#137333; --warn:#b06000; --err:#c5221f;
-      --radius:12px; --shadow:0 1px 3px rgba(20,30,60,.08),0 8px 24px rgba(20,30,60,.06);
+    :root{
+      --ink:#101828; --muted:#5a6472; --line:#e6e9f2; --bg:#ffffff; --soft:#f5f7fd;
+      --brand:#3b39e4; --brand2:#7b5cff; --accent:#00c48c; --warn:#ff8a00;
+      --radius:16px; --shadow:0 10px 30px rgba(30,34,90,.10);
     }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
-      background:var(--bg); color:var(--ink); font-size:14px; }
-    a { color:var(--brand); text-decoration:none; }
-    button { font:inherit; cursor:pointer; }
-    input,select { font:inherit; }
+    *{box-sizing:border-box} html{scroll-behavior:smooth}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.55}
+    a{color:inherit;text-decoration:none}
+    .wrap{max-width:1140px;margin:0 auto;padding:0 20px}
+    .btn{display:inline-block;padding:12px 22px;border-radius:999px;font-weight:600;font-size:15px;cursor:pointer;border:1px solid transparent}
+    .btn.primary{background:var(--brand);color:#fff}
+    .btn.primary:hover{background:#2d2bc9}
+    .btn.ghost{background:#fff;color:var(--brand);border-color:#d9dcf3}
+    .btn.light{background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.35)}
+    .btn.big{padding:15px 30px;font-size:16px}
 
-    /* ---- Auth screen ---- */
-    #auth { min-height:100vh; display:grid; place-items:center; padding:24px; }
-    .auth-card { width:100%; max-width:400px; background:var(--card); border-radius:var(--radius);
-      box-shadow:var(--shadow); padding:32px 28px; }
-    .brand { font-size:26px; font-weight:800; letter-spacing:1px; color:var(--brand); text-align:center; }
-    .brand small { display:block; font-size:12px; font-weight:500; color:var(--muted); letter-spacing:.5px; margin-top:4px; }
-    .tabs { display:flex; gap:8px; margin:22px 0 18px; }
-    .tabs button { flex:1; padding:9px; border:1px solid var(--line); background:#fff; border-radius:8px; color:var(--muted); }
-    .tabs button.on { background:var(--brand); color:#fff; border-color:var(--brand); }
-    .field { margin-bottom:14px; }
-    .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; }
-    .field input,.field select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; }
-    .btn { width:100%; padding:11px; background:var(--brand); color:#fff; border:none; border-radius:8px; font-weight:600; }
-    .btn:disabled { opacity:.6; cursor:default; }
-    .btn.ghost { background:#fff; color:var(--brand); border:1px solid var(--brand); }
-    .btn.sm { width:auto; padding:7px 12px; font-size:13px; }
-    .msg { font-size:13px; padding:9px 12px; border-radius:8px; margin-bottom:12px; }
-    .msg.err { background:#fdecea; color:var(--err); }
-    .msg.ok  { background:#e6f4ea; color:var(--ok); }
+    /* Header */
+    header{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+    .nav{display:flex;align-items:center;justify-content:space-between;height:68px}
+    .logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:22px;letter-spacing:-.5px}
+    .logo .dot{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand),var(--brand2));display:grid;place-items:center;color:#fff;font-size:16px}
+    .logo b{color:var(--brand)}
+    nav.links{display:flex;gap:26px;align-items:center;font-size:15px;color:var(--muted)}
+    nav.links a:hover{color:var(--ink)}
+    .nav .cta{display:flex;gap:10px;align-items:center}
+    .menu-btn{display:none;font-size:24px;background:none;border:none}
+    @media(max-width:860px){ nav.links{display:none} .menu-btn{display:block} }
 
-    /* ---- App shell ---- */
-    #app { display:none; grid-template-columns:230px 1fr; min-height:100vh; }
-    aside { background:#0f1830; color:#c7cfe2; padding:18px 14px; }
-    aside .brand { color:#fff; text-align:left; font-size:20px; }
-    nav { margin-top:22px; display:flex; flex-direction:column; gap:2px; }
-    nav a { color:#c7cfe2; padding:10px 12px; border-radius:8px; font-weight:500; }
-    nav a:hover { background:#1b2745; }
-    nav a.on { background:var(--brand); color:#fff; }
-    main { padding:22px 26px; }
-    .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; gap:12px; flex-wrap:wrap; }
-    .topbar h1 { font-size:20px; margin:0; }
-    .who { display:flex; align-items:center; gap:14px; font-size:13px; color:var(--muted); }
-    .pill { background:#eef1f8; border-radius:999px; padding:5px 12px; font-weight:600; color:var(--ink); }
-    .pill.bal { background:#e6f0ff; color:var(--brand); }
+    /* Hero */
+    .hero{background:radial-gradient(1200px 500px at 80% -10%,rgba(123,92,255,.25),transparent),linear-gradient(160deg,#1b1a4b,#3b39e4);color:#fff;padding:70px 0 90px;overflow:hidden}
+    .hero .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center}
+    .hero h1{font-size:46px;line-height:1.1;margin:0 0 18px;letter-spacing:-1px}
+    .hero p.sub{font-size:18px;color:#d7d9f6;margin:0 0 26px;max-width:520px}
+    .hero .ctas{display:flex;gap:14px;flex-wrap:wrap}
+    .badge{display:inline-flex;gap:8px;align-items:center;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);padding:7px 14px;border-radius:999px;font-size:13px;margin-bottom:20px}
+    .hero-card{background:#fff;color:var(--ink);border-radius:20px;box-shadow:var(--shadow);padding:22px}
+    .hero-card h4{margin:0 0 14px;font-size:15px;color:var(--muted);font-weight:600}
+    .mini{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .mini .m{background:var(--soft);border-radius:12px;padding:14px}
+    .mini .m .i{font-size:22px} .mini .m .t{font-weight:600;margin-top:6px;font-size:14px}
+    @media(max-width:860px){ .hero .grid{grid-template-columns:1fr} .hero h1{font-size:34px} }
 
-    .grid { display:grid; gap:16px; }
-    .cards { grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); }
-    .card { background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px 18px; }
-    .card .k { font-size:12px; color:var(--muted); }
-    .card .v { font-size:24px; font-weight:700; margin-top:6px; }
-    .panel { background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 20px; }
-    .panel h2 { font-size:15px; margin:0 0 14px; }
-    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
-    .row .field { margin-bottom:0; }
+    /* Stats strip */
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin:-46px auto 0;position:relative;z-index:5}
+    .stat{background:#fff;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;text-align:center}
+    .stat .n{font-size:28px;font-weight:800;color:var(--brand)}
+    .stat .l{color:var(--muted);font-size:14px}
+    @media(max-width:860px){ .stats{grid-template-columns:1fr 1fr} }
 
-    table { width:100%; border-collapse:collapse; font-size:13px; }
-    th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
-    th { color:var(--muted); font-weight:600; font-size:12px; }
-    .tbl-wrap { overflow-x:auto; }
-    .tag { font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; text-transform:uppercase; }
-    .tag.success{background:#e6f4ea;color:var(--ok)} .tag.pending{background:#fef7e0;color:var(--warn)}
-    .tag.failed{background:#fdecea;color:var(--err)} .tag.refunded{background:#eceff4;color:var(--muted)}
-    .tag.active{background:#e6f4ea;color:var(--ok)} .tag.suspended{background:#fef7e0;color:var(--warn)}
-    .tag.blocked{background:#fdecea;color:var(--err)}
+    section{padding:64px 0}
+    .h2{font-size:32px;text-align:center;margin:0 0 8px;letter-spacing:-.5px}
+    .lead{text-align:center;color:var(--muted);max-width:620px;margin:0 auto 40px}
 
-    .muted { color:var(--muted); }
-    .right { text-align:right; }
-    .mt { margin-top:16px; }
-    .hidden { display:none !important; }
+    /* Services */
+    .services{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
+    .svc{border:1px solid var(--line);border-radius:var(--radius);padding:22px;transition:.15s;background:#fff}
+    .svc:hover{transform:translateY(-4px);box-shadow:var(--shadow);border-color:transparent}
+    .svc .ic{width:46px;height:46px;border-radius:12px;background:var(--soft);display:grid;place-items:center;font-size:24px;margin-bottom:12px}
+    .svc h3{margin:0 0 6px;font-size:16px}
+    .svc p{margin:0;color:var(--muted);font-size:14px}
+    @media(max-width:860px){ .services{grid-template-columns:1fr 1fr} }
+    @media(max-width:520px){ .services{grid-template-columns:1fr} }
 
-    /* modal */
-    .modal-bg { position:fixed; inset:0; background:rgba(15,24,48,.45); display:grid; place-items:center; padding:20px; z-index:50; }
-    .modal { background:#fff; border-radius:var(--radius); box-shadow:var(--shadow); width:100%; max-width:440px; padding:22px 24px; max-height:90vh; overflow:auto; }
-    .modal h3 { margin:0 0 16px; font-size:16px; }
-    .modal .foot { display:flex; gap:10px; margin-top:18px; }
-    @media (max-width:720px){ #app{grid-template-columns:1fr} aside{display:none} }
+    /* Features */
+    .features{background:var(--soft)}
+    .feat{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+    .fcard{background:#fff;border-radius:var(--radius);padding:24px;border:1px solid var(--line)}
+    .fcard .ic{font-size:26px} .fcard h3{margin:12px 0 6px;font-size:17px} .fcard p{margin:0;color:var(--muted);font-size:14px}
+    @media(max-width:860px){ .feat{grid-template-columns:1fr} }
+
+    /* Steps */
+    .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+    .step{text-align:center;padding:10px}
+    .step .num{width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;display:grid;place-items:center;font-size:20px;font-weight:800;margin:0 auto 14px}
+    .step h3{margin:0 0 6px;font-size:17px} .step p{margin:0;color:var(--muted);font-size:14px}
+    @media(max-width:860px){ .steps{grid-template-columns:1fr} }
+
+    /* CTA band */
+    .cta-band{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-radius:22px;padding:44px;text-align:center}
+    .cta-band h2{margin:0 0 10px;font-size:28px}
+    .cta-band p{margin:0 0 22px;color:#e7e8ff}
+
+    footer{background:#0f1230;color:#aeb4d6;padding:48px 0 26px;margin-top:20px}
+    .fgrid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:30px}
+    footer h5{color:#fff;font-size:15px;margin:0 0 12px}
+    footer a{display:block;color:#aeb4d6;padding:4px 0;font-size:14px}
+    footer a:hover{color:#fff}
+    .fbottom{border-top:1px solid #23264d;margin-top:30px;padding-top:18px;font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+    @media(max-width:860px){ .fgrid{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
-  <!-- Auth -->
-  <section id="auth">
-    <div class="auth-card">
-      <div class="brand">RBPAYS <small>Partner &amp; Admin Panel</small></div>
-      <div class="tabs">
-        <button id="tab-login" class="on" onclick="UI.authTab('login')">Login</button>
-        <button id="tab-signup" onclick="UI.authTab('signup')">Sign up</button>
+  <header>
+    <div class="wrap nav">
+      <div class="logo"><span class="dot">₹</span> Tuti<b>Pays</b></div>
+      <nav class="links">
+        <a href="#services">Services</a>
+        <a href="#why">Why TutiPays</a>
+        <a href="#how">How it works</a>
+        <a href="#contact">Contact</a>
+      </nav>
+      <div class="cta">
+        <a class="btn ghost" href="app.html">Login</a>
+        <a class="btn primary" href="app.html?signup=1">Sign Up</a>
       </div>
-      <div id="auth-msg"></div>
-      <form id="login-form" onsubmit="return Auth.login(event)">
-        <div class="field"><label>Email, phone or username</label><input name="identifier" required autocomplete="username" /></div>
-        <div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password" /></div>
-        <button class="btn" type="submit">Login</button>
-      </form>
-      <form id="signup-form" class="hidden" onsubmit="return Auth.signup(event)">
-        <div class="field"><label>Full name</label><input name="full_name" required /></div>
-        <div class="field"><label>Username (optional)</label><input name="username" /></div>
-        <div class="field"><label>Email</label><input name="email" type="email" required /></div>
-        <div class="field"><label>Mobile (10 digit)</label><input name="phone" required /></div>
-        <div class="field"><label>Password (min 8)</label><input name="password" type="password" required /></div>
-        <button class="btn" type="submit">Create account</button>
-      </form>
+      <button class="menu-btn" onclick="document.querySelector('nav.links').style.display='flex'">☰</button>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <div class="hero">
+    <div class="wrap grid">
+      <div>
+        <span class="badge">⚡ Instant settlement · Best commissions</span>
+        <h1>One platform for every payment &amp; recharge.</h1>
+        <p class="sub">TutiPays gives retailers and distributors a single wallet to run recharge, AEPS, money transfer, bill payments, payouts and more — and earn commission on every transaction.</p>
+        <div class="ctas">
+          <a class="btn primary big" href="app.html?signup=1">Become a Partner →</a>
+          <a class="btn light big" href="app.html">Login to Panel</a>
+        </div>
+      </div>
+      <div class="hero-card">
+        <h4>Everything in one wallet</h4>
+        <div class="mini">
+          <div class="m"><div class="i">📱</div><div class="t">Recharge &amp; DTH</div></div>
+          <div class="m"><div class="i">🏧</div><div class="t">AEPS Banking</div></div>
+          <div class="m"><div class="i">💸</div><div class="t">Money Transfer</div></div>
+          <div class="m"><div class="i">🧾</div><div class="t">Bill Payments</div></div>
+          <div class="m"><div class="i">💳</div><div class="t">Card Swipe</div></div>
+          <div class="m"><div class="i">🏦</div><div class="t">Payouts &amp; UPI</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="stats">
+      <div class="stat"><div class="n">12+</div><div class="l">Services</div></div>
+      <div class="stat"><div class="n">Instant</div><div class="l">Settlement</div></div>
+      <div class="stat"><div class="n">24×7</div><div class="l">Availability</div></div>
+      <div class="stat"><div class="n">3-tier</div><div class="l">Distribution</div></div>
+    </div>
+  </div>
+
+  <!-- Services -->
+  <section id="services" class="wrap">
+    <h2 class="h2">All your services, one login</h2>
+    <p class="lead">Offer a full suite of assisted financial services from your shop and earn on every transaction.</p>
+    <div class="services">
+      <div class="svc"><div class="ic">📱</div><h3>Mobile &amp; DTH Recharge</h3><p>Prepaid, postpaid and DTH for every operator.</p></div>
+      <div class="svc"><div class="ic">🏧</div><h3>AEPS</h3><p>Aadhaar cash withdrawal, balance &amp; mini statement.</p></div>
+      <div class="svc"><div class="ic">💸</div><h3>Money Transfer (DMT)</h3><p>IMPS/NEFT transfers to any bank account.</p></div>
+      <div class="svc"><div class="ic">🧾</div><h3>BBPS Bill Payments</h3><p>Electricity, gas, water, FASTag, insurance, loan &amp; more.</p></div>
+      <div class="svc"><div class="ic">🏧</div><h3>Micro ATM</h3><p>Card-based cash withdrawal on a mini POS.</p></div>
+      <div class="svc"><div class="ic">🆔</div><h3>Aadhaar Pay</h3><p>Accept payments with Aadhaar + fingerprint.</p></div>
+      <div class="svc"><div class="ic">🏦</div><h3>Payout &amp; UPI</h3><p>Instant disbursals to bank accounts and UPI IDs.</p></div>
+      <div class="svc"><div class="ic">💳</div><h3>Card Swipe (mPOS)</h3><p>Accept debit/credit cards, settle to your wallet.</p></div>
+      <div class="svc"><div class="ic">💰</div><h3>CMS</h3><p>Cash collection for NBFCs and lenders.</p></div>
+      <div class="svc"><div class="ic">🪪</div><h3>PAN Card</h3><p>New &amp; correction applications via NSDL/UTI.</p></div>
+      <div class="svc"><div class="ic">🔁</div><h3>Wallet Transfer</h3><p>Move funds instantly across your network.</p></div>
+      <div class="svc"><div class="ic">📊</div><h3>Reports &amp; Receipts</h3><p>Every transaction logged with a printable receipt.</p></div>
     </div>
   </section>
 
-  <!-- App -->
-  <div id="app">
-    <aside>
-      <div class="brand">RBPAYS</div>
-      <nav id="nav"></nav>
-    </aside>
-    <main>
-      <div class="topbar">
-        <h1 id="page-title">Dashboard</h1>
-        <div class="who">
-          <span class="pill bal" id="wallet-pill">₹0.00</span>
-          <span id="who-name"></span>
-          <span class="pill" id="who-role"></span>
-          <button class="btn ghost sm" onclick="Auth.logout()">Logout</button>
+  <!-- Why -->
+  <section id="why" class="features">
+    <div class="wrap">
+      <h2 class="h2">Why partners choose TutiPays</h2>
+      <p class="lead">Built for retailers, distributors and master distributors who want to grow.</p>
+      <div class="feat">
+        <div class="fcard"><div class="ic">⚡</div><h3>Instant settlement</h3><p>Successful transactions reflect in your wallet immediately — no waiting.</p></div>
+        <div class="fcard"><div class="ic">💹</div><h3>Best commissions</h3><p>Transparent, slab-based commission on every service, credited automatically.</p></div>
+        <div class="fcard"><div class="ic">🔒</div><h3>Bank-grade security</h3><p>Encrypted, signature-verified transactions and a full audit trail.</p></div>
+        <div class="fcard"><div class="ic">🧑‍🤝‍🧑</div><h3>Build your network</h3><p>Onboard retailers under you and earn override commission on their business.</p></div>
+        <div class="fcard"><div class="ic">📱</div><h3>One simple panel</h3><p>Run every service, top up your wallet and track earnings from one dashboard.</p></div>
+        <div class="fcard"><div class="ic">🕔</div><h3>24×7 uptime</h3><p>Serve customers any time with a platform that’s always on.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How -->
+  <section id="how" class="wrap">
+    <h2 class="h2">Start earning in 3 steps</h2>
+    <p class="lead">Sign up today and go live in minutes.</p>
+    <div class="steps">
+      <div class="step"><div class="num">1</div><h3>Create your account</h3><p>Sign up as a retailer or partner and complete a quick KYC.</p></div>
+      <div class="step"><div class="num">2</div><h3>Load your wallet</h3><p>Add funds to your TutiPays wallet through the payment gateway.</p></div>
+      <div class="step"><div class="num">3</div><h3>Serve &amp; earn</h3><p>Offer recharge, AEPS, transfers &amp; bills — earn commission on each.</p></div>
+    </div>
+    <div class="cta-band" style="margin-top:40px">
+      <h2>Ready to grow your business?</h2>
+      <p>Join TutiPays and turn your shop into a full financial services point.</p>
+      <a class="btn light big" href="app.html?signup=1">Create your free account →</a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer id="contact">
+    <div class="wrap">
+      <div class="fgrid">
+        <div>
+          <div class="logo" style="color:#fff"><span class="dot">₹</span> Tuti<b style="color:#fff">Pays</b></div>
+          <p style="max-width:340px;margin-top:12px">A B2B fintech platform for assisted financial services — recharge, AEPS, money transfer, bill payments and more, for retailers and distributors across India.</p>
+        </div>
+        <div>
+          <h5>Product</h5>
+          <a href="#services">Services</a>
+          <a href="#why">Why TutiPays</a>
+          <a href="#how">How it works</a>
+          <a href="app.html">Partner Login</a>
+        </div>
+        <div>
+          <h5>Get started</h5>
+          <a href="app.html?signup=1">Become a Retailer</a>
+          <a href="app.html?signup=1">Become a Distributor</a>
+          <a href="mailto:support@tutipays.com">support@tutipays.com</a>
         </div>
       </div>
-      <div id="view"></div>
-    </main>
-  </div>
-
-  <div id="modal-root"></div>
-  <script src="app.js"></script>
+      <div class="fbottom">
+        <span>© <span id="yr"></span> TutiPays. All rights reserved.</span>
+        <span>Made for Indian retailers 🇮🇳</span>
+      </div>
+    </div>
+  </footer>
+  <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
 </body>
 </html>

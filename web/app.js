@@ -450,4 +450,5 @@ async function sha256hex(str) {
 }
 
 // ---------------- start ----------------
-if (State.token) App.boot(); else UI.authTab('login');
+if (State.token) App.boot();
+else UI.authTab(new URLSearchParams(location.search).has('signup') ? 'signup' : 'login');
