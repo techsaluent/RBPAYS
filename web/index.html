@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RBPAYS Panel</title>
+  <style>
+    :root {
+      --bg:#f4f6fb; --card:#ffffff; --ink:#1a2233; --muted:#6b7488; --line:#e5e9f2;
+      --brand:#2b57ff; --brand-ink:#fff; --ok:#137333; --warn:#b06000; --err:#c5221f;
+      --radius:12px; --shadow:0 1px 3px rgba(20,30,60,.08),0 8px 24px rgba(20,30,60,.06);
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      background:var(--bg); color:var(--ink); font-size:14px; }
+    a { color:var(--brand); text-decoration:none; }
+    button { font:inherit; cursor:pointer; }
+    input,select { font:inherit; }
+
+    /* ---- Auth screen ---- */
+    #auth { min-height:100vh; display:grid; place-items:center; padding:24px; }
+    .auth-card { width:100%; max-width:400px; background:var(--card); border-radius:var(--radius);
+      box-shadow:var(--shadow); padding:32px 28px; }
+    .brand { font-size:26px; font-weight:800; letter-spacing:1px; color:var(--brand); text-align:center; }
+    .brand small { display:block; font-size:12px; font-weight:500; color:var(--muted); letter-spacing:.5px; margin-top:4px; }
+    .tabs { display:flex; gap:8px; margin:22px 0 18px; }
+    .tabs button { flex:1; padding:9px; border:1px solid var(--line); background:#fff; border-radius:8px; color:var(--muted); }
+    .tabs button.on { background:var(--brand); color:#fff; border-color:var(--brand); }
+    .field { margin-bottom:14px; }
+    .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; }
+    .field input,.field select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .btn { width:100%; padding:11px; background:var(--brand); color:#fff; border:none; border-radius:8px; font-weight:600; }
+    .btn:disabled { opacity:.6; cursor:default; }
+    .btn.ghost { background:#fff; color:var(--brand); border:1px solid var(--brand); }
+    .btn.sm { width:auto; padding:7px 12px; font-size:13px; }
+    .msg { font-size:13px; padding:9px 12px; border-radius:8px; margin-bottom:12px; }
+    .msg.err { background:#fdecea; color:var(--err); }
+    .msg.ok  { background:#e6f4ea; color:var(--ok); }
+
+    /* ---- App shell ---- */
+    #app { display:none; grid-template-columns:230px 1fr; min-height:100vh; }
+    aside { background:#0f1830; color:#c7cfe2; padding:18px 14px; }
+    aside .brand { color:#fff; text-align:left; font-size:20px; }
+    nav { margin-top:22px; display:flex; flex-direction:column; gap:2px; }
+    nav a { color:#c7cfe2; padding:10px 12px; border-radius:8px; font-weight:500; }
+    nav a:hover { background:#1b2745; }
+    nav a.on { background:var(--brand); color:#fff; }
+    main { padding:22px 26px; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; gap:12px; flex-wrap:wrap; }
+    .topbar h1 { font-size:20px; margin:0; }
+    .who { display:flex; align-items:center; gap:14px; font-size:13px; color:var(--muted); }
+    .pill { background:#eef1f8; border-radius:999px; padding:5px 12px; font-weight:600; color:var(--ink); }
+    .pill.bal { background:#e6f0ff; color:var(--brand); }
+
+    .grid { display:grid; gap:16px; }
+    .cards { grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); }
+    .card { background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px 18px; }
+    .card .k { font-size:12px; color:var(--muted); }
+    .card .v { font-size:24px; font-weight:700; margin-top:6px; }
+    .panel { background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 20px; }
+    .panel h2 { font-size:15px; margin:0 0 14px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
+    .row .field { margin-bottom:0; }
+
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+    th { color:var(--muted); font-weight:600; font-size:12px; }
+    .tbl-wrap { overflow-x:auto; }
+    .tag { font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; text-transform:uppercase; }
+    .tag.success{background:#e6f4ea;color:var(--ok)} .tag.pending{background:#fef7e0;color:var(--warn)}
+    .tag.failed{background:#fdecea;color:var(--err)} .tag.refunded{background:#eceff4;color:var(--muted)}
+    .tag.active{background:#e6f4ea;color:var(--ok)} .tag.suspended{background:#fef7e0;color:var(--warn)}
+    .tag.blocked{background:#fdecea;color:var(--err)}
+
+    .muted { color:var(--muted); }
+    .right { text-align:right; }
+    .mt { margin-top:16px; }
+    .hidden { display:none !important; }
+
+    /* modal */
+    .modal-bg { position:fixed; inset:0; background:rgba(15,24,48,.45); display:grid; place-items:center; padding:20px; z-index:50; }
+    .modal { background:#fff; border-radius:var(--radius); box-shadow:var(--shadow); width:100%; max-width:440px; padding:22px 24px; max-height:90vh; overflow:auto; }
+    .modal h3 { margin:0 0 16px; font-size:16px; }
+    .modal .foot { display:flex; gap:10px; margin-top:18px; }
+    @media (max-width:720px){ #app{grid-template-columns:1fr} aside{display:none} }
+  </style>
+</head>
+<body>
+  <!-- Auth -->
+  <section id="auth">
+    <div class="auth-card">
+      <div class="brand">RBPAYS <small>Partner &amp; Admin Panel</small></div>
+      <div class="tabs">
+        <button id="tab-login" class="on" onclick="UI.authTab('login')">Login</button>
+        <button id="tab-signup" onclick="UI.authTab('signup')">Sign up</button>
+      </div>
+      <div id="auth-msg"></div>
+      <form id="login-form" onsubmit="return Auth.login(event)">
+        <div class="field"><label>Email, phone or username</label><input name="identifier" required autocomplete="username" /></div>
+        <div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password" /></div>
+        <button class="btn" type="submit">Login</button>
+      </form>
+      <form id="signup-form" class="hidden" onsubmit="return Auth.signup(event)">
+        <div class="field"><label>Full name</label><input name="full_name" required /></div>
+        <div class="field"><label>Username (optional)</label><input name="username" /></div>
+        <div class="field"><label>Email</label><input name="email" type="email" required /></div>
+        <div class="field"><label>Mobile (10 digit)</label><input name="phone" required /></div>
+        <div class="field"><label>Password (min 8)</label><input name="password" type="password" required /></div>
+        <button class="btn" type="submit">Create account</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- App -->
+  <div id="app">
+    <aside>
+      <div class="brand">RBPAYS</div>
+      <nav id="nav"></nav>
+    </aside>
+    <main>
+      <div class="topbar">
+        <h1 id="page-title">Dashboard</h1>
+        <div class="who">
+          <span class="pill bal" id="wallet-pill">₹0.00</span>
+          <span id="who-name"></span>
+          <span class="pill" id="who-role"></span>
+          <button class="btn ghost sm" onclick="Auth.logout()">Logout</button>
+        </div>
+      </div>
+      <div id="view"></div>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <script src="app.js"></script>
+</body>
+</html>
