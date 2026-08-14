@@ -1,12 +1,18 @@
 /* RBPAYS Panel — talks to the RBPAYS API. Pure vanilla JS, no build step. */
 
 // ------- Config: point this at your API. Override via ?api= or window.RBPAYS_API -------
-const Cfg = {
-  API: (new URLSearchParams(location.search).get('api')) ||
-       window.RBPAYS_API ||
-       (location.hostname === 'localhost' ? 'http://localhost:8080/api/v1'
-                                          : 'https://api.rbpays.in/api/v1'),
-};
+// Auto-selects the API by the domain the panel is served from, so the same files
+// work on tutipays.com and (during migration) rbpays.in.
+function defaultApiBase() {
+  const q = new URLSearchParams(location.search).get('api');
+  if (q) return q;
+  if (window.RBPAYS_API) return window.RBPAYS_API;
+  const h = location.hostname;
+  if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:8080/api/v1';
+  if (h.endsWith('rbpays.in')) return 'https://api.rbpays.in/api/v1';
+  return 'https://api.tutipays.com/api/v1'; // tutipays.com and anything else
+}
+const Cfg = { API: defaultApiBase() };
 
 const State = {
   token: localStorage.getItem('rb_token') || '',
