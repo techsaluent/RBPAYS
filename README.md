@@ -10,6 +10,7 @@ Gateway** collection — all settled against a per-user **wallet** with an
 append-only ledger.
 
 - **Stack:** Node.js + TypeScript + Express
+- **Web panel:** a zero-build admin + partner UI lives in [`web/`](./web) — login, dashboard, run any service, transactions/receipts, KYC, commissions
 - **Database:** self-hosted PostgreSQL on your VPS
 - **Auth:** JWT access tokens + rotating refresh tokens (bcrypt password hashing)
 - **Money:** stored as `BIGINT` paise (minor units) — never floats
