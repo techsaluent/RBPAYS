@@ -1,50 +1,65 @@
-# TutiPays web (landing + panel)
+# TutiPays web (single domain, path-based)
 
-The public front end for TutiPays — a marketing **landing page** with Login /
-Sign Up, plus the **partner & admin panel**. Zero build: plain HTML/CSS/JS that
-calls the API over HTTPS, hostable on any static site (e.g. a CloudPanel Static
-Site at **tutipays.com**).
+Everything on **one domain** (`tutipays.com`), no subdomains, no CORS:
 
-| File | What it is |
+| URL | Served by |
 | --- | --- |
-| `index.html` | Landing page (hero, services, Login / Sign Up buttons) |
-| `app.html` | The panel — login/signup screen + dashboard (admin & partner) |
-| `app.js` | Shared logic; auto-targets `https://api.tutipays.com/api/v1` |
+| `tutipays.com/` | Landing page (`web/index.html`) |
+| `tutipays.com/panel/` | Panel — login + dashboard (`web/panel/index.html` + `panel/app.js`) |
+| `tutipays.com/api/…` | The API app (Nginx proxies `/api` → `127.0.0.1:8090`) |
 
-Flow: **tutipays.com** (landing) → *Login* → `app.html` → dashboard.
-*Sign Up* → `app.html?signup=1` (signup tab pre-selected). Landing and panel are
-the **same origin**, so the auth token is shared between them.
+The panel calls the API at **`location.origin + '/api/v1'`** — same origin, so no
+CORS is involved. Override with `?api=` or `window.RBPAYS_API` if needed.
 
-`app.js` picks the API base from the hostname (`*.tutipays.com` → `api.tutipays.com`,
-`*.rbpays.in` → `api.rbpays.in`, `localhost` → local). Override with `?api=` or
-`window.RBPAYS_API`.
+## Files
+```
+web/
+  index.html          # landing (links to panel/ and panel/?signup=1)
+  panel/
+    index.html        # panel shell (login + dashboard)
+    app.js            # panel logic (API base = same origin /api/v1)
+```
 
-## Deploy on tutipays.com (CloudPanel)
+## Deploy on one CloudPanel Static Site
 
-1. **Cloudflare** (tutipays.com) → add `A` records: `@`/`www` (or just the root)
-   and `api`, both → your VPS IP, proxied 🟠. Also `api` for the API.
-2. **CloudPanel** → **Add Site → Create a Static Site** → `tutipays.com`.
-   Issue SSL (import the `*.tutipays.com` Cloudflare Origin cert).
-3. Copy the three files into its web root:
+1. **Cloudflare** (tutipays.com) → add `A` records `@` and `www` → your VPS IP,
+   proxied 🟠. SSL/TLS → **Full (strict)**. (No `api`/`panel` subdomains needed.)
+2. **CloudPanel → Add Site → Create a Static Site** → `tutipays.com`
+   (add `www.tutipays.com` too). Import a `tutipays.com` + `*.tutipays.com`
+   Cloudflare Origin cert under SSL/TLS.
+3. **Add the API proxy to the site's vhost.** CloudPanel → the site → **Vhost**
+   (edit) → add this inside the `server { … }` block, above `location / { … }`:
+   ```nginx
+   location /api/ {
+       proxy_pass http://127.0.0.1:8090;
+       proxy_http_version 1.1;
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+   }
+   ```
+   Save (CloudPanel reloads Nginx). Now `tutipays.com/api/v1/…` reaches the app;
+   everything else is served as static files.
+4. **Publish the files** into the site web root:
    ```bash
    SRC=/home/rbpays-api/htdocs/api.rbpays.in/app/web
    DEST=$(ls -d /home/*/htdocs/tutipays.com)
-   cp "$SRC/index.html" "$SRC/app.html" "$SRC/app.js" "$DEST/"
-   chown "$(stat -c '%U' "$DEST")": "$DEST"/index.html "$DEST"/app.html "$DEST"/app.js
+   mkdir -p "$DEST/panel"
+   cp "$SRC/index.html" "$DEST/"
+   cp "$SRC/panel/index.html" "$SRC/panel/app.js" "$DEST/panel/"
+   chown -R "$(stat -c '%U' "$DEST")": "$DEST/index.html" "$DEST/panel"
    ```
-4. **Allow the origin in the API's CORS** — add `https://tutipays.com` to
-   `CORS_ORIGINS` in the API `.env` and `pm2 restart rbpays-api`.
 5. Open **https://tutipays.com** → Login / Sign Up → dashboard.
+   Webhook URL becomes `https://tutipays.com/api/v1/webhooks/razorpay`.
+
+> The API app still runs under PM2 on `127.0.0.1:8090` — unchanged. This site
+> just serves the static files and proxies `/api` to it, so `CORS_ORIGINS` is no
+> longer required (same origin), though leaving it set does no harm.
 
 ## Local preview
-
 ```bash
 cd web && python3 -m http.server 8777
-# open http://localhost:8777/?api=https://api.tutipays.com/api/v1
+# landing: http://localhost:8777/
+# panel:   http://localhost:8777/panel/?api=https://tutipays.com/api/v1
 ```
-
-## Notes
-
-- Sandbox "top up" works only while `PROVIDER_GATEWAY=sandbox`; with real Razorpay
-  it goes through Razorpay Checkout.
-- Landing copy/branding is original (TutiPays) — swap in your own logo/text freely.
