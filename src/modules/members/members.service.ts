@@ -13,12 +13,13 @@ export const ROLE_RANK: Record<string, number> = {
 export const MEMBER_ROLES = ['retailer', 'distributor', 'master_distributor'] as const;
 
 const PUBLIC_COLUMNS =
-  'id, full_name, email, phone, role, status, kyc_status, parent_id, commission_plan_id, created_at';
+  'id, full_name, username, email, phone, role, status, kyc_status, parent_id, commission_plan_id, created_at';
 
 export interface CreateMemberInput {
   parentId: string;
   parentRole: string;
   full_name: string;
+  username?: string;
   email: string;
   phone: string;
   password: string;
@@ -42,10 +43,13 @@ export async function createMember(input: CreateMemberInput) {
 
   return withTransaction(async (client) => {
     const dupe = await client.query(
-      'SELECT 1 FROM users WHERE lower(email) = lower($1) OR phone = $2 LIMIT 1',
-      [input.email, input.phone],
+      `SELECT 1 FROM users
+        WHERE lower(email) = lower($1) OR phone = $2
+           OR ($3::text IS NOT NULL AND lower(username) = lower($3))
+        LIMIT 1`,
+      [input.email, input.phone, input.username ?? null],
     );
-    if (dupe.rowCount) throw ApiError.conflict('A user with this email or phone already exists');
+    if (dupe.rowCount) throw ApiError.conflict('A user with this email, phone or username already exists');
 
     // Default commission plan when none specified.
     const planId =
@@ -55,10 +59,10 @@ export async function createMember(input: CreateMemberInput) {
       null;
 
     const { rows } = await client.query(
-      `INSERT INTO users (full_name, email, phone, password_hash, role, parent_id, commission_plan_id, activated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7, now())
+      `INSERT INTO users (full_name, username, email, phone, password_hash, role, parent_id, commission_plan_id, activated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now())
        RETURNING ${PUBLIC_COLUMNS}`,
-      [input.full_name, input.email, input.phone, password_hash, input.role, input.parentId, planId],
+      [input.full_name, input.username ?? null, input.email, input.phone, password_hash, input.role, input.parentId, planId],
     );
     const member = rows[0];
 

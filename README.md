@@ -106,8 +106,8 @@ formatted rupee string where relevant.
 
 | Method | Path | Auth | Body |
 | --- | --- | --- | --- |
-| POST | `/signup` | – | `full_name, email, phone, password` |
-| POST | `/login` | – | `identifier` (email or phone), `password` |
+| POST | `/signup` | – | `full_name, email, phone, password, username?` |
+| POST | `/login` | – | `identifier` (email, phone **or username**), `password` |
 | POST | `/refresh` | – | `refresh_token` |
 | POST | `/logout` | – | `refresh_token` |
 | GET | `/me` | Bearer | – |
@@ -222,7 +222,7 @@ MDR**: on success the wallet is credited `amount − MDR`.
 
 ### Wallet transfer — `/wallet-transfer` (P2P)
 
-- `POST /` — transfer to another member. `{ to (phone or email), amount, charge?, note? }`.
+- `POST /` — transfer to another member. `{ to (phone, email **or username**), amount, charge?, note? }`.
   Debits the sender `amount + charge`, credits the receiver `amount`, atomically.
   Idempotent on `reference` / `Idempotency-Key`. `GET /` lists sent + received.
 

@@ -40,9 +40,9 @@ router.post(
       return;
     }
 
-    // Resolve receiver by phone or email; block self-transfer.
+    // Resolve receiver by phone, email or username; block self-transfer.
     const recv = await query<{ id: string }>(
-      'SELECT id FROM users WHERE phone = $1 OR lower(email) = lower($1) LIMIT 1',
+      'SELECT id FROM users WHERE phone = $1 OR lower(email) = lower($1) OR lower(username) = lower($1) LIMIT 1',
       [body.to],
     );
     const receiverId = recv.rows[0]?.id;

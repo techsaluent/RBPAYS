@@ -2,6 +2,7 @@ import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
+import { usernameSchema } from '../auth/auth.schemas';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { getWalletByUser } from '../wallet/wallet.service';
@@ -46,6 +47,7 @@ router.get(
 
 const createMemberSchema = z.object({
   full_name: z.string().trim().min(2).max(120),
+  username: usernameSchema.optional(),
   email: z.string().trim().toLowerCase().email(),
   phone: z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
   password: z.string().min(8).max(128),

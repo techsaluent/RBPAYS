@@ -8,13 +8,14 @@ import { query, withTransaction } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { debit } from '../wallet/wallet.service';
 import { createMember } from '../members/members.service';
+import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
 
 const router = Router();
 router.use(requireAuth, requireRole('admin'));
 
 const USER_COLUMNS =
-  'id, full_name, email, phone, role, status, kyc_status, parent_id, commission_plan_id, activated_at, created_at';
+  'id, full_name, username, email, phone, role, status, kyc_status, parent_id, commission_plan_id, activated_at, created_at';
 
 // ---------------------------------------------------------------------
 // Dashboard
@@ -47,7 +48,7 @@ router.get(
       `SELECT ${USER_COLUMNS} FROM users
         WHERE ($1::text IS NULL OR role = $1)
           AND ($2::text IS NULL OR status = $2)
-          AND ($3::text IS NULL OR full_name ILIKE $3 OR email ILIKE $3 OR phone ILIKE $3)
+          AND ($3::text IS NULL OR full_name ILIKE $3 OR email ILIKE $3 OR phone ILIKE $3 OR username ILIKE $3)
         ORDER BY created_at DESC
         LIMIT $4 OFFSET $5`,
       [q.role ?? null, q.status ?? null, like, q.limit, q.offset],
@@ -71,6 +72,7 @@ router.get(
 
 const createUserSchema = z.object({
   full_name: z.string().trim().min(2).max(120),
+  username: usernameSchema.optional(),
   email: z.string().trim().toLowerCase().email(),
   phone: z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
   password: z.string().min(8).max(128),

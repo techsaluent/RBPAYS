@@ -14,6 +14,7 @@ import { LoginInput, SignupInput } from './auth.schemas';
 export interface PublicUser {
   id: string;
   full_name: string;
+  username: string | null;
   email: string;
   phone: string;
   role: string;
@@ -27,7 +28,7 @@ interface UserRow extends PublicUser {
 }
 
 const PUBLIC_COLUMNS =
-  'id, full_name, email, phone, role, status, kyc_status, created_at';
+  'id, full_name, username, email, phone, role, status, kyc_status, created_at';
 
 function toTokens(user: PublicUser) {
   return {
@@ -57,18 +58,21 @@ export async function signup(input: SignupInput) {
   return withTransaction(async (client) => {
     // Uniqueness is also enforced by DB indexes; check first for a clean error.
     const dupe = await client.query(
-      'SELECT 1 FROM users WHERE lower(email) = lower($1) OR phone = $2 LIMIT 1',
-      [input.email, input.phone],
+      `SELECT 1 FROM users
+        WHERE lower(email) = lower($1) OR phone = $2
+           OR ($3::text IS NOT NULL AND lower(username) = lower($3))
+        LIMIT 1`,
+      [input.email, input.phone, input.username ?? null],
     );
     if (dupe.rowCount) {
-      throw ApiError.conflict('A user with this email or phone already exists');
+      throw ApiError.conflict('A user with this email, phone or username already exists');
     }
 
     const { rows } = await client.query<UserRow>(
-      `INSERT INTO users (full_name, email, phone, password_hash)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO users (full_name, email, phone, username, password_hash)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING ${PUBLIC_COLUMNS}`,
-      [input.full_name, input.email, input.phone, password_hash],
+      [input.full_name, input.email, input.phone, input.username ?? null, password_hash],
     );
     const user = rows[0];
 
@@ -84,7 +88,7 @@ export async function login(input: LoginInput) {
   const { rows } = await query<UserRow>(
     `SELECT ${PUBLIC_COLUMNS}, password_hash
        FROM users
-      WHERE lower(email) = lower($1) OR phone = $1
+      WHERE lower(email) = lower($1) OR phone = $1 OR lower(username) = lower($1)
       LIMIT 1`,
     [input.identifier],
   );
