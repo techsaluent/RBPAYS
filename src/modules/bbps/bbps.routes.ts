@@ -10,6 +10,7 @@ import { rupeesToPaise } from '../../utils/money';
 import { makeReference } from '../../utils/reference';
 import { getBbpsProvider } from '../../providers';
 import { settleServiceTxn } from '../_shared/settle';
+import { requireService } from '../../middleware/service';
 
 const router = Router();
 router.use(requireAuth);
@@ -33,6 +34,7 @@ const listSchema = z.object({
 // Pay a bill via BBPS: debit wallet (amount + charge), record the payment.
 router.post(
   '/pay',
+  requireService('bbps'),
   validate(createSchema),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();

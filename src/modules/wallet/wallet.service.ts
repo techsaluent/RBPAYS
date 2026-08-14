@@ -11,7 +11,9 @@ export type WalletSource =
   | 'payout'
   | 'payment_gateway'
   | 'reversal'
-  | 'adjustment';
+  | 'adjustment'
+  | 'commission'
+  | 'activation_fee';
 
 interface WalletRow {
   id: string;

@@ -18,6 +18,12 @@ default to a built-in **sandbox** so the whole API runs with zero external
 credentials; switch to real providers (Razorpay/RazorpayX, an aggregator switch)
 via `PROVIDER_*` env vars.
 
+It also models a full **distribution hierarchy** — `admin > master_distributor >
+distributor > retailer > user` — with an **admin dashboard**, **KYC** review,
+per-member **service activation**, configurable **commission plans**, and an
+engine that **distributes commission up the chain** on every successful
+transaction.
+
 ---
 
 ## Quick start (local)
@@ -26,6 +32,7 @@ via `PROVIDER_*` env vars.
 cp .env.example .env      # then edit secrets & DATABASE_URL
 npm install
 npm run migrate           # apply db/migrations to your Postgres
+npm run seed:admin        # create the first admin + default commission plan
 npm run dev                # start with hot reload (http://localhost:8080)
 ```
 
@@ -46,9 +53,14 @@ src/
     auth/                   # signup, login, refresh, logout, me
     wallet/                 # balance + ledger; debit()/credit()/reverse()
     beneficiaries/          # saved bank beneficiaries (DMT & payout)
-    _shared/settle.ts       # apply provider result; auto-reverse on failure
+    _shared/settle.ts       # apply provider result; reverse + distribute commission
     webhooks/               # signed async callbacks (razorpay, aggregator)
     dmt/  bbps/  recharge/  payout/  payment-gateway/
+    kyc/                    # document submission + admin review
+    members/                # shared onboarding + downline queries
+    network/                # retailer/distributor/MD panel + onboarding
+    commission/             # commission engine + earnings
+    admin/                  # dashboard, users, services, commission plans
   providers/                # provider abstraction + adapters
     types.ts                #   interfaces + result types
     sandbox.ts              #   default no-credentials provider
@@ -149,6 +161,39 @@ return `{"status":"duplicate"}`).
   AGGREGATOR_WEBHOOK_SECRET)`. Body `{ reference, service, status, provider_ref?,
   utr?, message? }` settles the matching DMT/BBPS/recharge/payout transaction.
 
+### KYC — `/kyc`
+
+- `POST /` — submit a document. Body: `doc_type(aadhaar|pan|gst|shop_photo|
+  bank_proof|selfie|other), doc_number?, file_url?`.
+- `GET /` — my documents + my overall `kyc_status`.
+- `GET /pending` *(admin)* — all pending documents.
+- `POST /:id/review` *(admin)* — `{ status: verified|rejected, remarks? }`;
+  recomputes the owner's `kyc_status`.
+
+### Network / panels — `/network` (retailer, distributor, master distributor)
+
+- `GET /panel` — wallet, downline counts, and earnings summary for the caller.
+- `POST /members` — onboard a downline member (rank-checked: you may only create
+  a strictly lower role). Body: `full_name, email, phone, password, role`.
+- `GET /members?role=` — direct downline. `GET /downline` — full tree.
+- `GET /earnings` — my distributed commission ledger + total.
+
+### Admin — `/admin` (admin only)
+
+- `GET /dashboard` — user counts by role, wallet float, per-service volumes,
+  pending KYC, total commission paid.
+- **Users:** `GET /users?role=&status=&q=`, `GET /users/:id` (with wallet +
+  services), `POST /users` (onboard any member role), `PATCH /users/:id/status`
+  (`active|suspended|blocked`), `PATCH /users/:id/plan` (assign commission plan),
+  `POST /users/:id/services` (`{ service_code, active, apply_activation_fee? }`).
+- **Services:** `GET /services`, `PATCH /services/:code` (`{ enabled?,
+  activation_charge? }` in rupees).
+- **Commission plans:** `GET /commission-plans`, `POST /commission-plans`,
+  `GET /commission-plans/:id` (with rules), `POST /commission-plans/:id/rules`,
+  `DELETE /commission-plans/:id/rules/:ruleId`.
+
+Create the first admin with `npm run seed:admin` (reads `ADMIN_*` env).
+
 ### Error shape
 
 ```json
@@ -196,6 +241,31 @@ To plug in a real aggregator, set `PROVIDER_DMT=aggregator` (etc.) and the
 `PROVIDER_GATEWAY=razorpay` / `PROVIDER_PAYOUT=razorpay` and the `RAZORPAY_*`
 vars.
 
+## Distribution hierarchy & commission
+
+Roles form a chain: **admin → master_distributor → distributor → retailer →
+user**. Each member has a `parent_id` (who onboarded them) and a
+`commission_plan_id`. A member may only onboard a strictly lower role.
+
+A **commission plan** holds **slab rules** per service and amount range. Each rule
+sets the customer `charge` and the commission each level earns, as `flat` (rupees)
+or `percent` (of the transaction amount). On every **successful** service
+transaction, the engine (`commission/commission.service.ts`) resolves the
+performer's plan + matching slab and credits, up the ancestor chain:
+
+- **retailer** level → the performer (always earns the base)
+- **distributor** / **master_distributor** level → the nearest ancestor of that role
+- **admin** level → the nearest admin ancestor, else the global admin
+
+Each payout is written to `commission_entries` (unique per `txn + level`, so
+distribution is idempotent) and credited to the beneficiary's wallet with source
+`commission`. Members see their earnings at `GET /network/earnings`.
+
+**Service gating.** Every transaction route is guarded by `requireService`: the
+account must be `active`, the service globally `enabled`, and — if the member has
+a `user_services` row — that row `active`. Admins toggle these and can charge a
+per-service activation fee.
+
 ---
 
 ## Deploying to your VPS
@@ -229,4 +299,5 @@ vars.
 | `npm start` | run compiled server |
 | `npm run migrate` | apply pending migrations |
 | `npm run migrate:status` | list applied/pending migrations |
+| `npm run seed:admin` | create the first admin + default commission plan (`ADMIN_*` env) |
 | `npm run typecheck` | type-check without emit |

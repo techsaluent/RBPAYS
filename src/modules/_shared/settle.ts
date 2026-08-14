@@ -2,14 +2,16 @@ import { PoolClient } from 'pg';
 import { withTransaction } from '../../../db';
 import { logger } from '../../config/logger';
 import { reverse } from '../wallet/wallet.service';
+import { distributeCommission } from '../commission/commission.service';
 import { ProviderResult } from '../../providers/types';
 
-// Whitelist of debit-based service tables and whether they carry a UTR.
+// Whitelist of debit-based service tables: whether they carry a UTR, and the
+// service code used for commission distribution.
 const TABLES = {
-  dmt_transactions: { utr: true },
-  payout_transactions: { utr: true },
-  bbps_transactions: { utr: false },
-  recharge_transactions: { utr: false },
+  dmt_transactions: { utr: true, service: 'dmt' },
+  payout_transactions: { utr: true, service: 'payout' },
+  bbps_transactions: { utr: false, service: 'bbps' },
+  recharge_transactions: { utr: false, service: 'recharge' },
 } as const;
 
 export type ServiceTable = keyof typeof TABLES;
@@ -68,6 +70,17 @@ async function applyResult(
       description: `Reversal for failed ${table.replace('_transactions', '')} (${row.id})`,
     });
     await client.query(`UPDATE ${table} SET reversed_at = now() WHERE id = $1`, [row.id]);
+  }
+
+  // On success, distribute commission up the retailer -> distributor -> MD ->
+  // admin chain (idempotent; no-op if no plan/rule matches the performer).
+  if (result.status === 'success') {
+    await distributeCommission(client, {
+      performerId: row.user_id,
+      serviceCode: meta.service,
+      amountPaise: Number(row.amount_paise),
+      txnId: row.id,
+    });
   }
 }
 

@@ -9,6 +9,7 @@ import { credit } from '../wallet/wallet.service';
 import { rupeesToPaise } from '../../utils/money';
 import { makeReference } from '../../utils/reference';
 import { getGatewayProvider } from '../../providers';
+import { requireService } from '../../middleware/service';
 
 const router = Router();
 router.use(requireAuth);
@@ -35,6 +36,7 @@ const listSchema = z.object({
 // Create a collection order. Frontend uses the returned order to open checkout.
 router.post(
   '/orders',
+  requireService('payment_gateway'),
   validate(createSchema),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();

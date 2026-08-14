@@ -10,6 +10,7 @@ import { rupeesToPaise } from '../../utils/money';
 import { makeReference } from '../../utils/reference';
 import { getDmtProvider } from '../../providers';
 import { settleServiceTxn } from '../_shared/settle';
+import { requireService } from '../../middleware/service';
 
 const router = Router();
 router.use(requireAuth);
@@ -33,6 +34,7 @@ const listSchema = z.object({
 // Create a DMT transfer: debit wallet (amount + charge) and record it atomically.
 router.post(
   '/',
+  requireService('dmt'),
   validate(createSchema),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();

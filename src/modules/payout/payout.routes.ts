@@ -10,6 +10,7 @@ import { rupeesToPaise } from '../../utils/money';
 import { makeReference } from '../../utils/reference';
 import { getPayoutProvider } from '../../providers';
 import { settleServiceTxn } from '../_shared/settle';
+import { requireService } from '../../middleware/service';
 
 const router = Router();
 router.use(requireAuth);
@@ -33,6 +34,7 @@ const listSchema = z.object({
 // Initiate a payout: debit wallet (amount + charge), record it.
 router.post(
   '/',
+  requireService('payout'),
   validate(createSchema),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();

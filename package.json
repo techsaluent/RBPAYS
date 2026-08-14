@@ -12,6 +12,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "migrate": "ts-node db/migrate.ts up",
     "migrate:status": "ts-node db/migrate.ts status",
+    "seed:admin": "ts-node db/seed-admin.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint \"src/**/*.ts\" \"db/**/*.ts\""
   },
