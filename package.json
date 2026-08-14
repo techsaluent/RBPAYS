@@ -2,13 +2,13 @@
   "name": "rbpays-api",
   "version": "0.1.0",
   "description": "API backend for api.rbpays.in — fintech aggregator (DMT, BBPS, Recharge, Payout, Payment Gateway)",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "migrate": "ts-node db/migrate.ts up",
     "migrate:status": "ts-node db/migrate.ts status",

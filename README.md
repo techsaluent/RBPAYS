@@ -392,7 +392,7 @@ per-service activation fee.
    npm start                    # or run under a process manager
    ```
 3. **Keep it running** with systemd or pm2, e.g. a systemd unit running
-   `node dist/index.js` with `EnvironmentFile=/path/.env`.
+   `node dist/src/index.js` with `EnvironmentFile=/path/.env`.
 4. **Reverse proxy** `api.rbpays.in` → `127.0.0.1:8080` with Nginx/Caddy and
    terminate TLS there (the app already sets `trust proxy`).
 
