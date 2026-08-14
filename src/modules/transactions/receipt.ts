@@ -41,6 +41,27 @@ function detailRows(service: string, d: Detail): [string, string][] {
         ['Type', s(d.recharge_type)],
         ['Number', s(d.number)],
       ];
+    case 'aeps':
+      return [
+        ['Type', s(d.txn_type)],
+        ['Aadhaar', s(d.aadhaar_ref)],
+        ['Bank IIN', s(d.bank_iin)],
+        ['RRN', s(d.rrn)],
+        ['Balance', d.balance_paise == null ? '-' : `₹${(Number(d.balance_paise) / 100).toFixed(2)}`],
+      ];
+    case 'cms':
+      return [
+        ['Biller', s(d.biller_name ?? d.agent_id)],
+        ['Account', s(d.account_number)],
+        ['Customer', s(d.customer_name)],
+      ];
+    case 'card_swipe':
+      return [
+        ['Card', `${s(d.card_network)} ${s(d.card_type)}`.trim()],
+        ['Card No.', d.card_last4 ? `**** ${d.card_last4}` : '-'],
+        ['RRN', s(d.rrn)],
+        ['Terminal', s(d.tid)],
+      ];
     case 'payment_gateway':
       return [['Purpose', 'Wallet top-up']];
     default:
@@ -53,6 +74,9 @@ const SERVICE_TITLE: Record<string, string> = {
   payout: 'Payout',
   bbps: 'Bill Payment',
   recharge: 'Recharge',
+  aeps: 'AEPS',
+  cms: 'Cash Management',
+  card_swipe: 'Card Swipe',
   payment_gateway: 'Wallet Top-up',
 };
 

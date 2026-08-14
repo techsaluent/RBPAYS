@@ -62,6 +62,9 @@ export const env = {
   PROVIDER_RECHARGE: optional('PROVIDER_RECHARGE', 'sandbox'),
   PROVIDER_PAYOUT: optional('PROVIDER_PAYOUT', 'sandbox'),
   PROVIDER_GATEWAY: optional('PROVIDER_GATEWAY', 'sandbox'),
+  PROVIDER_AEPS: optional('PROVIDER_AEPS', 'sandbox'),
+  PROVIDER_CMS: optional('PROVIDER_CMS', 'sandbox'),
+  PROVIDER_CARD_SWIPE: optional('PROVIDER_CARD_SWIPE', 'sandbox'),
 
   HTTP_TIMEOUT_MS: int('HTTP_TIMEOUT_MS', 20_000),
 

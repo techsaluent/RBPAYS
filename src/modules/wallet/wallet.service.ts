@@ -13,7 +13,10 @@ export type WalletSource =
   | 'reversal'
   | 'adjustment'
   | 'commission'
-  | 'activation_fee';
+  | 'activation_fee'
+  | 'aeps'
+  | 'cms'
+  | 'card_swipe';
 
 interface WalletRow {
   id: string;

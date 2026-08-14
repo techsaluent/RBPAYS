@@ -8,7 +8,7 @@ import { ProviderResult } from '../../providers/types';
 
 export interface RunOptions {
   userId: string;
-  serviceCode: string; // dmt | bbps | recharge | payout
+  serviceCode: string; // dmt | bbps | recharge | payout | cms | aeps | card_swipe
   table: string; // detail table name
   prefix: string; // reference prefix, e.g. DMT
   reference?: string; // client reference / Idempotency-Key
@@ -16,6 +16,12 @@ export interface RunOptions {
   clientChargePaise?: number; // used only when no commission rule matches
   description: string;
   providerName: string;
+  /**
+   * debit  (default): retailer pays; net = amount + charge - retailer_commission.
+   * credit          : retailer receives; net = amount + retailer_commission - charge.
+   *   AEPS earns commission (charge 0); Card Swipe is charged the MDR (charge > 0).
+   */
+  flow?: 'debit' | 'credit';
   /** Insert the service detail row (pending). Return its id. */
   insertServiceRow: (client: PoolClient, ctx: { reference: string; chargePaise: number }) => Promise<string>;
   /** Call the external provider (runs after the debit commits). */
@@ -51,9 +57,13 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
   if (existing) return existing;
 
   // 2) Compute the money split up front so the retailer is netted.
+  const flow = opts.flow ?? 'debit';
   const dist = await computeDistribution(opts.userId, opts.serviceCode, opts.amountPaise);
   const chargePaise = dist.ruleMatched ? dist.chargePaise : opts.clientChargePaise ?? 0;
-  const netPaise = Math.max(0, opts.amountPaise + chargePaise - dist.retailerPaise);
+  const netPaise =
+    flow === 'credit'
+      ? Math.max(0, opts.amountPaise + dist.retailerPaise - chargePaise) // received on success
+      : Math.max(0, opts.amountPaise + chargePaise - dist.retailerPaise); // debited now
 
   let ids: { serviceTxnId: string; masterId: string };
   try {
@@ -63,11 +73,12 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
         `INSERT INTO transactions
            (user_id, service, direction, service_txn_id, reference,
             amount_paise, charge_paise, commission_paise, net_paise, status, commission_breakdown)
-         VALUES ($1,$2,'debit',$3,$4,$5,$6,$7,$8,'pending',$9)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10)
          RETURNING id`,
         [
           opts.userId,
           opts.serviceCode,
+          flow, // direction: 'debit' | 'credit'
           serviceTxnId,
           reference,
           opts.amountPaise,
@@ -77,13 +88,16 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
           JSON.stringify(dist.entries),
         ],
       );
-      await debit(client, {
-        userId: opts.userId,
-        amountPaise: netPaise,
-        source: opts.serviceCode as WalletSource,
-        referenceId: serviceTxnId,
-        description: opts.description,
-      });
+      // Debit flow reserves funds now; credit flow settles the wallet on success.
+      if (flow === 'debit') {
+        await debit(client, {
+          userId: opts.userId,
+          amountPaise: netPaise,
+          source: opts.serviceCode as WalletSource,
+          referenceId: serviceTxnId,
+          description: opts.description,
+        });
+      }
       return { serviceTxnId, masterId: master.rows[0].id };
     });
   } catch (err) {

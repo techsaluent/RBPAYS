@@ -2,8 +2,10 @@
 
 Backend API for the RBPAYS fintech platform. Provides user **signup/login** and
 core modules for **DMT** (Domestic Money Transfer), **BBPS** (Bharat Bill
-Payment System), **Recharge**, **Payout**, and **Payment Gateway** collection —
-all settled against a per-user **wallet** with an append-only ledger.
+Payment System), **Recharge**, **Payout**, **AEPS** (Aadhaar Enabled Payment
+System), **CMS** (Cash Management Services), **Card Swipe** (mPOS), and
+**Payment Gateway** collection — all settled against a per-user **wallet** with
+an append-only ledger.
 
 - **Stack:** Node.js + TypeScript + Express
 - **Database:** self-hosted PostgreSQL on your VPS
@@ -60,6 +62,7 @@ src/
     transactions/           # unified ledger, list/get, printable receipt
     webhooks/               # signed async callbacks (razorpay, aggregator)
     dmt/  bbps/  recharge/  payout/  payment-gateway/
+    aeps/  cms/  card-swipe/  # AEPS (credit), CMS (debit), Card Swipe (credit)
     kyc/                    # document submission + admin review
     members/                # shared onboarding + downline queries
     network/                # retailer/distributor/MD panel + onboarding
@@ -164,6 +167,34 @@ return `{"status":"duplicate"}`).
 - `POST /aggregator` — header `X-Webhook-Signature = HMAC-SHA256(rawBody,
   AGGREGATOR_WEBHOOK_SECRET)`. Body `{ reference, service, status, provider_ref?,
   utr?, message? }` settles the matching DMT/BBPS/recharge/payout transaction.
+
+### AEPS — `/aeps` (credit / earning)
+
+Aadhaar Enabled Payments. A **credit** service: on success the retailer's wallet
+is credited the settled amount **plus** their commission.
+
+- `POST /cash-withdrawal` — `{ aadhaar_ref, bank_iin, amount, bank_name?, mobile? }`.
+  Wallet credited `amount + commission`.
+- `POST /balance-enquiry`, `POST /mini-statement` — `{ aadhaar_ref, bank_iin }`.
+  Amount 0; earns the configured (usually flat) commission; balance enquiry returns
+  the customer's bank `balance_paise`.
+- `GET /`, `GET /:id`. (`aadhaar_ref` is a masked reference — never send full biometric.)
+
+### CMS — `/cms` (debit / earning)
+
+Cash Management Services / collection. A **debit** service like BBPS: the retailer
+is net-debited (`amount − commission`) and earns commission.
+
+- `POST /pay` — `{ agent_id, account_number, amount, biller_name?, customer_name?, charge? }`.
+- `GET /`, `GET /:id`.
+
+### Card Swipe — `/card-swipe` (credit / MDR charged)
+
+mPOS card collection. A **credit** service where the retailer is **charged the
+MDR**: on success the wallet is credited `amount − MDR`.
+
+- `POST /` — `{ amount, card_network?, card_type?, card_last4?, tid? }`.
+- `GET /`, `GET /:id`.
 
 ### Transactions — `/transactions`
 
@@ -272,16 +303,25 @@ A **commission plan** holds **slab rules** per service and amount range. Each ru
 sets the customer `charge` and the commission each level earns, as `flat` (rupees)
 or `percent` (of the transaction amount).
 
-**Net commission (retailer is netted).** The breakdown is computed *before* the
-debit, and the retailer is charged **net of their own commission**:
+**Two money flows.** Services are either **debit** (retailer pays) or **credit**
+(retailer receives), and the retailer is always netted against their own
+commission and any charge:
 
-```
-net_debit = amount + charge − retailer_commission
-```
+| Flow | Services | Wallet effect on success |
+| --- | --- | --- |
+| **debit** | DMT, BBPS, Recharge, Payout, CMS | `net_debit = amount + charge − retailer_commission` |
+| **credit** | AEPS, Card Swipe | `net_credit = amount + retailer_commission − charge` |
 
-So a ₹100 recharge at 2% retailer commission debits ₹98 in a single ledger entry
-(not ₹100 then a ₹2 credit). On **success**, only the **upline** wallets are
-credited from platform margin, up the ancestor chain:
+- **DMT** charges the retailer a fee (`charge > 0`) — standard debit.
+- **CMS** earns commission — the retailer is debited `amount − commission`.
+- **AEPS** earns commission — the wallet is credited `amount + commission`.
+- **Card Swipe** is charged the **MDR** (`charge > 0`) — credited `amount − MDR`.
+
+**Net commission (retailer is netted).** The breakdown is computed *before* any
+money moves, so a ₹100 recharge at 2% retailer commission debits ₹98 in a single
+ledger entry (not ₹100 then a ₹2 credit). On **success**, the **upline** wallets are
+credited from platform margin, up the ancestor chain (for credit-flow services the
+retailer is also credited the settlement amount):
 
 - **retailer** level → the performer — realised as the reduced debit (recorded for
   earnings, not credited again)

@@ -12,6 +12,10 @@ export interface ProviderResult {
   providerRef?: string;
   /** Bank UTR for DMT/payout when available. */
   utr?: string;
+  /** Retrieval reference number for AEPS / card swipe. */
+  rrn?: string;
+  /** Customer bank balance in paise (AEPS balance enquiry). */
+  balancePaise?: number;
   /** Human-readable status detail. */
   message?: string;
   /** Raw provider response for auditing/debugging. */
@@ -91,6 +95,47 @@ export interface BbpsProvider {
 export interface RechargeProvider {
   readonly name: string;
   recharge(input: RechargeInput): Promise<ProviderResult>;
+}
+
+export interface AepsInput {
+  reference: string;
+  txnType: 'cash_withdrawal' | 'balance_enquiry' | 'mini_statement';
+  amountPaise: number; // 0 for balance enquiry / mini statement
+  aadhaarRef: string;
+  bankIin: string;
+  mobile?: string;
+}
+
+export interface CmsPayInput {
+  reference: string;
+  amountPaise: number;
+  agentId: string;
+  accountNumber: string;
+  customerName?: string;
+}
+
+export interface CardSwipeInput {
+  reference: string;
+  amountPaise: number;
+  cardNetwork?: string;
+  cardType?: 'credit' | 'debit';
+  cardLast4?: string;
+  tid?: string;
+}
+
+export interface AepsProvider {
+  readonly name: string;
+  execute(input: AepsInput): Promise<ProviderResult>;
+}
+
+export interface CmsProvider {
+  readonly name: string;
+  pay(input: CmsPayInput): Promise<ProviderResult>;
+}
+
+export interface CardSwipeProvider {
+  readonly name: string;
+  swipe(input: CardSwipeInput): Promise<ProviderResult>;
 }
 
 export interface GatewayProvider {

@@ -5,6 +5,9 @@ const SERVICE_TABLES: Record<string, string> = {
   bbps: 'bbps_transactions',
   recharge: 'recharge_transactions',
   payout: 'payout_transactions',
+  aeps: 'aeps_transactions',
+  cms: 'cms_transactions',
+  card_swipe: 'card_swipe_transactions',
 };
 
 /** Aggregate stats for the admin dashboard. */

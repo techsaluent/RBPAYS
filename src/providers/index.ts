@@ -1,20 +1,33 @@
 import { env } from '../config/env';
 import {
+  AepsProvider,
   BbpsProvider,
+  CardSwipeProvider,
+  CmsProvider,
   DmtProvider,
   GatewayProvider,
   PayoutProvider,
   RechargeProvider,
 } from './types';
 import {
+  sandboxAeps,
   sandboxBbps,
+  sandboxCardSwipe,
+  sandboxCms,
   sandboxDmt,
   sandboxGateway,
   sandboxPayout,
   sandboxRecharge,
 } from './sandbox';
 import { razorpayGateway, razorpayPayout } from './razorpay';
-import { aggregatorBbps, aggregatorDmt, aggregatorRecharge } from './aggregator';
+import {
+  aggregatorAeps,
+  aggregatorBbps,
+  aggregatorCardSwipe,
+  aggregatorCms,
+  aggregatorDmt,
+  aggregatorRecharge,
+} from './aggregator';
 
 /**
  * Provider registry. Each getter resolves the configured provider for a module
@@ -55,6 +68,18 @@ export function getPayoutProvider(): PayoutProvider {
     default:
       return sandboxPayout;
   }
+}
+
+export function getAepsProvider(): AepsProvider {
+  return env.PROVIDER_AEPS === 'aggregator' ? aggregatorAeps : sandboxAeps;
+}
+
+export function getCmsProvider(): CmsProvider {
+  return env.PROVIDER_CMS === 'aggregator' ? aggregatorCms : sandboxCms;
+}
+
+export function getCardSwipeProvider(): CardSwipeProvider {
+  return env.PROVIDER_CARD_SWIPE === 'aggregator' ? aggregatorCardSwipe : sandboxCardSwipe;
 }
 
 export function getGatewayProvider(): GatewayProvider {

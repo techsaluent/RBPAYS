@@ -1,8 +1,14 @@
 import { env } from '../config/env';
 import { httpJson, HttpError } from './http';
 import {
+  AepsInput,
+  AepsProvider,
   BbpsPayInput,
   BbpsProvider,
+  CardSwipeInput,
+  CardSwipeProvider,
+  CmsPayInput,
+  CmsProvider,
   DmtProvider,
   DmtTransferInput,
   ProviderResult,
@@ -42,6 +48,8 @@ interface RawResponse {
   reference_id?: string;
   operator_ref?: string;
   utr?: string;
+  rrn?: string;
+  balance?: number;
   message?: string;
   msg?: string;
 }
@@ -59,6 +67,8 @@ function mapResponse(raw: RawResponse): ProviderResult {
     providerRef:
       raw.txnid ?? raw.refid ?? raw.reference_id ?? raw.operator_ref ?? undefined,
     utr: raw.utr,
+    rrn: raw.rrn,
+    balancePaise: raw.balance == null ? undefined : Math.round(raw.balance * 100),
     message: raw.message ?? raw.msg,
     raw,
   };
@@ -120,6 +130,46 @@ export const aggregatorRecharge: RechargeProvider = {
       number: input.number,
       type: input.rechargeType,
       circle: input.circle,
+    });
+  },
+};
+
+export const aggregatorAeps: AepsProvider = {
+  name: 'aggregator',
+  execute(input: AepsInput): Promise<ProviderResult> {
+    return post('/aeps', {
+      reference: input.reference,
+      txn_type: input.txnType,
+      amount: input.amountPaise / 100,
+      aadhaar: input.aadhaarRef,
+      iin: input.bankIin,
+      mobile: input.mobile,
+    });
+  },
+};
+
+export const aggregatorCms: CmsProvider = {
+  name: 'aggregator',
+  pay(input: CmsPayInput): Promise<ProviderResult> {
+    return post('/cms/pay', {
+      reference: input.reference,
+      amount: input.amountPaise / 100,
+      agent_id: input.agentId,
+      account_number: input.accountNumber,
+      customer_name: input.customerName,
+    });
+  },
+};
+
+export const aggregatorCardSwipe: CardSwipeProvider = {
+  name: 'aggregator',
+  swipe(input: CardSwipeInput): Promise<ProviderResult> {
+    return post('/card-swipe', {
+      reference: input.reference,
+      amount: input.amountPaise / 100,
+      card_network: input.cardNetwork,
+      card_type: input.cardType,
+      tid: input.tid,
     });
   },
 };

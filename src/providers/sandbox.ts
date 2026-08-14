@@ -1,7 +1,13 @@
 import crypto from 'crypto';
 import {
+  AepsInput,
+  AepsProvider,
   BbpsPayInput,
   BbpsProvider,
+  CardSwipeInput,
+  CardSwipeProvider,
+  CmsPayInput,
+  CmsProvider,
   CreateOrderInput,
   CreateOrderResult,
   DmtProvider,
@@ -71,6 +77,42 @@ export const sandboxRecharge: RechargeProvider = {
   async recharge(input: RechargeInput): Promise<ProviderResult> {
     const status = outcome(input.amountPaise);
     return { status, providerRef: ref('sbxrc'), message: `sandbox recharge ${status}` };
+  },
+};
+
+export const sandboxAeps: AepsProvider = {
+  name: 'sandbox',
+  async execute(input: AepsInput): Promise<ProviderResult> {
+    const status = outcome(input.amountPaise);
+    return {
+      status,
+      providerRef: ref('sbxaeps'),
+      rrn: status === 'success' ? ref('RRN').toUpperCase() : undefined,
+      // Return a synthetic balance for balance-enquiry / mini-statement.
+      balancePaise: input.txnType !== 'cash_withdrawal' ? 1523400 : undefined,
+      message: `sandbox AEPS ${input.txnType} ${status}`,
+    };
+  },
+};
+
+export const sandboxCms: CmsProvider = {
+  name: 'sandbox',
+  async pay(input: CmsPayInput): Promise<ProviderResult> {
+    const status = outcome(input.amountPaise);
+    return { status, providerRef: ref('sbxcms'), message: `sandbox CMS ${status}` };
+  },
+};
+
+export const sandboxCardSwipe: CardSwipeProvider = {
+  name: 'sandbox',
+  async swipe(input: CardSwipeInput): Promise<ProviderResult> {
+    const status = outcome(input.amountPaise);
+    return {
+      status,
+      providerRef: ref('sbxpos'),
+      rrn: status === 'success' ? ref('RRN').toUpperCase() : undefined,
+      message: `sandbox card swipe ${status}`,
+    };
   },
 };
 
