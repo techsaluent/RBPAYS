@@ -24,6 +24,8 @@ const DETAIL_TABLE: Record<string, string> = {
   aadhaar_pay: 'aadhaar_pay_transactions',
   pan_card: 'pan_card_transactions',
   wallet_transfer: 'wallet_transfers',
+  travel: 'travel_transactions',
+  insurance: 'insurance_transactions',
   payment_gateway: 'pg_orders',
 };
 
@@ -45,7 +47,8 @@ const listSchema = z.object({
   service: z
     .enum([
       'dmt', 'bbps', 'recharge', 'payout', 'aeps', 'cms', 'card_swipe',
-      'upi', 'matm', 'aadhaar_pay', 'pan_card', 'wallet_transfer', 'payment_gateway',
+      'upi', 'matm', 'aadhaar_pay', 'pan_card', 'wallet_transfer',
+      'travel', 'insurance', 'payment_gateway',
     ])
     .optional(),
   status: z.enum(['pending', 'success', 'failed', 'refunded']).optional(),

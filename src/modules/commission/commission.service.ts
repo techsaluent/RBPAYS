@@ -1,6 +1,9 @@
 import { PoolClient } from 'pg';
 import { query } from '../../../db';
 import { credit } from '../wallet/wallet.service';
+import { creditSub } from '../wallet/subwallet.service';
+import { tdsRateBpsFor, applyBps, recordTds, recordGst } from '../tax/tax.service';
+import { postJournal, JournalLine } from '../_shared/ledger';
 
 export type Level = 'retailer' | 'distributor' | 'master_distributor' | 'admin';
 const LEVELS: Level[] = ['retailer', 'distributor', 'master_distributor', 'admin'];
@@ -141,15 +144,56 @@ export async function applyUplineCredits(
        ON CONFLICT (service_txn_id, level) DO NOTHING`,
       [p.serviceTxnId, p.service, p.performerId, e.beneficiaryId, e.level, e.amountPaise],
     );
-    if (ins.rowCount === 1 && e.level !== 'retailer') {
+    if (ins.rowCount !== 1) continue; // already distributed (idempotent)
+
+    if (e.level === 'admin') {
+      // Admin share = platform margin; carve out 18% GST for reporting and
+      // still credit the admin operational wallet (unchanged money movement).
+      await recordGst(client, {
+        serviceTxnId: p.serviceTxnId,
+        serviceCode: p.service,
+        inclusivePaise: e.amountPaise,
+      });
       await credit(client, {
         userId: e.beneficiaryId,
         amountPaise: e.amountPaise,
         source: 'commission',
         referenceId: p.serviceTxnId,
-        description: `${e.level} commission for ${p.service} (${p.serviceTxnId})`,
+        description: `platform margin for ${p.service} (${p.serviceTxnId})`,
       });
+      continue;
     }
+
+    if (e.level === 'retailer') continue; // realised via the reduced (net) debit
+
+    // Distributor / master distributor: withhold 194H TDS, pay net into the
+    // member's Commission sub-wallet, and record the double-entry + TDS.
+    const rateBps = await tdsRateBpsFor(e.beneficiaryId);
+    const tds = applyBps(e.amountPaise, rateBps);
+    const net = e.amountPaise - tds;
+
+    await creditSub(client, e.beneficiaryId, 'commission', net);
+    await recordTds(client, {
+      userId: e.beneficiaryId,
+      serviceTxnId: p.serviceTxnId,
+      serviceCode: p.service,
+      section: '194H',
+      grossPaise: e.amountPaise,
+      rateBps,
+      tdsPaise: tds,
+    });
+    // Commission paid out of platform margin, net of withheld TDS.
+    const lines: JournalLine[] = [
+      { account: 'platform_margin', direction: 'debit', amountPaise: e.amountPaise },
+      { account: 'commission_wallet', direction: 'credit', amountPaise: net, walletUserId: e.beneficiaryId },
+    ];
+    if (tds > 0) lines.push({ account: 'tds_payable', direction: 'credit', amountPaise: tds });
+    await postJournal(client, {
+      source: 'commission',
+      reference: p.serviceTxnId,
+      narration: `${e.level} commission for ${p.service} (net of ${(rateBps / 100).toFixed(0)}% TDS)`,
+      lines,
+    });
   }
 }
 

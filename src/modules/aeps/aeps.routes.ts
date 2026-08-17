@@ -9,6 +9,7 @@ import { rupeesToPaise } from '../../utils/money';
 import { getAepsProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
 import { requireService } from '../../middleware/service';
+import { aepsSplitSuppressesCommission } from '../risk/risk.service';
 
 const router = Router();
 router.use(requireAuth);
@@ -32,12 +33,20 @@ async function runAeps(req: Request, res: Response, txnType: TxnType, amountPais
   const userId = req.user.id;
   const provider = getAepsProvider();
 
+  // Commission-farming guard: same Aadhaar again within the window at this
+  // terminal keeps serving the customer but strips hierarchy commission.
+  const suppressCommission =
+    txnType === 'cash_withdrawal'
+      ? await aepsSplitSuppressesCommission(userId, body.aadhaar_ref as string)
+      : true; // enquiries never earn commission
+
   const { transaction, idempotent } = await runServiceTransaction({
     userId,
     serviceCode: 'aeps',
     table: 'aeps_transactions',
     prefix: 'AEPS',
     flow: 'credit',
+    suppressCommission,
     reference: (req.header('Idempotency-Key') || (body.reference as string)) ?? undefined,
     amountPaise,
     description: `AEPS ${txnType}`,

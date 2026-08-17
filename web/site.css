@@ -1,0 +1,80 @@
+/* TutiPays — shared marketing + legal page styles */
+:root{
+  --ink:#101828; --muted:#5a6472; --line:#e6e9f2; --bg:#ffffff; --soft:#f5f7fd;
+  --brand:#3b39e4; --brand2:#7b5cff; --accent:#00c48c; --warn:#ff8a00;
+  --radius:16px; --shadow:0 10px 30px rgba(30,34,90,.10);
+}
+*{box-sizing:border-box} html{scroll-behavior:smooth}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6}
+a{color:var(--brand);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1140px;margin:0 auto;padding:0 20px}
+.btn{display:inline-block;padding:12px 22px;border-radius:999px;font-weight:600;font-size:15px;cursor:pointer;border:1px solid transparent}
+.btn.primary{background:var(--brand);color:#fff}
+.btn.primary:hover{background:#2d2bc9;text-decoration:none}
+.btn.ghost{background:#fff;color:var(--brand);border-color:#d9dcf3}
+.btn.ghost:hover{text-decoration:none}
+
+/* Company strip — the "upper side company details" bar above the nav */
+.topbar{background:#0f1230;color:#c7cbe8;font-size:12.5px}
+.topbar .wrap{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;justify-content:center;padding:7px 20px;text-align:center}
+.topbar b{color:#fff;font-weight:600}
+.topbar a{color:#c7cbe8}
+
+/* Header */
+header{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.nav{display:flex;align-items:center;justify-content:space-between;height:66px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:22px;letter-spacing:-.5px;color:var(--ink)}
+.logo:hover{text-decoration:none}
+.logo .dot{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand),var(--brand2));display:grid;place-items:center;color:#fff;font-size:16px}
+.logo b{color:var(--brand)}
+nav.links{display:flex;gap:24px;align-items:center;font-size:15px}
+nav.links a{color:var(--muted)}
+nav.links a:hover{color:var(--ink);text-decoration:none}
+.nav .cta{display:flex;gap:10px;align-items:center}
+.menu-btn{display:none;font-size:24px;background:none;border:none}
+@media(max-width:860px){ nav.links{display:none} .menu-btn{display:block} }
+
+/* Legal / content page */
+.page-hero{background:linear-gradient(160deg,#1b1a4b,#3b39e4);color:#fff;padding:46px 0}
+.page-hero h1{margin:0;font-size:34px;letter-spacing:-.5px}
+.page-hero p{margin:8px 0 0;color:#d7d9f6}
+.legal{max-width:860px;margin:0 auto;padding:44px 20px 20px}
+.legal h2{font-size:22px;margin:34px 0 10px;letter-spacing:-.3px}
+.legal h3{font-size:17px;margin:22px 0 8px}
+.legal p, .legal li{color:#2b3342;font-size:15.5px}
+.legal ul{padding-left:22px}
+.legal li{margin:6px 0}
+.legal .updated{color:var(--muted);font-size:14px}
+.legal table{border-collapse:collapse;width:100%;margin:14px 0}
+.legal th,.legal td{border:1px solid var(--line);padding:10px 12px;text-align:left;font-size:14.5px;vertical-align:top}
+.legal th{background:var(--soft)}
+.callout{background:var(--soft);border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:12px;padding:14px 18px;margin:18px 0}
+.callout.warn{border-left-color:var(--warn)}
+
+/* FAQ */
+.faq details{border:1px solid var(--line);border-radius:12px;padding:4px 18px;margin:12px 0;background:#fff}
+.faq summary{cursor:pointer;font-weight:600;padding:14px 0;list-style:none}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::before{content:"＋";color:var(--brand);font-weight:700;margin-right:10px}
+.faq details[open] summary::before{content:"－"}
+.faq details p{margin:0 0 14px;color:#2b3342}
+
+/* Contact cards */
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin:26px 0}
+.card{border:1px solid var(--line);border-radius:var(--radius);padding:22px;background:#fff}
+.card h3{margin:0 0 6px;font-size:16px}
+.card p{margin:0;color:var(--muted);font-size:14.5px}
+@media(max-width:860px){ .cards{grid-template-columns:1fr} }
+
+/* Footer */
+footer{background:#0f1230;color:#aeb4d6;padding:48px 0 26px;margin-top:40px}
+.fgrid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1.2fr;gap:30px}
+footer h5{color:#fff;font-size:15px;margin:0 0 12px}
+footer a{display:block;color:#aeb4d6;padding:4px 0;font-size:14px}
+footer a:hover{color:#fff;text-decoration:none}
+footer .addr{font-size:13.5px;line-height:1.7;color:#9aa0c6}
+footer .addr b{color:#cdd1ee;font-weight:600}
+.fbottom{border-top:1px solid #23264d;margin-top:30px;padding-top:18px;font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+@media(max-width:860px){ .fgrid{grid-template-columns:1fr 1fr} }
+@media(max-width:520px){ .fgrid{grid-template-columns:1fr} }

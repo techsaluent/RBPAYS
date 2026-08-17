@@ -69,8 +69,45 @@ export const env = {
   PROVIDER_MATM: optional('PROVIDER_MATM', 'sandbox'),
   PROVIDER_AADHAAR_PAY: optional('PROVIDER_AADHAAR_PAY', 'sandbox'),
   PROVIDER_PAN_CARD: optional('PROVIDER_PAN_CARD', 'sandbox'),
+  PROVIDER_TRAVEL: optional('PROVIDER_TRAVEL', 'sandbox'),
+  PROVIDER_INSURANCE: optional('PROVIDER_INSURANCE', 'sandbox'),
 
   HTTP_TIMEOUT_MS: int('HTTP_TIMEOUT_MS', 20_000),
+
+  // ---- Compliance limits (paise). RBI-aligned DMT defaults ------------
+  // DMT: ₹5,000 per transaction, ₹25,000 per remitter per calendar month.
+  DMT_MAX_PER_TXN_PAISE: int('DMT_MAX_PER_TXN_PAISE', 500_000),
+  DMT_MAX_PER_MONTH_PAISE: int('DMT_MAX_PER_MONTH_PAISE', 2_500_000),
+
+  // ---- Risk / AML engine ---------------------------------------------
+  RISK_ENGINE_ENABLED: optional('RISK_ENGINE_ENABLED', 'true') !== 'false',
+  // Per-user per-service velocity: more than MAX txns within WINDOW minutes.
+  RISK_VELOCITY_WINDOW_MIN: int('RISK_VELOCITY_WINDOW_MIN', 10),
+  RISK_VELOCITY_MAX_COUNT: int('RISK_VELOCITY_MAX_COUNT', 40),
+  // Off-hours window (IST hours) where cash-out is treated as higher risk.
+  RISK_OFF_HOURS_START: int('RISK_OFF_HOURS_START', 23),
+  RISK_OFF_HOURS_END: int('RISK_OFF_HOURS_END', 5),
+  // AePS split-transaction: same Aadhaar again within this many minutes at
+  // the same terminal -> allow the txn but strip hierarchy commission.
+  RISK_AEPS_SPLIT_WINDOW_MIN: int('RISK_AEPS_SPLIT_WINDOW_MIN', 30),
+  // DMT structuring: transfers in this band, repeated, look like smurfing.
+  RISK_DMT_STRUCT_MIN_PAISE: int('RISK_DMT_STRUCT_MIN_PAISE', 490_000),
+  RISK_DMT_STRUCT_MAX_PAISE: int('RISK_DMT_STRUCT_MAX_PAISE', 499_900),
+  RISK_DMT_STRUCT_MAX_PER_HOUR: int('RISK_DMT_STRUCT_MAX_PER_HOUR', 3),
+  // Probation vs full-tier daily caps (paise). New members start on probation.
+  PROBATION_DAYS: int('PROBATION_DAYS', 14),
+  PROBATION_CASHOUT_CAP_PAISE: int('PROBATION_CASHOUT_CAP_PAISE', 50_000_00),
+  PROBATION_DMT_CAP_PAISE: int('PROBATION_DMT_CAP_PAISE', 25_000_00),
+  FULL_CASHOUT_CAP_PAISE: int('FULL_CASHOUT_CAP_PAISE', 500_000_00),
+  FULL_DMT_CAP_PAISE: int('FULL_DMT_CAP_PAISE', 250_000_00),
+
+  // ---- Statutory tax --------------------------------------------------
+  // GST place-of-supply home state (27 = Maharashtra, from GST 27ABIFR6463M1ZH).
+  HOME_STATE_CODE: optional('HOME_STATE_CODE', '27'),
+  // Section 194N cash-withdrawal TDS thresholds (paise) per member per FY.
+  TDS_194N_THRESHOLD_FILER_PAISE: int('TDS_194N_THRESHOLD_FILER_PAISE', 10_000_000_00),
+  TDS_194N_THRESHOLD_NONFILER_PAISE: int('TDS_194N_THRESHOLD_NONFILER_PAISE', 2_000_000_00),
+  TDS_194N_RATE_BPS: int('TDS_194N_RATE_BPS', 200), // 2%
 
   // ---- Razorpay / RazorpayX ------------------------------------------
   RAZORPAY_KEY_ID: optional('RAZORPAY_KEY_ID', ''),

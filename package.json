@@ -1,7 +1,7 @@
 {
-  "name": "rbpays-api",
+  "name": "tutipays-api",
   "version": "0.1.0",
-  "description": "API backend for api.rbpays.in — fintech aggregator (DMT, BBPS, Recharge, Payout, Payment Gateway)",
+  "description": "TutiPays — fintech aggregator API (DMT, AEPS, recharge, BBPS, payout, travel, insurance and more)",
   "main": "dist/src/index.js",
   "engines": {
     "node": ">=20"

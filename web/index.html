@@ -89,15 +89,32 @@
     .cta-band p{margin:0 0 22px;color:#e7e8ff}
 
     footer{background:#0f1230;color:#aeb4d6;padding:48px 0 26px;margin-top:20px}
-    .fgrid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:30px}
+    .fgrid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1.2fr;gap:30px}
     footer h5{color:#fff;font-size:15px;margin:0 0 12px}
     footer a{display:block;color:#aeb4d6;padding:4px 0;font-size:14px}
     footer a:hover{color:#fff}
+    footer .addr{font-size:13.5px;line-height:1.7;color:#9aa0c6}
+    footer .addr b{color:#cdd1ee;font-weight:600}
     .fbottom{border-top:1px solid #23264d;margin-top:30px;padding-top:18px;font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
-    @media(max-width:860px){ .fgrid{grid-template-columns:1fr} }
+    @media(max-width:860px){ .fgrid{grid-template-columns:1fr 1fr} }
+    @media(max-width:520px){ .fgrid{grid-template-columns:1fr} }
+
+    /* Company strip */
+    .topbar{background:#0f1230;color:#c7cbe8;font-size:12.5px}
+    .topbar .inner{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;justify-content:center;padding:7px 20px;text-align:center;max-width:1140px;margin:0 auto}
+    .topbar b{color:#fff;font-weight:600}
+    .topbar a{color:#c7cbe8}
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <div class="inner">
+      <span><b>REAL BROTHERS TECHNOLOGY SERVICES LLP</b></span>
+      <span>GST: 27ABIFR6463M1ZH</span>
+      <span>PAN: ABIFR6463M</span>
+      <span>✉ <a href="mailto:support@tutipays.com">support@tutipays.com</a></span>
+    </div>
+  </div>
   <header>
     <div class="wrap nav">
       <div class="logo"><span class="dot">₹</span> Tuti<b>Pays</b></div>
@@ -105,7 +122,9 @@
         <a href="#services">Services</a>
         <a href="#why">Why TutiPays</a>
         <a href="#how">How it works</a>
-        <a href="#contact">Contact</a>
+        <a href="about.html">About</a>
+        <a href="faq.html">FAQ</a>
+        <a href="contact.html">Contact</a>
       </nav>
       <div class="cta">
         <a class="btn ghost" href="panel/">Login</a>
@@ -208,25 +227,39 @@
       <div class="fgrid">
         <div>
           <div class="logo" style="color:#fff"><span class="dot">₹</span> Tuti<b style="color:#fff">Pays</b></div>
-          <p style="max-width:340px;margin-top:12px">A B2B fintech platform for assisted financial services — recharge, AEPS, money transfer, bill payments and more, for retailers and distributors across India.</p>
+          <p class="addr" style="margin-top:12px">
+            <b>REAL BROTHERS TECHNOLOGY SERVICES LLP</b><br>
+            Unnati Gupta, H7 Room No., Santosh Nagar,<br>
+            Goregaon East, Jogeshwari East, Aarey Milk Colony,<br>
+            Mumbai – 400065, Maharashtra, India<br><br>
+            Date of Incorporation: 17/02/2024<br>
+            PAN: ABIFR6463M · GST: 27ABIFR6463M1ZH
+          </p>
         </div>
         <div>
-          <h5>Product</h5>
-          <a href="#services">Services</a>
-          <a href="#why">Why TutiPays</a>
-          <a href="#how">How it works</a>
-          <a href="panel/">Partner Login</a>
+          <h5>Company</h5>
+          <a href="about.html">About Us</a>
+          <a href="contact.html">Contact Us</a>
+          <a href="grievance.html">Grievance Redressal</a>
+          <a href="faq.html">FAQ</a>
         </div>
         <div>
-          <h5>Get started</h5>
-          <a href="panel/?signup=1">Become a Retailer</a>
-          <a href="panel/?signup=1">Become a Distributor</a>
+          <h5>Legal</h5>
+          <a href="terms.html">Terms &amp; Conditions</a>
+          <a href="privacy.html">Privacy Policy</a>
+          <a href="refund.html">Refund &amp; Cancellation</a>
+        </div>
+        <div>
+          <h5>Get in touch</h5>
           <a href="mailto:support@tutipays.com">support@tutipays.com</a>
+          <a href="mailto:admin@tutipays.com">admin@tutipays.com</a>
+          <a href="panel/">Partner Login</a>
+          <a href="panel/?signup=1">Become a Partner</a>
         </div>
       </div>
       <div class="fbottom">
-        <span>© <span id="yr"></span> TutiPays. All rights reserved.</span>
-        <span>Made for Indian retailers 🇮🇳</span>
+        <span>© <span id="yr"></span> REAL BROTHERS TECHNOLOGY SERVICES LLP. All rights reserved.</span>
+        <span>TutiPays is a brand of REAL BROTHERS TECHNOLOGY SERVICES LLP 🇮🇳</span>
       </div>
     </div>
   </footer>

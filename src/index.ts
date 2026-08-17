@@ -2,11 +2,15 @@ import { createApp } from './app';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import { closePool, pool } from '../db';
+import { refreshProviderRegistry } from './providers/registry';
 
 async function main() {
   // Fail fast if the VPS database is unreachable at boot.
   await pool.query('SELECT 1');
   logger.info('database connection ok');
+
+  // Load the super-admin's active provider selection into memory.
+  await refreshProviderRegistry();
 
   const app = createApp();
   const server = app.listen(env.PORT, () => {

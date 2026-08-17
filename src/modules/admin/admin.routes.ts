@@ -5,11 +5,15 @@ import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
-import { rupeesToPaise } from '../../utils/money';
-import { debit } from '../wallet/wallet.service';
+import { rupeesToPaise, bigintToNumber, paiseToRupees } from '../../utils/money';
+import { debit, credit } from '../wallet/wallet.service';
 import { createMember } from '../members/members.service';
 import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
+import { refreshProviderRegistry } from '../../providers/registry';
+import { postJournal } from '../_shared/ledger';
+import { runReconciliation, MisRow } from '../recon/recon.service';
+import { assessOnboarding } from '../onboarding/onboarding.service';
 
 const router = Router();
 router.use(requireAuth, requireRole('admin'));
@@ -193,6 +197,8 @@ router.get(
 const serviceUpdateSchema = z.object({
   enabled: z.boolean().optional(),
   activation_charge: z.coerce.number().min(0).optional(), // rupees
+  min_commission: z.coerce.number().min(0).optional(),    // rupees — floor per txn
+  max_commission: z.coerce.number().min(0).optional(),    // rupees — ceiling per txn
 });
 
 router.patch(
@@ -200,14 +206,25 @@ router.patch(
   validate(serviceUpdateSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const b = req.body as z.infer<typeof serviceUpdateSchema>;
+    if (
+      b.min_commission !== undefined &&
+      b.max_commission !== undefined &&
+      b.min_commission > b.max_commission
+    ) {
+      throw ApiError.badRequest('min_commission cannot exceed max_commission');
+    }
     const { rows } = await query(
       `UPDATE services
           SET enabled = COALESCE($1, enabled),
-              activation_charge_paise = COALESCE($2, activation_charge_paise)
-        WHERE code = $3 RETURNING *`,
+              activation_charge_paise = COALESCE($2, activation_charge_paise),
+              min_commission_paise = COALESCE($3, min_commission_paise),
+              max_commission_paise = COALESCE($4, max_commission_paise)
+        WHERE code = $5 RETURNING *`,
       [
         b.enabled ?? null,
         b.activation_charge === undefined ? null : rupeesToPaise(b.activation_charge),
+        b.min_commission === undefined ? null : rupeesToPaise(b.min_commission),
+        b.max_commission === undefined ? null : rupeesToPaise(b.max_commission),
         req.params.code,
       ],
     );
@@ -292,6 +309,35 @@ router.post(
     const b = req.body as z.infer<typeof ruleSchema>;
     const plan = await query('SELECT 1 FROM commission_plans WHERE id = $1', [req.params.id]);
     if (!plan.rowCount) throw ApiError.notFound('Plan not found');
+
+    // Enforce the super-admin's per-service commission guardrails. When every
+    // level is a flat amount, the total distributed commission is fixed and
+    // must fall within [min_commission, max_commission] for the service.
+    const svc = await query<{ min_commission_paise: string; max_commission_paise: string }>(
+      'SELECT min_commission_paise, max_commission_paise FROM services WHERE code = $1',
+      [b.service_code],
+    );
+    if (!svc.rows[0]) throw ApiError.notFound('Service not found');
+    const allFlat =
+      b.retailer_type === 'flat' &&
+      b.distributor_type === 'flat' &&
+      b.master_distributor_type === 'flat' &&
+      b.admin_type === 'flat';
+    if (allFlat) {
+      const totalPaise =
+        rupeesToPaise(b.retailer_value) +
+        rupeesToPaise(b.distributor_value) +
+        rupeesToPaise(b.master_distributor_value) +
+        rupeesToPaise(b.admin_value);
+      const min = Number(svc.rows[0].min_commission_paise);
+      const max = Number(svc.rows[0].max_commission_paise);
+      if (totalPaise < min || totalPaise > max) {
+        throw ApiError.unprocessable(
+          `Total commission ₹${(totalPaise / 100).toLocaleString('en-IN')} is outside the allowed range ` +
+            `₹${(min / 100).toLocaleString('en-IN')}–₹${(max / 100).toLocaleString('en-IN')} for ${b.service_code}`,
+        );
+      }
+    }
     const { rows } = await query(
       `INSERT INTO commission_rules
          (plan_id, service_code, min_amount_paise, max_amount_paise,
@@ -324,6 +370,761 @@ router.delete(
       [req.params.ruleId, req.params.id],
     );
     if (!rowCount) throw ApiError.notFound('Rule not found');
+    res.status(204).send();
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Double-entry ledger — chart of accounts + journal (audit view)
+// ---------------------------------------------------------------------
+router.get(
+  '/ledger/accounts',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT * FROM chart_of_accounts ORDER BY type, code');
+    res.json({ items: rows });
+  }),
+);
+
+const journalListSchema = z.object({
+  source: z.string().trim().max(40).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+router.get(
+  '/ledger/journal',
+  validate(journalListSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof journalListSchema>;
+    const { rows: entries } = await query<{ id: string }>(
+      `SELECT id, reference, source, narration, created_at
+         FROM journal_entries
+        WHERE ($1::text IS NULL OR source = $1)
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3`,
+      [q.source ?? null, q.limit, q.offset],
+    );
+    const ids = entries.map((e) => e.id);
+    const lines = ids.length
+      ? (await query(
+          `SELECT jl.entry_id, jl.account_code, jl.direction, jl.amount_paise,
+                  jl.wallet_user_id, u.full_name AS wallet_owner
+             FROM journal_lines jl
+             LEFT JOIN users u ON u.id = jl.wallet_user_id
+            WHERE jl.entry_id = ANY($1::uuid[])
+            ORDER BY jl.direction DESC`,
+          [ids],
+        )).rows
+      : [];
+    const byEntry: Record<string, unknown[]> = {};
+    for (const l of lines) {
+      const r = l as { entry_id: string; amount_paise: string };
+      (byEntry[r.entry_id] ??= []).push({ ...l, amount_paise: bigintToNumber(r.amount_paise), amount: paiseToRupees(r.amount_paise) });
+    }
+    res.json({
+      items: entries.map((e) => ({ ...e, lines: byEntry[e.id] ?? [] })),
+      limit: q.limit,
+      offset: q.offset,
+    });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Onboarding risk scoring + probation tier promotion
+// ---------------------------------------------------------------------
+router.post(
+  '/onboarding/:userId/assess',
+  asyncHandler(async (req: Request, res: Response) => {
+    const u = await query('SELECT 1 FROM users WHERE id = $1', [req.params.userId]);
+    if (!u.rowCount) throw ApiError.notFound('User not found');
+    const score = await assessOnboarding(req.params.userId);
+    res.json({ assessment: score });
+  }),
+);
+
+router.get(
+  '/onboarding/:userId',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query(
+      'SELECT * FROM onboarding_assessments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5',
+      [req.params.userId],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const promoteSchema = z.object({
+  tier: z.enum(['probation', 'full']),
+  daily_cashout_cap: z.coerce.number().min(0).optional(), // rupees; override
+  daily_dmt_cap: z.coerce.number().min(0).optional(),
+});
+
+// Move a member between probation and full tier (and optionally set caps).
+router.patch(
+  '/users/:id/tier',
+  validate(promoteSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof promoteSchema>;
+    const { rows } = await query(
+      `UPDATE users SET
+          tier = $1,
+          daily_cashout_cap_paise = COALESCE($2, daily_cashout_cap_paise),
+          daily_dmt_cap_paise = COALESCE($3, daily_dmt_cap_paise),
+          probation_until = CASE WHEN $1 = 'full' THEN NULL ELSE probation_until END
+        WHERE id = $4
+        RETURNING id, full_name, role, tier, daily_cashout_cap_paise, daily_dmt_cap_paise`,
+      [
+        b.tier,
+        b.daily_cashout_cap === undefined ? null : rupeesToPaise(b.daily_cashout_cap),
+        b.daily_dmt_cap === undefined ? null : rupeesToPaise(b.daily_dmt_cap),
+        req.params.id,
+      ],
+    );
+    if (!rows[0]) throw ApiError.notFound('User not found');
+    res.json({ user: rows[0] });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Reconciliation (bank/switch MIS vs internal ledger)
+// ---------------------------------------------------------------------
+const reconRunSchema = z.object({
+  label: z.string().trim().min(2).max(120),
+  rows: z.array(z.object({
+    reference: z.string().trim().min(1).max(80),
+    bank_status: z.enum(['settled', 'reversed', 'not_found']),
+    amount_paise: z.coerce.number().int().min(0).optional(),
+    rrn: z.string().trim().max(40).optional(),
+  })).min(1).max(5000),
+});
+
+router.post(
+  '/recon/run',
+  validate(reconRunSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof reconRunSchema>;
+    const summary = await runReconciliation(b.label, b.rows as MisRow[], req.user.id);
+    res.status(201).json({ summary });
+  }),
+);
+
+router.get(
+  '/recon/batches',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT * FROM recon_batches ORDER BY created_at DESC LIMIT 50');
+    res.json({ items: rows });
+  }),
+);
+
+router.get(
+  '/recon/batches/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const batch = await query('SELECT * FROM recon_batches WHERE id = $1', [req.params.id]);
+    if (!batch.rows[0]) throw ApiError.notFound('Batch not found');
+    const records = await query(
+      'SELECT * FROM recon_records WHERE batch_id = $1 ORDER BY match_status, created_at',
+      [req.params.id],
+    );
+    res.json({ batch: batch.rows[0], records: records.rows });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Maker-checker manual adjustments (dual control)
+// ---------------------------------------------------------------------
+const adjProposeSchema = z.object({
+  target_user_id: z.string().uuid(),
+  kind: z.enum(['credit', 'debit', 'clawback']),
+  amount: z.coerce.number().positive().max(10_000_000),
+  reason: z.string().trim().min(3).max(300),
+  reference: z.string().trim().max(80).optional(),
+});
+
+// Maker proposes an adjustment (no money moves yet).
+router.post(
+  '/adjustments',
+  validate(adjProposeSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof adjProposeSchema>;
+    const tgt = await query('SELECT 1 FROM users WHERE id = $1', [b.target_user_id]);
+    if (!tgt.rowCount) throw ApiError.notFound('Target user not found');
+    const { rows } = await query(
+      `INSERT INTO manual_adjustments (target_user, kind, amount_paise, reason, reference, maker_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [b.target_user_id, b.kind, rupeesToPaise(b.amount), b.reason, b.reference ?? null, req.user.id],
+    );
+    res.status(201).json({ adjustment: rows[0] });
+  }),
+);
+
+router.get(
+  '/adjustments',
+  asyncHandler(async (req: Request, res: Response) => {
+    const status = typeof req.query.status === 'string' ? req.query.status : null;
+    const { rows } = await query(
+      `SELECT a.*, u.full_name AS target_name, m.full_name AS maker_name, c.full_name AS checker_name
+         FROM manual_adjustments a
+         JOIN users u ON u.id = a.target_user
+         LEFT JOIN users m ON m.id = a.maker_id
+         LEFT JOIN users c ON c.id = a.checker_id
+        WHERE ($1::text IS NULL OR a.status = $1)
+        ORDER BY a.created_at DESC LIMIT 100`,
+      [status],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const adjDecideSchema = z.object({ note: z.string().trim().max(300).optional() });
+
+// Checker approves (must differ from maker) -> applies the wallet + journal.
+router.post(
+  '/adjustments/:id/approve',
+  validate(adjDecideSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const checkerId = req.user.id;
+    const { note } = req.body as z.infer<typeof adjDecideSchema>;
+
+    const result = await withTransaction(async (client) => {
+      const { rows } = await client.query<{
+        id: string; target_user: string; kind: string; amount_paise: string; status: string; maker_id: string;
+      }>('SELECT * FROM manual_adjustments WHERE id = $1 FOR UPDATE', [req.params.id]);
+      const a = rows[0];
+      if (!a) throw ApiError.notFound('Adjustment not found');
+      if (a.status !== 'proposed') throw ApiError.conflict(`Already ${a.status}`);
+      if (a.maker_id === checkerId) throw ApiError.forbidden('Maker and checker must be different officers');
+
+      const amt = Number(a.amount_paise);
+      let journalRef: string;
+      if (a.kind === 'credit') {
+        await credit(client, { userId: a.target_user, amountPaise: amt, source: 'adjustment', referenceId: a.id, description: 'Manual credit (approved)' });
+        journalRef = await postJournal(client, {
+          source: 'adjustment', reference: a.id, narration: 'Manual credit',
+          lines: [
+            { account: 'float_incentive_expense', direction: 'debit', amountPaise: amt },
+            { account: 'member_wallet', direction: 'credit', amountPaise: amt, walletUserId: a.target_user },
+          ],
+        });
+      } else {
+        // debit / clawback: pull from the member's main wallet.
+        await debit(client, { userId: a.target_user, amountPaise: amt, source: 'adjustment', referenceId: a.id, description: `Manual ${a.kind} (approved)` });
+        journalRef = await postJournal(client, {
+          source: 'adjustment', reference: a.id, narration: `Manual ${a.kind}`,
+          lines: [
+            { account: 'member_wallet', direction: 'debit', amountPaise: amt, walletUserId: a.target_user },
+            { account: 'platform_margin', direction: 'credit', amountPaise: amt },
+          ],
+        });
+      }
+      const upd = await client.query(
+        `UPDATE manual_adjustments SET status='approved', checker_id=$1, checker_note=$2, journal_ref=$3, decided_at=now()
+          WHERE id=$4 RETURNING *`,
+        [checkerId, note ?? null, journalRef, a.id],
+      );
+      return upd.rows[0];
+    });
+    res.json({ adjustment: result });
+  }),
+);
+
+router.post(
+  '/adjustments/:id/reject',
+  validate(adjDecideSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { note } = req.body as z.infer<typeof adjDecideSchema>;
+    const { rows } = await query(
+      `UPDATE manual_adjustments SET status='rejected', checker_id=$1, checker_note=$2, decided_at=now()
+        WHERE id=$3 AND status='proposed' RETURNING *`,
+      [req.user.id, note ?? null, req.params.id],
+    );
+    if (!rows[0]) throw ApiError.conflict('Adjustment not found or already decided');
+    res.json({ adjustment: rows[0] });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Risk & AML — flagged events
+// ---------------------------------------------------------------------
+const riskListSchema = z.object({
+  action: z.enum(['review', 'hold', 'block']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+router.get(
+  '/risk-events',
+  validate(riskListSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof riskListSchema>;
+    const { rows } = await query(
+      `SELECT r.id, r.user_id, u.full_name, r.service_code, r.reference, r.kind,
+              r.score, r.action, r.detail, r.created_at
+         FROM risk_events r LEFT JOIN users u ON u.id = r.user_id
+        WHERE ($1::text IS NULL OR r.action = $1)
+        ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`,
+      [q.action ?? null, q.limit, q.offset],
+    );
+    res.json({ items: rows, limit: q.limit, offset: q.offset });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop)
+// ---------------------------------------------------------------------
+router.get(
+  '/integrations',
+  asyncHandler(async (_req: Request, res: Response) => {
+    // Mask secrets in the list; only report whether they are set.
+    const { rows } = await query(
+      `SELECT key, label, category, provider, base_url, sender_id, is_active, updated_at,
+              (api_key IS NOT NULL AND api_key <> '') AS has_key,
+              (api_secret IS NOT NULL AND api_secret <> '') AS has_secret
+         FROM platform_integrations ORDER BY category, key`,
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const integrationSchema = z.object({
+  label: z.string().trim().max(120).optional(),
+  category: z.enum(['messaging', 'identity', 'verification', 'other']).optional(),
+  provider: z.string().trim().max(80).optional(),
+  base_url: z.string().trim().max(300).optional(),
+  api_key: z.string().trim().max(600).optional(),
+  api_secret: z.string().trim().max(600).optional(),
+  sender_id: z.string().trim().max(120).optional(),
+  extra: z.record(z.any()).optional(),
+  is_active: z.boolean().optional(),
+});
+
+// Upsert an integration's config + credentials by key.
+router.put(
+  '/integrations/:key',
+  validate(integrationSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof integrationSchema>;
+    const { rows } = await query(
+      `INSERT INTO platform_integrations (key, label, category, provider, base_url, api_key, api_secret, sender_id, extra, is_active)
+       VALUES ($1, COALESCE($2,$1), COALESCE($3,'other'), $4,$5,$6,$7,$8, COALESCE($9,'{}'::jsonb), COALESCE($10,false))
+       ON CONFLICT (key) DO UPDATE SET
+         label = COALESCE($2, platform_integrations.label),
+         category = COALESCE($3, platform_integrations.category),
+         provider = COALESCE($4, platform_integrations.provider),
+         base_url = COALESCE($5, platform_integrations.base_url),
+         api_key = COALESCE($6, platform_integrations.api_key),
+         api_secret = COALESCE($7, platform_integrations.api_secret),
+         sender_id = COALESCE($8, platform_integrations.sender_id),
+         extra = COALESCE($9, platform_integrations.extra),
+         is_active = COALESCE($10, platform_integrations.is_active)
+       RETURNING key, label, category, provider, base_url, sender_id, is_active, updated_at`,
+      [req.params.key, b.label ?? null, b.category ?? null, b.provider ?? null, b.base_url ?? null,
+       b.api_key ?? null, b.api_secret ?? null, b.sender_id ?? null,
+       b.extra === undefined ? null : JSON.stringify(b.extra), b.is_active ?? null],
+    );
+    res.json({ integration: rows[0] });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Statutory tax — verify PANs, view TDS (194H/194N) and GST records
+// ---------------------------------------------------------------------
+const taxVerifySchema = z.object({
+  pan_valid: z.boolean().optional(),
+  is_206ab_non_filer: z.boolean().optional(),
+});
+
+// Mark a member's PAN verified / 206AB status (drives their TDS rate).
+router.patch(
+  '/tax/:userId',
+  validate(taxVerifySchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof taxVerifySchema>;
+    const { rows } = await query(
+      `INSERT INTO tax_profiles (user_id, pan_valid, is_206ab_non_filer)
+       VALUES ($1, COALESCE($2,false), COALESCE($3,false))
+       ON CONFLICT (user_id) DO UPDATE SET
+         pan_valid = COALESCE($2, tax_profiles.pan_valid),
+         is_206ab_non_filer = COALESCE($3, tax_profiles.is_206ab_non_filer)
+       RETURNING *`,
+      [req.params.userId, b.pan_valid ?? null, b.is_206ab_non_filer ?? null],
+    );
+    res.json({ profile: rows[0] });
+  }),
+);
+
+router.get(
+  '/tds',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const totals = await query<{ gross: string; tds: string }>(
+      'SELECT COALESCE(SUM(gross_paise),0) gross, COALESCE(SUM(tds_paise),0) tds FROM tds_records',
+    );
+    const { rows } = await query(
+      `SELECT t.id, t.user_id, u.full_name, t.service_code, t.section,
+              t.gross_paise, t.rate_bps, t.tds_paise, t.net_paise, t.created_at
+         FROM tds_records t JOIN users u ON u.id = t.user_id
+        ORDER BY t.created_at DESC LIMIT 100`,
+    );
+    res.json({
+      total_gross_paise: bigintToNumber(totals.rows[0].gross),
+      total_tds_paise: bigintToNumber(totals.rows[0].tds),
+      total_tds: paiseToRupees(totals.rows[0].tds),
+      items: rows.map((r) => ({
+        ...r,
+        gross_paise: bigintToNumber(r.gross_paise as string),
+        tds_paise: bigintToNumber(r.tds_paise as string),
+        net_paise: bigintToNumber(r.net_paise as string),
+      })),
+    });
+  }),
+);
+
+router.get(
+  '/gst',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const totals = await query<{ base: string; cgst: string; sgst: string; igst: string }>(
+      `SELECT COALESCE(SUM(taxable_base_paise),0) base, COALESCE(SUM(cgst_paise),0) cgst,
+              COALESCE(SUM(sgst_paise),0) sgst, COALESCE(SUM(igst_paise),0) igst FROM gst_invoices`,
+    );
+    const { rows } = await query(
+      `SELECT id, service_code, taxable_base_paise, cgst_paise, sgst_paise, igst_paise, place_of_supply, created_at
+         FROM gst_invoices ORDER BY created_at DESC LIMIT 100`,
+    );
+    const t = totals.rows[0];
+    res.json({
+      total_base_paise: bigintToNumber(t.base),
+      total_gst_paise: bigintToNumber(t.cgst) + bigintToNumber(t.sgst) + bigintToNumber(t.igst),
+      total_cgst_paise: bigintToNumber(t.cgst),
+      total_sgst_paise: bigintToNumber(t.sgst),
+      total_igst_paise: bigintToNumber(t.igst),
+      items: rows.map((r) => ({
+        ...r,
+        taxable_base_paise: bigintToNumber(r.taxable_base_paise as string),
+        cgst_paise: bigintToNumber(r.cgst_paise as string),
+        sgst_paise: bigintToNumber(r.sgst_paise as string),
+        igst_paise: bigintToNumber(r.igst_paise as string),
+      })),
+    });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Company bank accounts (for cash / bank deposit top-ups)
+// ---------------------------------------------------------------------
+router.get(
+  '/bank-accounts',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT * FROM company_bank_accounts ORDER BY sort_order, created_at');
+    res.json({ items: rows });
+  }),
+);
+
+const bankSchema = z.object({
+  label: z.string().trim().min(2).max(120),
+  bank_name: z.string().trim().min(2).max(120),
+  account_name: z.string().trim().min(2).max(120),
+  account_number: z.string().trim().regex(/^\d{6,20}$/, 'Invalid account number'),
+  ifsc: z.string().trim().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC'),
+  branch: z.string().trim().max(120).optional(),
+  upi_id: z.string().trim().max(120).optional(),
+  instructions: z.string().trim().max(500).optional(),
+  is_active: z.boolean().default(true),
+  sort_order: z.coerce.number().int().default(0),
+});
+
+router.post(
+  '/bank-accounts',
+  validate(bankSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof bankSchema>;
+    const { rows } = await query(
+      `INSERT INTO company_bank_accounts
+         (label, bank_name, account_name, account_number, ifsc, branch, upi_id, instructions, is_active, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [b.label, b.bank_name, b.account_name, b.account_number, b.ifsc,
+       b.branch ?? null, b.upi_id ?? null, b.instructions ?? null, b.is_active, b.sort_order],
+    );
+    res.status(201).json({ bank_account: rows[0] });
+  }),
+);
+
+const bankUpdateSchema = bankSchema.partial();
+
+router.patch(
+  '/bank-accounts/:id',
+  validate(bankUpdateSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof bankUpdateSchema>;
+    const { rows } = await query(
+      `UPDATE company_bank_accounts SET
+          label = COALESCE($1,label), bank_name = COALESCE($2,bank_name),
+          account_name = COALESCE($3,account_name), account_number = COALESCE($4,account_number),
+          ifsc = COALESCE($5,ifsc), branch = COALESCE($6,branch), upi_id = COALESCE($7,upi_id),
+          instructions = COALESCE($8,instructions), is_active = COALESCE($9,is_active),
+          sort_order = COALESCE($10,sort_order)
+        WHERE id = $11 RETURNING *`,
+      [b.label ?? null, b.bank_name ?? null, b.account_name ?? null, b.account_number ?? null,
+       b.ifsc ?? null, b.branch ?? null, b.upi_id ?? null, b.instructions ?? null,
+       b.is_active ?? null, b.sort_order ?? null, req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Bank account not found');
+    res.json({ bank_account: rows[0] });
+  }),
+);
+
+router.delete(
+  '/bank-accounts/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('DELETE FROM company_bank_accounts WHERE id = $1', [req.params.id]);
+    if (!rowCount) throw ApiError.notFound('Bank account not found');
+    res.status(204).send();
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Wallet top-up requests — review queue
+// ---------------------------------------------------------------------
+const topupListSchema = z.object({
+  status: z.enum(['pending', 'approved', 'rejected']).default('pending'),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+router.get(
+  '/topups',
+  validate(topupListSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof topupListSchema>;
+    const { rows } = await query(
+      `SELECT t.id, t.user_id, u.full_name, u.username, u.role,
+              t.amount_paise, t.method, t.bank_account_id, t.reference, t.proof_url, t.note,
+              t.status, t.remarks, t.reviewed_at, t.created_at
+         FROM wallet_topup_requests t
+         JOIN users u ON u.id = t.user_id
+        WHERE t.status = $1
+        ORDER BY t.created_at DESC
+        LIMIT $2 OFFSET $3`,
+      [q.status, q.limit, q.offset],
+    );
+    res.json({
+      items: rows.map((r) => ({
+        ...r,
+        amount_paise: bigintToNumber(r.amount_paise as string),
+        amount: paiseToRupees(r.amount_paise as string),
+      })),
+      limit: q.limit,
+      offset: q.offset,
+    });
+  }),
+);
+
+const reviewSchema = z.object({ remarks: z.string().trim().max(300).optional() });
+
+// Approve a top-up: credits the member's wallet and marks it approved.
+router.post(
+  '/topups/:id/approve',
+  validate(reviewSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { remarks } = req.body as z.infer<typeof reviewSchema>;
+    const adminId = req.user.id;
+    const topupId = req.params.id;
+
+    const result = await withTransaction(async (client) => {
+      const { rows } = await client.query<{ user_id: string; amount_paise: string; status: string }>(
+        'SELECT user_id, amount_paise, status FROM wallet_topup_requests WHERE id = $1 FOR UPDATE',
+        [topupId],
+      );
+      const t = rows[0];
+      if (!t) throw ApiError.notFound('Top-up request not found');
+      if (t.status !== 'pending') throw ApiError.conflict(`Top-up already ${t.status}`);
+
+      await credit(client, {
+        userId: t.user_id,
+        amountPaise: Number(t.amount_paise),
+        source: 'topup',
+        referenceId: topupId,
+        description: 'Wallet top-up (approved)',
+      });
+      // Double-entry: real cash enters the bank escrow (asset up); the
+      // platform now owes the member that balance (liability up).
+      await postJournal(client, {
+        source: 'topup',
+        reference: topupId,
+        narration: 'Wallet top-up approved',
+        lines: [
+          { account: 'bank_escrow', direction: 'debit', amountPaise: Number(t.amount_paise) },
+          { account: 'member_wallet', direction: 'credit', amountPaise: Number(t.amount_paise), walletUserId: t.user_id },
+        ],
+      });
+      const txn = await client.query<{ id: string }>(
+        `SELECT id FROM wallet_transactions
+          WHERE reference_id = $1 AND source = 'topup' ORDER BY created_at DESC LIMIT 1`,
+        [topupId],
+      );
+      const upd = await client.query(
+        `UPDATE wallet_topup_requests
+            SET status = 'approved', reviewed_by = $1, reviewed_at = now(),
+                remarks = $2, wallet_txn_id = $3
+          WHERE id = $4 RETURNING id, user_id, amount_paise, status, reviewed_at`,
+        [adminId, remarks ?? null, txn.rows[0]?.id ?? null, topupId],
+      );
+      return upd.rows[0];
+    });
+
+    res.json({ request: result });
+  }),
+);
+
+// Reject a top-up (no wallet change).
+router.post(
+  '/topups/:id/reject',
+  validate(reviewSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { remarks } = req.body as z.infer<typeof reviewSchema>;
+    const { rows } = await query(
+      `UPDATE wallet_topup_requests
+          SET status = 'rejected', reviewed_by = $1, reviewed_at = now(), remarks = $2
+        WHERE id = $3 AND status = 'pending'
+        RETURNING id, status, reviewed_at`,
+      [req.user.id, remarks ?? null, req.params.id],
+    );
+    if (!rows[0]) throw ApiError.conflict('Top-up not found or already reviewed');
+    res.json({ request: rows[0] });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Service providers — multiple per service, one active (routing target)
+// ---------------------------------------------------------------------
+router.get(
+  '/services/:code/providers',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query(
+      'SELECT * FROM service_providers WHERE service_code = $1 ORDER BY priority, created_at',
+      [req.params.code],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const providerSchema = z.object({
+  label: z.string().trim().min(2).max(120),
+  driver: z.enum(['sandbox', 'aggregator', 'razorpay', 'generic']).default('sandbox'),
+  base_url: z.string().trim().max(300).optional(),
+  api_key: z.string().trim().max(300).optional(),
+  api_secret: z.string().trim().max(300).optional(),
+  auth_token: z.string().trim().max(600).optional(),
+  partner_id: z.string().trim().max(120).optional(),
+  extra: z.record(z.any()).optional(),
+  is_active: z.boolean().default(false),
+  priority: z.coerce.number().int().default(0),
+});
+
+router.post(
+  '/services/:code/providers',
+  validate(providerSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof providerSchema>;
+    const code = req.params.code;
+    const svc = await query('SELECT 1 FROM services WHERE code = $1', [code]);
+    if (!svc.rowCount) throw ApiError.notFound('Service not found');
+
+    const provider = await withTransaction(async (client) => {
+      if (b.is_active) {
+        await client.query(
+          'UPDATE service_providers SET is_active = false WHERE service_code = $1 AND is_active = true',
+          [code],
+        );
+      }
+      const { rows } = await client.query(
+        `INSERT INTO service_providers
+           (service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, extra, is_active, priority)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [code, b.label, b.driver, b.base_url ?? null, b.api_key ?? null, b.api_secret ?? null,
+         b.auth_token ?? null, b.partner_id ?? null, JSON.stringify(b.extra ?? {}), b.is_active, b.priority],
+      );
+      return rows[0];
+    });
+    await refreshProviderRegistry();
+    res.status(201).json({ provider });
+  }),
+);
+
+const providerUpdateSchema = providerSchema.partial();
+
+router.patch(
+  '/providers/:id',
+  validate(providerUpdateSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof providerUpdateSchema>;
+    const provider = await withTransaction(async (client) => {
+      const cur = await client.query<{ service_code: string }>(
+        'SELECT service_code FROM service_providers WHERE id = $1',
+        [req.params.id],
+      );
+      if (!cur.rows[0]) throw ApiError.notFound('Provider not found');
+      if (b.is_active === true) {
+        await client.query(
+          'UPDATE service_providers SET is_active = false WHERE service_code = $1 AND is_active = true AND id <> $2',
+          [cur.rows[0].service_code, req.params.id],
+        );
+      }
+      const { rows } = await client.query(
+        `UPDATE service_providers SET
+            label = COALESCE($1,label), driver = COALESCE($2,driver),
+            base_url = COALESCE($3,base_url), api_key = COALESCE($4,api_key),
+            api_secret = COALESCE($5,api_secret), auth_token = COALESCE($6,auth_token),
+            partner_id = COALESCE($7,partner_id), extra = COALESCE($8,extra),
+            is_active = COALESCE($9,is_active), priority = COALESCE($10,priority)
+          WHERE id = $11 RETURNING *`,
+        [b.label ?? null, b.driver ?? null, b.base_url ?? null, b.api_key ?? null,
+         b.api_secret ?? null, b.auth_token ?? null, b.partner_id ?? null,
+         b.extra === undefined ? null : JSON.stringify(b.extra),
+         b.is_active ?? null, b.priority ?? null, req.params.id],
+      );
+      return rows[0];
+    });
+    await refreshProviderRegistry();
+    res.json({ provider });
+  }),
+);
+
+// Make a provider the active one for its service.
+router.post(
+  '/providers/:id/activate',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = await withTransaction(async (client) => {
+      const cur = await client.query<{ service_code: string }>(
+        'SELECT service_code FROM service_providers WHERE id = $1',
+        [req.params.id],
+      );
+      if (!cur.rows[0]) throw ApiError.notFound('Provider not found');
+      await client.query(
+        'UPDATE service_providers SET is_active = false WHERE service_code = $1',
+        [cur.rows[0].service_code],
+      );
+      const { rows } = await client.query(
+        'UPDATE service_providers SET is_active = true WHERE id = $1 RETURNING *',
+        [req.params.id],
+      );
+      return rows[0];
+    });
+    await refreshProviderRegistry();
+    res.json({ provider });
+  }),
+);
+
+router.delete(
+  '/providers/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('DELETE FROM service_providers WHERE id = $1', [req.params.id]);
+    if (!rowCount) throw ApiError.notFound('Provider not found');
+    await refreshProviderRegistry();
     res.status(204).send();
   }),
 );

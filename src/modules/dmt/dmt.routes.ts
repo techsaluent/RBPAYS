@@ -9,6 +9,8 @@ import { rupeesToPaise } from '../../utils/money';
 import { getDmtProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
 import { requireService } from '../../middleware/service';
+import { env } from '../../config/env';
+import { assertNotDmtStructuring } from '../risk/risk.service';
 
 const router = Router();
 router.use(requireAuth);
@@ -20,6 +22,7 @@ const createSchema = z.object({
   amount: z.coerce.number().positive().max(200000),
   mode: z.enum(['IMPS', 'NEFT', 'RTGS']).default('IMPS'),
   charge: z.coerce.number().min(0).default(0),
+  remitter_mobile: z.string().trim().regex(/^[6-9]\d{9}$/, 'Invalid remitter mobile').optional(),
   reference: z.string().trim().max(64).optional(),
 });
 
@@ -40,6 +43,32 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
+
+    // ---- RBI DMT compliance limits (per RBI Domestic Money Transfer rules) ----
+    // Per-transaction ceiling and per-remitter calendar-month cap.
+    if (amountPaise > env.DMT_MAX_PER_TXN_PAISE) {
+      throw ApiError.unprocessable(
+        `DMT amount exceeds the per-transaction limit of ₹${(env.DMT_MAX_PER_TXN_PAISE / 100).toLocaleString('en-IN')}`,
+      );
+    }
+    const { rows: monthRows } = await query<{ sum: string | null }>(
+      `SELECT COALESCE(SUM(amount_paise), 0)::text AS sum
+         FROM dmt_transactions
+        WHERE user_id = $1
+          AND status IN ('pending', 'success')
+          AND created_at >= date_trunc('month', now())`,
+      [userId],
+    );
+    const spentThisMonth = BigInt(monthRows[0]?.sum ?? '0');
+    if (spentThisMonth + BigInt(amountPaise) > BigInt(env.DMT_MAX_PER_MONTH_PAISE)) {
+      throw ApiError.unprocessable(
+        `This transfer would exceed the monthly DMT limit of ₹${(env.DMT_MAX_PER_MONTH_PAISE / 100).toLocaleString('en-IN')} per remitter`,
+      );
+    }
+
+    // AML: reject repeated just-under-limit transfers (structuring / smurfing).
+    await assertNotDmtStructuring({ userId, amountPaise, remitterMobile: body.remitter_mobile });
+
     const provider = getDmtProvider();
 
     const { transaction, idempotent } = await runServiceTransaction({
@@ -55,9 +84,9 @@ router.post(
       insertServiceRow: async (client, ctx) => {
         const { rows } = await client.query<{ id: string }>(
           `INSERT INTO dmt_transactions
-             (user_id, beneficiary_name, account_number, ifsc, amount_paise, charge_paise, mode, reference, status)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending') RETURNING id`,
-          [userId, body.beneficiary_name, body.account_number, body.ifsc, amountPaise, ctx.chargePaise, body.mode, ctx.reference],
+             (user_id, beneficiary_name, account_number, ifsc, amount_paise, charge_paise, mode, reference, remitter_mobile, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending') RETURNING id`,
+          [userId, body.beneficiary_name, body.account_number, body.ifsc, amountPaise, ctx.chargePaise, body.mode, ctx.reference, body.remitter_mobile ?? null],
         );
         return rows[0].id;
       },

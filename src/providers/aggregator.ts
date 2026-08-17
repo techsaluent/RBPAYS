@@ -1,5 +1,6 @@
 import { env } from '../config/env';
 import { httpJson, HttpError } from './http';
+import { activeConfig } from './registry';
 import {
   AepsInput,
   AepsProvider,
@@ -27,17 +28,40 @@ import {
  * it looks for the common `status`, reference and message fields. Adjust
  * `mapResponse` / endpoint paths to match your specific aggregator's docs.
  */
-function assertConfigured(): void {
-  if (!env.AGGREGATOR_BASE_URL || !env.AGGREGATOR_AUTH_TOKEN) {
-    throw new Error('Aggregator not configured (AGGREGATOR_BASE_URL / AGGREGATOR_AUTH_TOKEN)');
+interface AggConfig {
+  baseUrl: string;
+  authToken: string;
+  apiKey: string;
+  partnerId: string;
+}
+
+/**
+ * Resolve aggregator credentials for a service: prefer the super-admin's
+ * active provider row (from the registry), fall back to env. This is what
+ * makes going live "just add API keys" — either paste them in the admin
+ * panel or set AGGREGATOR_* env vars.
+ */
+function configFor(service?: string): AggConfig {
+  const a = service ? activeConfig(service) : undefined;
+  return {
+    baseUrl: a?.baseUrl || env.AGGREGATOR_BASE_URL,
+    authToken: a?.authToken || env.AGGREGATOR_AUTH_TOKEN,
+    apiKey: a?.apiKey || env.AGGREGATOR_API_KEY,
+    partnerId: a?.partnerId || env.AGGREGATOR_PARTNER_ID,
+  };
+}
+
+function assertConfigured(c: AggConfig): void {
+  if (!c.baseUrl || !c.authToken) {
+    throw new Error('Aggregator not configured (base URL / auth token missing)');
   }
 }
 
-function headers(): Record<string, string> {
+function headers(c: AggConfig): Record<string, string> {
   return {
-    Authorization: `Bearer ${env.AGGREGATOR_AUTH_TOKEN}`,
-    'X-Api-Key': env.AGGREGATOR_API_KEY,
-    'X-Partner-Id': env.AGGREGATOR_PARTNER_ID,
+    Authorization: `Bearer ${c.authToken}`,
+    'X-Api-Key': c.apiKey,
+    'X-Partner-Id': c.partnerId,
   };
 }
 
@@ -76,12 +100,13 @@ function mapResponse(raw: RawResponse): ProviderResult {
   };
 }
 
-async function post(path: string, body: unknown): Promise<ProviderResult> {
-  assertConfigured();
+async function post(service: string, path: string, body: unknown): Promise<ProviderResult> {
+  const c = configFor(service);
+  assertConfigured(c);
   try {
-    const raw = await httpJson<RawResponse>(`${env.AGGREGATOR_BASE_URL}${path}`, {
+    const raw = await httpJson<RawResponse>(`${c.baseUrl}${path}`, {
       method: 'POST',
-      headers: headers(),
+      headers: headers(c),
       body,
     });
     return mapResponse(raw);
@@ -98,7 +123,7 @@ async function post(path: string, body: unknown): Promise<ProviderResult> {
 export const aggregatorDmt: DmtProvider = {
   name: 'aggregator',
   transfer(input: DmtTransferInput): Promise<ProviderResult> {
-    return post('/dmt/transfer', {
+    return post('dmt', '/dmt/transfer', {
       reference: input.reference,
       amount: input.amountPaise / 100,
       beneficiary_name: input.beneficiaryName,
@@ -112,7 +137,7 @@ export const aggregatorDmt: DmtProvider = {
 export const aggregatorBbps: BbpsProvider = {
   name: 'aggregator',
   pay(input: BbpsPayInput): Promise<ProviderResult> {
-    return post('/bbps/paybill', {
+    return post('bbps', '/bbps/paybill', {
       reference: input.reference,
       amount: input.amountPaise / 100,
       biller_id: input.billerId,
@@ -125,7 +150,7 @@ export const aggregatorBbps: BbpsProvider = {
 export const aggregatorRecharge: RechargeProvider = {
   name: 'aggregator',
   recharge(input: RechargeInput): Promise<ProviderResult> {
-    return post('/recharge', {
+    return post('recharge', '/recharge', {
       reference: input.reference,
       amount: input.amountPaise / 100,
       operator: input.operator,
@@ -139,7 +164,7 @@ export const aggregatorRecharge: RechargeProvider = {
 export const aggregatorAeps: AepsProvider = {
   name: 'aggregator',
   execute(input: AepsInput): Promise<ProviderResult> {
-    return post('/aeps', {
+    return post('aeps', '/aeps', {
       reference: input.reference,
       txn_type: input.txnType,
       amount: input.amountPaise / 100,
@@ -153,7 +178,7 @@ export const aggregatorAeps: AepsProvider = {
 export const aggregatorCms: CmsProvider = {
   name: 'aggregator',
   pay(input: CmsPayInput): Promise<ProviderResult> {
-    return post('/cms/pay', {
+    return post('cms', '/cms/pay', {
       reference: input.reference,
       amount: input.amountPaise / 100,
       agent_id: input.agentId,
@@ -166,7 +191,7 @@ export const aggregatorCms: CmsProvider = {
 export const aggregatorCardSwipe: CardSwipeProvider = {
   name: 'aggregator',
   swipe(input: CardSwipeInput): Promise<ProviderResult> {
-    return post('/card-swipe', {
+    return post('card_swipe', '/card-swipe', {
       reference: input.reference,
       amount: input.amountPaise / 100,
       card_network: input.cardNetwork,
@@ -179,7 +204,7 @@ export const aggregatorCardSwipe: CardSwipeProvider = {
 export const aggregatorGeneric: GenericServiceProvider = {
   name: 'aggregator',
   execute(service: string, input: GenericServiceInput): Promise<ProviderResult> {
-    return post(`/${service.replace(/_/g, '-')}`, {
+    return post(service, `/${service.replace(/_/g, '-')}`, {
       reference: input.reference,
       amount: input.amountPaise / 100,
       ...(input.meta ?? {}),

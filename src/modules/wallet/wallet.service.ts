@@ -21,7 +21,10 @@ export type WalletSource =
   | 'matm'
   | 'aadhaar_pay'
   | 'pan_card'
-  | 'wallet_transfer';
+  | 'wallet_transfer'
+  | 'travel'
+  | 'insurance'
+  | 'float_transfer';
 
 interface WalletRow {
   id: string;
