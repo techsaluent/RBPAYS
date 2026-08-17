@@ -94,6 +94,12 @@ export const env = {
   RISK_DMT_STRUCT_MIN_PAISE: int('RISK_DMT_STRUCT_MIN_PAISE', 490_000),
   RISK_DMT_STRUCT_MAX_PAISE: int('RISK_DMT_STRUCT_MAX_PAISE', 499_900),
   RISK_DMT_STRUCT_MAX_PER_HOUR: int('RISK_DMT_STRUCT_MAX_PER_HOUR', 3),
+  // Probation vs full-tier daily caps (paise). New members start on probation.
+  PROBATION_DAYS: int('PROBATION_DAYS', 14),
+  PROBATION_CASHOUT_CAP_PAISE: int('PROBATION_CASHOUT_CAP_PAISE', 50_000_00),
+  PROBATION_DMT_CAP_PAISE: int('PROBATION_DMT_CAP_PAISE', 25_000_00),
+  FULL_CASHOUT_CAP_PAISE: int('FULL_CASHOUT_CAP_PAISE', 500_000_00),
+  FULL_DMT_CAP_PAISE: int('FULL_DMT_CAP_PAISE', 250_000_00),
 
   // ---- Statutory tax --------------------------------------------------
   // GST place-of-supply home state (27 = Maharashtra, from GST 27ABIFR6463M1ZH).

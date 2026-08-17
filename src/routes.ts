@@ -20,6 +20,7 @@ import travelRoutes from './modules/travel/travel.routes';
 import insuranceRoutes from './modules/insurance/insurance.routes';
 import kycRoutes from './modules/kyc/kyc.routes';
 import taxRoutes from './modules/tax/tax.routes';
+import onboardingRoutes from './modules/onboarding/onboarding.routes';
 import networkRoutes from './modules/network/network.routes';
 import adminRoutes from './modules/admin/admin.routes';
 import transactionRoutes from './modules/transactions/transactions.routes';
@@ -48,6 +49,7 @@ router.use('/insurance', insuranceRoutes);
 router.use('/transactions', transactionRoutes);
 router.use('/kyc', kycRoutes);
 router.use('/tax', taxRoutes);
+router.use('/onboarding', onboardingRoutes);
 router.use('/network', networkRoutes);
 router.use('/admin', adminRoutes);
 

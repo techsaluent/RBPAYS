@@ -238,11 +238,21 @@ const Screens = {
 
   // Member self-service KYC: submit documents and see status.
   async kyc() {
-    const d = await Api.get('/kyc').catch(() => ({ kyc_status: 'pending', documents: [] }));
+    const [d, reqs] = await Promise.all([
+      Api.get('/kyc').catch(() => ({ kyc_status: 'pending', documents: [] })),
+      Api.get('/onboarding/requirements').catch(() => ({ requirements: [], mandatory_pending: 0 })),
+    ]);
     const rows = (d.documents || []).map(k => `<tr><td>${esc(k.doc_type)}</td><td>${esc(k.doc_number||'')}</td>
       <td>${UI.statusTag(k.status)}</td><td class="muted">${esc(k.remarks||'')}</td></tr>`).join('');
+    const reqRows = (reqs.requirements || []).map(r => `<tr>
+      <td>${r.verified ? '✅' : r.submitted ? '🕒' : '⬜'}</td><td>${esc(r.label)}</td>
+      <td>${r.mandatory ? '<span class="muted">required</span>' : '<span class="muted">optional</span>'}</td></tr>`).join('');
     $('view').innerHTML = `
-      <div class="grid cards"><div class="card"><div class="k">My KYC status</div><div class="v" style="font-size:20px">${UI.statusTag(d.kyc_status)}</div></div></div>
+      <div class="grid cards"><div class="card"><div class="k">My KYC status</div><div class="v" style="font-size:20px">${UI.statusTag(d.kyc_status)}</div></div>
+        <div class="card"><div class="k">Required documents pending</div><div class="v">${reqs.mandatory_pending ?? 0}</div></div></div>
+      <div class="panel mt"><h2>Required for your role (${esc(reqs.role||State.user.role)})</h2>
+        <div class="tbl-wrap"><table><thead><tr><th></th><th>Document</th><th></th></tr></thead>
+        <tbody>${reqRows || '<tr><td colspan=3 class=muted>—</td></tr>'}</tbody></table></div></div>
       <div class="panel mt" style="max-width:520px"><h2>Submit a document</h2>
         <div class="field"><label>Document type</label>
           <select id="k_type"><option value="aadhaar">Aadhaar</option><option value="pan">PAN</option>
@@ -403,11 +413,16 @@ const Screens = {
     const rows = d.items.map(u => `<tr>
       <td>${esc(u.full_name)}</td><td>${esc(u.username||'')}</td><td>${esc(u.role)}</td>
       <td>${esc(u.phone)}</td><td>${UI.statusTag(u.status)}</td><td>${UI.statusTag(u.kyc_status)}</td>
-      <td>${u.status === 'active'
+      <td>
+        ${u.status === 'active'
           ? `<button class="btn sm ghost" onclick="Actions.setStatus('${u.id}','suspended')">Suspend</button>`
-          : `<button class="btn sm" onclick="Actions.setStatus('${u.id}','active')">Activate</button>`}</td></tr>`).join('');
+          : `<button class="btn sm" onclick="Actions.setStatus('${u.id}','active')">Activate</button>`}
+        ${u.role !== 'admin' ? `<button class="btn sm ghost" onclick="Actions.assessOnb('${u.id}')">Score</button>
+        <button class="btn sm ghost" onclick="Actions.promote('${u.id}')">Promote</button>` : ''}
+      </td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
       <h2>Users</h2><button class="btn sm" onclick="Actions.addMember(true)">+ Create member</button></div>
+      <p class="muted">Score = onboarding risk assessment; Promote moves a member from probation to full daily-limit tier.</p>
       <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Phone</th><th>Status</th><th>KYC</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table></div></div>`;
   },
@@ -739,6 +754,16 @@ const Actions = {
   },
   async setStatus(id, status) {
     try { await Api.patch(`/admin/users/${id}/status`, { status }); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async assessOnb(id) {
+    try { const d = await Api.post(`/admin/onboarding/${id}/assess`, {});
+      const a = d.assessment; UI.toast(`Risk ${a.total_score}/100 → ${a.decision}`); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async promote(id) {
+    const tier = prompt('Set tier (probation / full):', 'full'); if (!tier) return;
+    try { await Api.patch(`/admin/users/${id}/tier`, { tier }); UI.toast('Tier updated'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async pushFloat(id, name) {

@@ -13,6 +13,7 @@ import { dashboardStats } from './admin.dashboard';
 import { refreshProviderRegistry } from '../../providers/registry';
 import { postJournal } from '../_shared/ledger';
 import { runReconciliation, MisRow } from '../recon/recon.service';
+import { assessOnboarding } from '../onboarding/onboarding.service';
 
 const router = Router();
 router.use(requireAuth, requireRole('admin'));
@@ -425,6 +426,62 @@ router.get(
       limit: q.limit,
       offset: q.offset,
     });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Onboarding risk scoring + probation tier promotion
+// ---------------------------------------------------------------------
+router.post(
+  '/onboarding/:userId/assess',
+  asyncHandler(async (req: Request, res: Response) => {
+    const u = await query('SELECT 1 FROM users WHERE id = $1', [req.params.userId]);
+    if (!u.rowCount) throw ApiError.notFound('User not found');
+    const score = await assessOnboarding(req.params.userId);
+    res.json({ assessment: score });
+  }),
+);
+
+router.get(
+  '/onboarding/:userId',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query(
+      'SELECT * FROM onboarding_assessments WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5',
+      [req.params.userId],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const promoteSchema = z.object({
+  tier: z.enum(['probation', 'full']),
+  daily_cashout_cap: z.coerce.number().min(0).optional(), // rupees; override
+  daily_dmt_cap: z.coerce.number().min(0).optional(),
+});
+
+// Move a member between probation and full tier (and optionally set caps).
+router.patch(
+  '/users/:id/tier',
+  validate(promoteSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof promoteSchema>;
+    const { rows } = await query(
+      `UPDATE users SET
+          tier = $1,
+          daily_cashout_cap_paise = COALESCE($2, daily_cashout_cap_paise),
+          daily_dmt_cap_paise = COALESCE($3, daily_dmt_cap_paise),
+          probation_until = CASE WHEN $1 = 'full' THEN NULL ELSE probation_until END
+        WHERE id = $4
+        RETURNING id, full_name, role, tier, daily_cashout_cap_paise, daily_dmt_cap_paise`,
+      [
+        b.tier,
+        b.daily_cashout_cap === undefined ? null : rupeesToPaise(b.daily_cashout_cap),
+        b.daily_dmt_cap === undefined ? null : rupeesToPaise(b.daily_dmt_cap),
+        req.params.id,
+      ],
+    );
+    if (!rows[0]) throw ApiError.notFound('User not found');
+    res.json({ user: rows[0] });
   }),
 );
 

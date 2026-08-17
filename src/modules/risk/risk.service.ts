@@ -40,6 +40,53 @@ function inOffHours(hour: number): boolean {
   return s <= e ? hour >= s && hour < e : hour >= s || hour < e;
 }
 
+const CASHOUT_SERVICES = new Set(['aeps', 'matm', 'payout']);
+
+/**
+ * Enforce the member's daily cap for cash-out (AePS/mATM/payout) and DMT.
+ * Probation members get a lower ceiling; per-user overrides win. Throws 422
+ * when the day's total (including this transaction) would exceed the cap.
+ */
+export async function enforceDailyCaps(userId: string, service: string, amountPaise: number): Promise<void> {
+  const isCashout = CASHOUT_SERVICES.has(service);
+  const isDmt = service === 'dmt';
+  if (!isCashout && !isDmt) return;
+
+  const { rows } = await query<{
+    tier: string;
+    daily_cashout_cap_paise: string | null;
+    daily_dmt_cap_paise: string | null;
+  }>('SELECT tier, daily_cashout_cap_paise, daily_dmt_cap_paise FROM users WHERE id = $1', [userId]);
+  const u = rows[0];
+  if (!u) return;
+  const probation = u.tier !== 'full';
+
+  const cap = isCashout
+    ? Number(u.daily_cashout_cap_paise ?? (probation ? env.PROBATION_CASHOUT_CAP_PAISE : env.FULL_CASHOUT_CAP_PAISE))
+    : Number(u.daily_dmt_cap_paise ?? (probation ? env.PROBATION_DMT_CAP_PAISE : env.FULL_DMT_CAP_PAISE));
+
+  const services = isCashout ? ['aeps', 'matm', 'payout'] : ['dmt'];
+  const { rows: sums } = await query<{ sum: string }>(
+    `SELECT COALESCE(SUM(amount_paise),0)::text sum FROM transactions
+      WHERE user_id = $1 AND service = ANY($2)
+        AND status IN ('pending','success')
+        AND created_at >= date_trunc('day', now())`,
+    [userId, services],
+  );
+  const already = Number(sums[0]?.sum ?? '0');
+  if (already + amountPaise > cap) {
+    await query(
+      `INSERT INTO risk_events (user_id, service_code, kind, score, action, detail)
+       VALUES ($1,$2,'daily_cap',80,'block',$3)`,
+      [userId, service, JSON.stringify({ cap, already, amount: amountPaise, tier: u.tier })],
+    );
+    throw ApiError.unprocessable(
+      `Daily ${isCashout ? 'cash-out' : 'DMT'} limit of ₹${(cap / 100).toLocaleString('en-IN')} reached` +
+        (probation ? ' (probation tier)' : ''),
+    );
+  }
+}
+
 /**
  * Assess a transaction before it is committed. Logs a risk_event when the
  * action is not a plain allow, and throws 422 when the action is 'block'.
@@ -54,6 +101,9 @@ export async function assessTransaction(p: {
 
   let score = 0;
   const reasons: string[] = [];
+
+  // Probation / full-tier daily caps for cash-out and DMT.
+  await enforceDailyCaps(p.userId, p.service, p.amountPaise);
 
   // Velocity: same-service transactions by this user in the rolling window.
   const { rows: vel } = await query<{ n: string }>(
