@@ -79,6 +79,14 @@ export const env = {
   DMT_MAX_PER_TXN_PAISE: int('DMT_MAX_PER_TXN_PAISE', 500_000),
   DMT_MAX_PER_MONTH_PAISE: int('DMT_MAX_PER_MONTH_PAISE', 2_500_000),
 
+  // ---- Statutory tax --------------------------------------------------
+  // GST place-of-supply home state (27 = Maharashtra, from GST 27ABIFR6463M1ZH).
+  HOME_STATE_CODE: optional('HOME_STATE_CODE', '27'),
+  // Section 194N cash-withdrawal TDS thresholds (paise) per member per FY.
+  TDS_194N_THRESHOLD_FILER_PAISE: int('TDS_194N_THRESHOLD_FILER_PAISE', 10_000_000_00),
+  TDS_194N_THRESHOLD_NONFILER_PAISE: int('TDS_194N_THRESHOLD_NONFILER_PAISE', 2_000_000_00),
+  TDS_194N_RATE_BPS: int('TDS_194N_RATE_BPS', 200), // 2%
+
   // ---- Razorpay / RazorpayX ------------------------------------------
   RAZORPAY_KEY_ID: optional('RAZORPAY_KEY_ID', ''),
   RAZORPAY_KEY_SECRET: optional('RAZORPAY_KEY_SECRET', ''),

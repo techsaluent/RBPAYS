@@ -19,6 +19,7 @@ import walletTransferRoutes from './modules/wallet-transfer/wallet-transfer.rout
 import travelRoutes from './modules/travel/travel.routes';
 import insuranceRoutes from './modules/insurance/insurance.routes';
 import kycRoutes from './modules/kyc/kyc.routes';
+import taxRoutes from './modules/tax/tax.routes';
 import networkRoutes from './modules/network/network.routes';
 import adminRoutes from './modules/admin/admin.routes';
 import transactionRoutes from './modules/transactions/transactions.routes';
@@ -46,6 +47,7 @@ router.use('/travel', travelRoutes);
 router.use('/insurance', insuranceRoutes);
 router.use('/transactions', transactionRoutes);
 router.use('/kyc', kycRoutes);
+router.use('/tax', taxRoutes);
 router.use('/network', networkRoutes);
 router.use('/admin', adminRoutes);
 

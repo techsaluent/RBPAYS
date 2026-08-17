@@ -47,6 +47,7 @@ const Api = {
   get(p) { return this.call(p); },
   post(p, body, auth = true) { return this.call(p, { method: 'POST', body, auth }); },
   patch(p, body) { return this.call(p, { method: 'PATCH', body }); },
+  put(p, body) { return this.call(p, { method: 'PUT', body }); },
   del(p) { return this.call(p, { method: 'DELETE' }); },
 };
 
@@ -130,6 +131,7 @@ const NAV = [
   { key: 'txns', label: 'Transactions', roles: NETWORK_ROLES },
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
+  { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
   { key: 'members', label: 'Users', roles: ['admin'] },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin'] },
   { key: 'topupreview', label: 'Top-up Requests', roles: ['admin'] },
@@ -137,6 +139,8 @@ const NAV = [
   { key: 'plans', label: 'Commission', roles: ['admin'] },
   { key: 'adminservices', label: 'Services', roles: ['admin'] },
   { key: 'providers', label: 'Providers', roles: ['admin'] },
+  { key: 'integrations', label: 'Integrations', roles: ['admin'] },
+  { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin'] },
   { key: 'ledger', label: 'Ledger', roles: ['admin'] },
 ];
 function allowed(item) { return item.roles === '*' || item.roles.includes(State.user.role); }
@@ -252,15 +256,51 @@ const Screens = {
   async wallet() {
     const w = await Api.get('/wallet');
     const l = await Api.get('/wallet/ledger?limit=25');
+    const sw = w.sub_wallets || { settlement: '0.00', commission: '0.00', settlement_paise: 0, commission_paise: 0 };
     const rows = l.items.map(r => `<tr><td>${r.direction === 'credit' ? '＋' : '－'} ${money(r.amount)}</td>
       <td>${esc(r.source)}</td><td class="muted">${esc(r.description || '')}</td>
       <td class="right">${money(r.balance_after)}</td><td class="muted">${new Date(r.created_at).toLocaleString('en-IN')}</td></tr>`).join('');
     $('view').innerHTML = `
-      <div class="grid cards"><div class="card"><div class="k">Balance</div><div class="v">${money(w.wallet.balance)}</div></div></div>
-      <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Ledger</h2>
+      <div class="grid cards">
+        <div class="card"><div class="k">Main wallet</div><div class="v">${money(w.wallet.balance)}</div>
+          <a class="btn sm ghost" href="#/addmoney">Add money</a></div>
+        <div class="card"><div class="k">AePS settlement</div><div class="v">${money(sw.settlement)}</div>
+          ${sw.settlement_paise > 0 ? `<button class="btn sm" onclick="Actions.sweep('settlement',${sw.settlement_paise/100})">Sweep to main</button>` : ''}</div>
+        <div class="card"><div class="k">Commission (net of TDS)</div><div class="v">${money(sw.commission)}</div>
+          ${sw.commission_paise > 0 ? `<button class="btn sm" onclick="Actions.sweep('commission',${sw.commission_paise/100})">Sweep to main</button>` : ''}</div>
+      </div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Main wallet ledger</h2>
         <button class="btn sm" onclick="Actions.topup()">Top up (test gateway)</button></div>
         <div class="tbl-wrap"><table><thead><tr><th>Amount</th><th>Source</th><th>Description</th><th class="right">Balance</th><th>When</th></tr></thead>
         <tbody>${rows || '<tr><td colspan=5 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Member: PAN / GSTIN submission + TDS statement.
+  async tax() {
+    const [p, tds] = await Promise.all([
+      Api.get('/tax/profile').catch(() => ({ profile: null })),
+      Api.get('/tax/tds').catch(() => ({ items: [], total_tds: '0.00' })),
+    ]);
+    const pr = p.profile || {};
+    const rows = (tds.items || []).map(r => `<tr><td>${esc(r.service_code||'')}</td><td>${esc(r.section)}</td>
+      <td class="right">${money((r.gross_paise||0)/100)}</td><td>${(r.rate_bps/100).toFixed(0)}%</td>
+      <td class="right">${money((r.tds_paise||0)/100)}</td><td class="right">${money((r.net_paise||0)/100)}</td>
+      <td class="muted">${new Date(r.created_at).toLocaleString('en-IN')}</td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="grid cards">
+        <div class="card"><div class="k">PAN status</div><div class="v" style="font-size:18px">${pr.pan_valid ? UI.statusTag('verified') : UI.statusTag('pending')}</div></div>
+        <div class="card"><div class="k">Total TDS deducted</div><div class="v">${money((tds.total_tds_paise||0)/100)}</div></div>
+      </div>
+      <div class="panel mt" style="max-width:520px"><h2>My PAN &amp; GST</h2>
+        <p class="muted">A valid PAN lowers your commission TDS from 20% to 5% (Section 194H).</p>
+        <div class="field"><label>PAN</label><input id="tx_pan" value="${esc(pr.pan||'')}" placeholder="ABCDE1234F"></div>
+        <div class="field"><label>Name on PAN</label><input id="tx_name" value="${esc(pr.pan_name||'')}"></div>
+        <div class="field"><label>GSTIN (optional)</label><input id="tx_gst" value="${esc(pr.gstin||'')}"></div>
+        <div class="field"><label>State code</label><input id="tx_state" value="${esc(pr.state_code||'')}" placeholder="27"></div>
+        <button class="btn" onclick="Actions.saveTaxProfile()">Save</button></div>
+      <div class="panel mt"><h2>My TDS statement</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th class="right">Net</th><th>When</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=7 class=muted>No TDS yet</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Add money: deposit into a company bank account (cash/bank/UPI) and
@@ -466,6 +506,46 @@ const Screens = {
       <p class="muted">Immutable journal — every entry has equal debits and credits.</p></div>${blocks || '<div class="panel muted">No journal entries yet</div>'}`;
   },
 
+  // Admin: TDS (194H/194N) + GST desk.
+  async taxdesk() {
+    const [tds, gst] = await Promise.all([Api.get('/admin/tds'), Api.get('/admin/gst')]);
+    const trows = tds.items.map(r => `<tr><td>${esc(r.full_name)}</td><td>${esc(r.service_code||'')}</td>
+      <td>${esc(r.section)}</td><td class="right">${money((r.gross_paise||0)/100)}</td>
+      <td>${(r.rate_bps/100).toFixed(0)}%</td><td class="right">${money((r.tds_paise||0)/100)}</td>
+      <td class="muted">${new Date(r.created_at).toLocaleString('en-IN')}</td></tr>`).join('');
+    const grows = gst.items.map(r => `<tr><td>${esc(r.service_code||'')}</td>
+      <td class="right">${money((r.taxable_base_paise||0)/100)}</td>
+      <td class="right">${money((r.cgst_paise||0)/100)}</td><td class="right">${money((r.sgst_paise||0)/100)}</td>
+      <td class="right">${money((r.igst_paise||0)/100)}</td><td>${esc(r.place_of_supply||'')}</td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="grid cards">
+        <div class="card"><div class="k">TDS withheld (Form 26Q)</div><div class="v">${money((tds.total_tds_paise||0)/100)}</div></div>
+        <div class="card"><div class="k">GST collected</div><div class="v">${money((gst.total_gst_paise||0)/100)}</div></div>
+        <div class="card"><div class="k">Taxable base</div><div class="v">${money((gst.total_base_paise||0)/100)}</div></div>
+      </div>
+      <div class="panel mt"><h2>TDS records (Section 194H / 194N)</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Member</th><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th>When</th></tr></thead>
+        <tbody>${trows || '<tr><td colspan=7 class=muted>No TDS yet</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><h2>GST invoices (18% on platform margin)</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th class="right">Base</th><th class="right">CGST</th><th class="right">SGST</th><th class="right">IGST</th><th>PoS</th></tr></thead>
+        <tbody>${grows || '<tr><td colspan=6 class=muted>No GST yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop).
+  async integrations() {
+    const d = await Api.get('/admin/integrations');
+    const rows = d.items.map(i => `<tr>
+      <td>${esc(i.label)}</td><td class="muted">${esc(i.category)}</td><td>${esc(i.provider||'')}</td>
+      <td>${i.has_key ? '🔑' : '<span class="muted">no key</span>'}</td>
+      <td>${i.is_active ? '<span class="tag active">active</span>' : '<span class="tag blocked">off</span>'}</td>
+      <td><button class="btn sm" onclick="Actions.editIntegration('${i.key}','${esc(i.label)}','${esc(i.provider||'')}','${esc(i.base_url||'')}','${esc(i.sender_id||'')}',${i.is_active})">Configure</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Platform integrations</h2>
+      <p class="muted">Paste API keys for messaging &amp; identity services. Keys are write-only (shown masked). Mark active to enable.</p>
+      <div class="tbl-wrap"><table>
+      <thead><tr><th>Service</th><th>Category</th><th>Provider</th><th>Key</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
+  },
+
   // Admin: manage upstream providers per service (multiple, one active).
   async providers() {
     const svcs = await Api.get('/admin/services');
@@ -607,6 +687,42 @@ const Actions = {
     const amt = prompt(`Push float to ${name} (₹):`, '1000');
     if (!amt) return;
     try { await Api.post('/network/float', { to_user_id: id, amount: +amt }); UI.toast('Float pushed'); App.refreshWallet(); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async sweep(from, max) {
+    const amt = prompt(`Sweep ${from} balance to main wallet (₹, max ${max}):`, String(max));
+    if (!amt) return;
+    try { await Api.post('/wallet/sweep', { from, amount: +amt }); UI.toast('Swept to main'); App.refreshWallet(); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async saveTaxProfile() {
+    const body = {};
+    if (val('tx_pan')) body.pan = val('tx_pan').toUpperCase();
+    if (val('tx_name')) body.pan_name = val('tx_name');
+    if (val('tx_gst')) body.gstin = val('tx_gst').toUpperCase();
+    if (val('tx_state')) body.state_code = val('tx_state');
+    try { await Api.put('/tax/profile', body); UI.toast('Saved — admin will verify your PAN'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  editIntegration(key, label, provider, baseUrl, senderId, isActive) {
+    UI.modal(`<h3>Configure — ${esc(label)}</h3>
+      <div class="field"><label>Provider</label><input id="ig_prov" value="${esc(provider)}" placeholder="MSG91 / SMTP / Protean"></div>
+      <div class="field"><label>Base URL</label><input id="ig_url" value="${esc(baseUrl)}"></div>
+      <div class="field"><label>API key</label><input id="ig_key" placeholder="(leave blank to keep)"></div>
+      <div class="field"><label>API secret</label><input id="ig_secret" placeholder="(leave blank to keep)"></div>
+      <div class="field"><label>Sender ID / From</label><input id="ig_sender" value="${esc(senderId)}"></div>
+      <div class="field"><label><input type="checkbox" id="ig_active" ${isActive ? 'checked' : ''}> Active</label></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveIntegration('${key}')">Save</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveIntegration(key) {
+    const body = { is_active: $('ig_active').checked };
+    if (val('ig_prov')) body.provider = val('ig_prov');
+    if (val('ig_url')) body.base_url = val('ig_url');
+    if (val('ig_key')) body.api_key = val('ig_key');
+    if (val('ig_secret')) body.api_secret = val('ig_secret');
+    if (val('ig_sender')) body.sender_id = val('ig_sender');
+    try { await Api.put(`/admin/integrations/${key}`, body); UI.closeModal(); UI.toast('Integration saved'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async reviewKyc(id, status) {

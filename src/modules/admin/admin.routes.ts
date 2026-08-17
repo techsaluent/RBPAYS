@@ -428,6 +428,145 @@ router.get(
 );
 
 // ---------------------------------------------------------------------
+// Platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop)
+// ---------------------------------------------------------------------
+router.get(
+  '/integrations',
+  asyncHandler(async (_req: Request, res: Response) => {
+    // Mask secrets in the list; only report whether they are set.
+    const { rows } = await query(
+      `SELECT key, label, category, provider, base_url, sender_id, is_active, updated_at,
+              (api_key IS NOT NULL AND api_key <> '') AS has_key,
+              (api_secret IS NOT NULL AND api_secret <> '') AS has_secret
+         FROM platform_integrations ORDER BY category, key`,
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const integrationSchema = z.object({
+  label: z.string().trim().max(120).optional(),
+  category: z.enum(['messaging', 'identity', 'verification', 'other']).optional(),
+  provider: z.string().trim().max(80).optional(),
+  base_url: z.string().trim().max(300).optional(),
+  api_key: z.string().trim().max(600).optional(),
+  api_secret: z.string().trim().max(600).optional(),
+  sender_id: z.string().trim().max(120).optional(),
+  extra: z.record(z.any()).optional(),
+  is_active: z.boolean().optional(),
+});
+
+// Upsert an integration's config + credentials by key.
+router.put(
+  '/integrations/:key',
+  validate(integrationSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof integrationSchema>;
+    const { rows } = await query(
+      `INSERT INTO platform_integrations (key, label, category, provider, base_url, api_key, api_secret, sender_id, extra, is_active)
+       VALUES ($1, COALESCE($2,$1), COALESCE($3,'other'), $4,$5,$6,$7,$8, COALESCE($9,'{}'::jsonb), COALESCE($10,false))
+       ON CONFLICT (key) DO UPDATE SET
+         label = COALESCE($2, platform_integrations.label),
+         category = COALESCE($3, platform_integrations.category),
+         provider = COALESCE($4, platform_integrations.provider),
+         base_url = COALESCE($5, platform_integrations.base_url),
+         api_key = COALESCE($6, platform_integrations.api_key),
+         api_secret = COALESCE($7, platform_integrations.api_secret),
+         sender_id = COALESCE($8, platform_integrations.sender_id),
+         extra = COALESCE($9, platform_integrations.extra),
+         is_active = COALESCE($10, platform_integrations.is_active)
+       RETURNING key, label, category, provider, base_url, sender_id, is_active, updated_at`,
+      [req.params.key, b.label ?? null, b.category ?? null, b.provider ?? null, b.base_url ?? null,
+       b.api_key ?? null, b.api_secret ?? null, b.sender_id ?? null,
+       b.extra === undefined ? null : JSON.stringify(b.extra), b.is_active ?? null],
+    );
+    res.json({ integration: rows[0] });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Statutory tax — verify PANs, view TDS (194H/194N) and GST records
+// ---------------------------------------------------------------------
+const taxVerifySchema = z.object({
+  pan_valid: z.boolean().optional(),
+  is_206ab_non_filer: z.boolean().optional(),
+});
+
+// Mark a member's PAN verified / 206AB status (drives their TDS rate).
+router.patch(
+  '/tax/:userId',
+  validate(taxVerifySchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof taxVerifySchema>;
+    const { rows } = await query(
+      `INSERT INTO tax_profiles (user_id, pan_valid, is_206ab_non_filer)
+       VALUES ($1, COALESCE($2,false), COALESCE($3,false))
+       ON CONFLICT (user_id) DO UPDATE SET
+         pan_valid = COALESCE($2, tax_profiles.pan_valid),
+         is_206ab_non_filer = COALESCE($3, tax_profiles.is_206ab_non_filer)
+       RETURNING *`,
+      [req.params.userId, b.pan_valid ?? null, b.is_206ab_non_filer ?? null],
+    );
+    res.json({ profile: rows[0] });
+  }),
+);
+
+router.get(
+  '/tds',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const totals = await query<{ gross: string; tds: string }>(
+      'SELECT COALESCE(SUM(gross_paise),0) gross, COALESCE(SUM(tds_paise),0) tds FROM tds_records',
+    );
+    const { rows } = await query(
+      `SELECT t.id, t.user_id, u.full_name, t.service_code, t.section,
+              t.gross_paise, t.rate_bps, t.tds_paise, t.net_paise, t.created_at
+         FROM tds_records t JOIN users u ON u.id = t.user_id
+        ORDER BY t.created_at DESC LIMIT 100`,
+    );
+    res.json({
+      total_gross_paise: bigintToNumber(totals.rows[0].gross),
+      total_tds_paise: bigintToNumber(totals.rows[0].tds),
+      total_tds: paiseToRupees(totals.rows[0].tds),
+      items: rows.map((r) => ({
+        ...r,
+        gross_paise: bigintToNumber(r.gross_paise as string),
+        tds_paise: bigintToNumber(r.tds_paise as string),
+        net_paise: bigintToNumber(r.net_paise as string),
+      })),
+    });
+  }),
+);
+
+router.get(
+  '/gst',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const totals = await query<{ base: string; cgst: string; sgst: string; igst: string }>(
+      `SELECT COALESCE(SUM(taxable_base_paise),0) base, COALESCE(SUM(cgst_paise),0) cgst,
+              COALESCE(SUM(sgst_paise),0) sgst, COALESCE(SUM(igst_paise),0) igst FROM gst_invoices`,
+    );
+    const { rows } = await query(
+      `SELECT id, service_code, taxable_base_paise, cgst_paise, sgst_paise, igst_paise, place_of_supply, created_at
+         FROM gst_invoices ORDER BY created_at DESC LIMIT 100`,
+    );
+    const t = totals.rows[0];
+    res.json({
+      total_base_paise: bigintToNumber(t.base),
+      total_gst_paise: bigintToNumber(t.cgst) + bigintToNumber(t.sgst) + bigintToNumber(t.igst),
+      total_cgst_paise: bigintToNumber(t.cgst),
+      total_sgst_paise: bigintToNumber(t.sgst),
+      total_igst_paise: bigintToNumber(t.igst),
+      items: rows.map((r) => ({
+        ...r,
+        taxable_base_paise: bigintToNumber(r.taxable_base_paise as string),
+        cgst_paise: bigintToNumber(r.cgst_paise as string),
+        sgst_paise: bigintToNumber(r.sgst_paise as string),
+        igst_paise: bigintToNumber(r.igst_paise as string),
+      })),
+    });
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Company bank accounts (for cash / bank deposit top-ups)
 // ---------------------------------------------------------------------
 router.get(
