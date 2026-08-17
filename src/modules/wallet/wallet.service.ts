@@ -23,7 +23,8 @@ export type WalletSource =
   | 'pan_card'
   | 'wallet_transfer'
   | 'travel'
-  | 'insurance';
+  | 'insurance'
+  | 'float_transfer';
 
 interface WalletRow {
   id: string;

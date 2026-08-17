@@ -11,6 +11,7 @@ import { createMember } from '../members/members.service';
 import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
 import { refreshProviderRegistry } from '../../providers/registry';
+import { postJournal } from '../_shared/ledger';
 
 const router = Router();
 router.use(requireAuth, requireRole('admin'));
@@ -372,6 +373,61 @@ router.delete(
 );
 
 // ---------------------------------------------------------------------
+// Double-entry ledger — chart of accounts + journal (audit view)
+// ---------------------------------------------------------------------
+router.get(
+  '/ledger/accounts',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT * FROM chart_of_accounts ORDER BY type, code');
+    res.json({ items: rows });
+  }),
+);
+
+const journalListSchema = z.object({
+  source: z.string().trim().max(40).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+router.get(
+  '/ledger/journal',
+  validate(journalListSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof journalListSchema>;
+    const { rows: entries } = await query<{ id: string }>(
+      `SELECT id, reference, source, narration, created_at
+         FROM journal_entries
+        WHERE ($1::text IS NULL OR source = $1)
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3`,
+      [q.source ?? null, q.limit, q.offset],
+    );
+    const ids = entries.map((e) => e.id);
+    const lines = ids.length
+      ? (await query(
+          `SELECT jl.entry_id, jl.account_code, jl.direction, jl.amount_paise,
+                  jl.wallet_user_id, u.full_name AS wallet_owner
+             FROM journal_lines jl
+             LEFT JOIN users u ON u.id = jl.wallet_user_id
+            WHERE jl.entry_id = ANY($1::uuid[])
+            ORDER BY jl.direction DESC`,
+          [ids],
+        )).rows
+      : [];
+    const byEntry: Record<string, unknown[]> = {};
+    for (const l of lines) {
+      const r = l as { entry_id: string; amount_paise: string };
+      (byEntry[r.entry_id] ??= []).push({ ...l, amount_paise: bigintToNumber(r.amount_paise), amount: paiseToRupees(r.amount_paise) });
+    }
+    res.json({
+      items: entries.map((e) => ({ ...e, lines: byEntry[e.id] ?? [] })),
+      limit: q.limit,
+      offset: q.offset,
+    });
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Company bank accounts (for cash / bank deposit top-ups)
 // ---------------------------------------------------------------------
 router.get(
@@ -508,6 +564,17 @@ router.post(
         source: 'topup',
         referenceId: topupId,
         description: 'Wallet top-up (approved)',
+      });
+      // Double-entry: real cash enters the bank escrow (asset up); the
+      // platform now owes the member that balance (liability up).
+      await postJournal(client, {
+        source: 'topup',
+        reference: topupId,
+        narration: 'Wallet top-up approved',
+        lines: [
+          { account: 'bank_escrow', direction: 'debit', amountPaise: Number(t.amount_paise) },
+          { account: 'member_wallet', direction: 'credit', amountPaise: Number(t.amount_paise), walletUserId: t.user_id },
+        ],
       });
       const txn = await client.query<{ id: string }>(
         `SELECT id FROM wallet_transactions

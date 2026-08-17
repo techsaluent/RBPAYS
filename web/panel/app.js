@@ -137,6 +137,7 @@ const NAV = [
   { key: 'plans', label: 'Commission', roles: ['admin'] },
   { key: 'adminservices', label: 'Services', roles: ['admin'] },
   { key: 'providers', label: 'Providers', roles: ['admin'] },
+  { key: 'ledger', label: 'Ledger', roles: ['admin'] },
 ];
 function allowed(item) { return item.roles === '*' || item.roles.includes(State.user.role); }
 
@@ -335,7 +336,8 @@ const Screens = {
       Api.get('/network/earnings?limit=10'),
     ]);
     const mrows = members.items.map(m => `<tr><td>${esc(m.full_name)}</td><td>${esc(m.username||'')}</td>
-      <td>${esc(m.role)}</td><td>${esc(m.phone)}</td><td>${UI.statusTag(m.status)}</td></tr>`).join('');
+      <td>${esc(m.role)}</td><td>${esc(m.phone)}</td><td>${UI.statusTag(m.status)}</td>
+      <td><button class="btn sm" onclick="Actions.pushFloat('${m.id}','${esc(m.full_name)}')">Push float</button></td></tr>`).join('');
     const erows = earn.items.map(e => `<tr><td>${esc(e.service_code)}</td><td>${esc(e.level)}</td>
       <td class="right">${money(e.amount_paise/100)}</td><td class="muted">${new Date(e.created_at).toLocaleString('en-IN')}</td></tr>`).join('');
     $('view').innerHTML = `
@@ -345,8 +347,9 @@ const Screens = {
       </div>
       <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My members</h2>
         <button class="btn sm" onclick="Actions.addMember(false)">+ Add member</button></div>
-        <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Phone</th><th>Status</th></tr></thead>
-        <tbody>${mrows || '<tr><td colspan=5 class=muted>No members yet</td></tr>'}</tbody></table></div></div>
+        <p class="muted">Push float (working balance) from your wallet to a direct downline member.</p>
+        <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Phone</th><th>Status</th><th></th></tr></thead>
+        <tbody>${mrows || '<tr><td colspan=6 class=muted>No members yet</td></tr>'}</tbody></table></div></div>
       <div class="panel mt"><h2>Recent commission</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th>Level</th><th class="right">Amount</th><th>When</th></tr></thead>
         <tbody>${erows || '<tr><td colspan=4 class=muted>None yet</td></tr>'}</tbody></table></div></div>`;
@@ -442,6 +445,25 @@ const Screens = {
       <div class="tbl-wrap"><table>
       <thead><tr><th>Label</th><th>Bank</th><th>A/c name</th><th>A/c no</th><th>IFSC</th><th>UPI</th><th>Status</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=8 class=muted>No accounts yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: double-entry journal audit view.
+  async ledger() {
+    const d = await Api.get('/admin/ledger/journal?limit=40');
+    const blocks = d.items.map(e => {
+      const lines = e.lines.map(l => `<tr>
+        <td>${l.direction === 'debit' ? 'DR' : '&nbsp;&nbsp;CR'}</td>
+        <td>${esc(l.account_code)}${l.wallet_owner ? ' <span class="muted">('+esc(l.wallet_owner)+')</span>' : ''}</td>
+        <td class="right">${l.direction === 'debit' ? money(l.amount) : ''}</td>
+        <td class="right">${l.direction === 'credit' ? money(l.amount) : ''}</td></tr>`).join('');
+      return `<div class="panel mt"><div class="row" style="justify-content:space-between">
+        <b>${esc(e.source)}</b><span class="muted">${new Date(e.created_at).toLocaleString('en-IN')}${e.reference ? ' · '+esc(e.reference) : ''}</span></div>
+        <div class="muted" style="margin:2px 0 8px">${esc(e.narration||'')}</div>
+        <div class="tbl-wrap"><table><thead><tr><th></th><th>Account</th><th class="right">Debit</th><th class="right">Credit</th></tr></thead>
+        <tbody>${lines}</tbody></table></div></div>`;
+    }).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Double-entry ledger</h2>
+      <p class="muted">Immutable journal — every entry has equal debits and credits.</p></div>${blocks || '<div class="panel muted">No journal entries yet</div>'}`;
   },
 
   // Admin: manage upstream providers per service (multiple, one active).
@@ -579,6 +601,12 @@ const Actions = {
   },
   async setStatus(id, status) {
     try { await Api.patch(`/admin/users/${id}/status`, { status }); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async pushFloat(id, name) {
+    const amt = prompt(`Push float to ${name} (₹):`, '1000');
+    if (!amt) return;
+    try { await Api.post('/network/float', { to_user_id: id, amount: +amt }); UI.toast('Float pushed'); App.refreshWallet(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async reviewKyc(id, status) {
