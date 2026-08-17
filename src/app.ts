@@ -42,7 +42,7 @@ export function createApp() {
 
   // Liveness — no DB dependency.
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', service: 'rbpays-api', time: new Date().toISOString() });
+    res.json({ status: 'ok', service: 'tutipays-api', time: new Date().toISOString() });
   });
 
   // Readiness — verifies the VPS Postgres connection.
@@ -57,10 +57,10 @@ export function createApp() {
 
   app.get('/', (_req: Request, res: Response) => {
     res.json({
-      name: 'RBPAYS API',
+      name: 'TutiPays API',
       version: '0.1.0',
       docs: '/api/v1',
-      modules: ['auth', 'wallet', 'beneficiaries', 'dmt', 'bbps', 'recharge', 'payout', 'aeps', 'cms', 'card-swipe', 'upi', 'matm', 'aadhaar-pay', 'pan-card', 'wallet-transfer', 'payment-gateway', 'transactions', 'kyc', 'network', 'admin', 'webhooks'],
+      modules: ['auth', 'wallet', 'beneficiaries', 'dmt', 'bbps', 'recharge', 'payout', 'aeps', 'cms', 'card-swipe', 'upi', 'matm', 'aadhaar-pay', 'pan-card', 'wallet-transfer', 'travel', 'insurance', 'payment-gateway', 'transactions', 'kyc', 'network', 'admin', 'webhooks'],
     });
   });
 

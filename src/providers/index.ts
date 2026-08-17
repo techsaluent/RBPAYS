@@ -91,6 +91,8 @@ const GENERIC_CHOICE: Record<string, string> = {
   matm: env.PROVIDER_MATM,
   aadhaar_pay: env.PROVIDER_AADHAAR_PAY,
   pan_card: env.PROVIDER_PAN_CARD,
+  travel: env.PROVIDER_TRAVEL,
+  insurance: env.PROVIDER_INSURANCE,
 };
 
 export function getGenericProvider(service: string): GenericServiceProvider {

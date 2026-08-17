@@ -116,14 +116,19 @@ const UI = {
 };
 
 // ---------------- Navigation ----------------
+// Only retailers (and plain users) transact; distributors/MDs manage their
+// network; admin runs the platform.
+const TXN_ROLES = ['retailer', 'user'];
+const MGMT_ROLES = ['distributor', 'master_distributor'];
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', roles: '*' },
-  { key: 'wallet', label: 'Wallet', roles: '*' },
-  { key: 'new', label: 'New Transaction', roles: '*' },
-  { key: 'txns', label: 'Transactions', roles: '*' },
-  { key: 'network', label: 'My Network', roles: MEMBER_ROLES },
+  { key: 'new', label: 'New Transaction', roles: TXN_ROLES },
+  { key: 'wallet', label: 'Wallet', roles: ['retailer', 'user', 'distributor', 'master_distributor'] },
+  { key: 'txns', label: 'Transactions', roles: ['retailer', 'user', 'distributor', 'master_distributor'] },
+  { key: 'network', label: 'My Network', roles: MGMT_ROLES },
+  { key: 'kyc', label: 'My KYC', roles: ['retailer', 'user', 'distributor', 'master_distributor'] },
   { key: 'members', label: 'Users', roles: ['admin'] },
-  { key: 'kyc', label: 'KYC Review', roles: ['admin'] },
+  { key: 'kycreview', label: 'KYC Review', roles: ['admin'] },
   { key: 'plans', label: 'Commission', roles: ['admin'] },
   { key: 'adminservices', label: 'Services', roles: ['admin'] },
 ];
@@ -178,21 +183,60 @@ const Screens = {
         <div class="panel mt"><h2>Service volume (successful)</h2>
           <div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Count</th><th class="right">Amount</th></tr></thead>
           <tbody>${vol}</tbody></table></div></div>`;
-    } else {
-      const p = MEMBER_ROLES.includes(State.user.role) ? await Api.get('/network/panel').catch(() => null) : null;
-      const w = await Api.get('/wallet');
+    } else if (MGMT_ROLES.includes(State.user.role)) {
+      // Distributor / Master distributor — network + earnings, no transactions.
+      const [p, w] = await Promise.all([Api.get('/network/panel').catch(() => null), Api.get('/wallet')]);
       const earn = p ? p.earnings.total_paise / 100 : 0;
-      const dc = p ? Object.entries(p.downline_counts || {}).map(([k, n]) => `${k}: <b>${n}</b>`).join(' &nbsp; ') : '';
+      const dc = p ? Object.entries(p.downline_counts || {}).map(([k, n]) => `${k.replace(/_/g,' ')}: <b>${n}</b>`).join(' &nbsp; ') : '';
+      const recent = (p?.earnings.recent || []).map(e => `<tr><td>${esc(e.service_code)}</td><td>${esc(e.level)}</td><td class="right">${money(e.amount_paise/100)}</td></tr>`).join('');
       $('view').innerHTML = `
         <div class="grid cards">
           <div class="card"><div class="k">Wallet balance</div><div class="v">${money(w.wallet.balance)}</div></div>
-          ${p ? `<div class="card"><div class="k">Commission earned</div><div class="v">${money(earn)}</div></div>` : ''}
+          <div class="card"><div class="k">Commission earned</div><div class="v">${money(earn)}</div></div>
         </div>
-        ${p ? `<div class="panel mt"><h2>My downline</h2><div>${dc || 'No members yet'}</div></div>` : ''}
+        <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My downline</h2>
+          <a class="btn sm" href="#/network">Manage network</a></div><div>${dc || 'No members yet'}</div></div>
+        <div class="panel mt"><h2>Recent commission</h2><div class="tbl-wrap"><table>
+          <thead><tr><th>Service</th><th>Level</th><th class="right">Amount</th></tr></thead>
+          <tbody>${recent || '<tr><td colspan=3 class=muted>None yet</td></tr>'}</tbody></table></div></div>`;
+    } else {
+      // Retailer (and plain user) — transact, wallet, KYC prompt.
+      const [w, kyc] = await Promise.all([Api.get('/wallet'), Api.get('/kyc').catch(() => null)]);
+      const kstat = kyc?.kyc_status || State.user.kyc_status;
+      const kycBanner = kstat !== 'verified'
+        ? `<div class="msg ${kstat === 'rejected' ? 'err' : ''}" style="background:${kstat==='rejected'?'':'#fef7e0'};color:${kstat==='rejected'?'':'#b06000'}">
+             Your KYC is <b>${esc(kstat)}</b>. <a href="#/kyc">Complete KYC →</a></div>` : '';
+      $('view').innerHTML = `
+        ${kycBanner}
+        <div class="grid cards">
+          <div class="card"><div class="k">Wallet balance</div><div class="v">${money(w.wallet.balance)}</div></div>
+          <div class="card"><div class="k">KYC status</div><div class="v" style="font-size:18px">${UI.statusTag(kstat)}</div></div>
+        </div>
         <div class="panel mt"><h2>Quick actions</h2>
-          <a class="btn sm" href="#/new">New transaction</a> &nbsp;
-          <a class="btn sm ghost" href="#/wallet">Top up wallet</a></div>`;
+          <a class="btn sm" href="#/new">＋ New transaction</a> &nbsp;
+          <a class="btn sm ghost" href="#/wallet">Top up wallet</a> &nbsp;
+          <a class="btn sm ghost" href="#/txns">View transactions</a></div>`;
     }
+  },
+
+  // Member self-service KYC: submit documents and see status.
+  async kyc() {
+    const d = await Api.get('/kyc').catch(() => ({ kyc_status: 'pending', documents: [] }));
+    const rows = (d.documents || []).map(k => `<tr><td>${esc(k.doc_type)}</td><td>${esc(k.doc_number||'')}</td>
+      <td>${UI.statusTag(k.status)}</td><td class="muted">${esc(k.remarks||'')}</td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="grid cards"><div class="card"><div class="k">My KYC status</div><div class="v" style="font-size:20px">${UI.statusTag(d.kyc_status)}</div></div></div>
+      <div class="panel mt" style="max-width:520px"><h2>Submit a document</h2>
+        <div class="field"><label>Document type</label>
+          <select id="k_type"><option value="aadhaar">Aadhaar</option><option value="pan">PAN</option>
+          <option value="gst">GST</option><option value="shop_photo">Shop photo</option>
+          <option value="bank_proof">Bank proof</option><option value="selfie">Selfie</option></select></div>
+        <div class="field"><label>Document number</label><input id="k_num"></div>
+        <div class="field"><label>File URL (optional)</label><input id="k_url" placeholder="https://…"></div>
+        <button class="btn" onclick="Actions.submitKyc()">Submit document</button></div>
+      <div class="panel mt"><h2>My documents</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Type</th><th>Number</th><th>Status</th><th>Remarks</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=4 class=muted>No documents submitted yet</td></tr>'}</tbody></table></div></div>`;
   },
 
   async wallet() {
@@ -272,7 +316,7 @@ const Screens = {
       <tbody>${rows}</tbody></table></div></div>`;
   },
 
-  async kyc() {
+  async kycreview() {
     const d = await Api.get('/kyc/pending');
     const rows = d.items.map(k => `<tr><td>${esc(k.full_name)}</td><td>${esc(k.role)}</td>
       <td>${esc(k.doc_type)}</td><td>${esc(k.doc_number || '')}</td>
@@ -346,6 +390,16 @@ const SERVICES = [
   { key: 'wallet_transfer', label: 'Wallet transfer (to member)', path: '/wallet-transfer', fields: [
     ['to', 'To (phone / email / username)', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ to: v.to, amount: +v.amount }) },
+  { key: 'travel', label: 'Travel booking', path: '/travel/book', fields: [
+    ['booking_type', 'Type (flight/bus/train/hotel)', 'text'], ['operator', 'Operator', 'text'],
+    ['from_location', 'From', 'text'], ['to_location', 'To', 'text'],
+    ['passenger_name', 'Passenger', 'text'], ['amount', 'Amount', 'number'] ],
+    build: v => ({ booking_type: v.booking_type || 'flight', operator: v.operator, from_location: v.from_location,
+      to_location: v.to_location, passenger_name: v.passenger_name, amount: +v.amount }) },
+  { key: 'insurance', label: 'Insurance', path: '/insurance/buy', fields: [
+    ['category', 'Category (motor/health/life/travel)', 'text'], ['insurer', 'Insurer', 'text'],
+    ['customer_name', 'Customer', 'text'], ['amount', 'Premium', 'number'] ],
+    build: v => ({ category: v.category || 'health', insurer: v.insurer, customer_name: v.customer_name, amount: +v.amount }) },
 ];
 
 // ---------------- Actions (buttons/forms) ----------------
@@ -413,6 +467,13 @@ const Actions = {
   },
   async reviewKyc(id, status) {
     try { await Api.post(`/kyc/${id}/review`, { status }); UI.toast('KYC ' + status); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async submitKyc() {
+    const body = { doc_type: val('k_type') };
+    if (val('k_num')) body.doc_number = val('k_num');
+    if (val('k_url')) body.file_url = val('k_url');
+    try { await Api.post('/kyc', body); UI.toast('Document submitted for review'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async toggleService(code, enabled) {

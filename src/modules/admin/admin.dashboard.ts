@@ -12,6 +12,8 @@ const SERVICE_TABLES: Record<string, string> = {
   matm: 'matm_transactions',
   aadhaar_pay: 'aadhaar_pay_transactions',
   pan_card: 'pan_card_transactions',
+  travel: 'travel_transactions',
+  insurance: 'insurance_transactions',
 };
 
 /** Aggregate stats for the admin dashboard. */

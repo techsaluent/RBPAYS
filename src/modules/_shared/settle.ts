@@ -17,6 +17,8 @@ const SERVICE_TABLE: Record<string, { table: string; utr?: boolean; rrn?: boolea
   matm: { table: 'matm_transactions', rrn: true },
   aadhaar_pay: { table: 'aadhaar_pay_transactions', rrn: true },
   pan_card: { table: 'pan_card_transactions' },
+  travel: { table: 'travel_transactions' },
+  insurance: { table: 'insurance_transactions' },
 };
 
 interface TxnRow {

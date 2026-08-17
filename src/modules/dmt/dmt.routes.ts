@@ -9,6 +9,7 @@ import { rupeesToPaise } from '../../utils/money';
 import { getDmtProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
 import { requireService } from '../../middleware/service';
+import { env } from '../../config/env';
 
 const router = Router();
 router.use(requireAuth);
@@ -40,6 +41,29 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
+
+    // ---- RBI DMT compliance limits (per RBI Domestic Money Transfer rules) ----
+    // Per-transaction ceiling and per-remitter calendar-month cap.
+    if (amountPaise > env.DMT_MAX_PER_TXN_PAISE) {
+      throw ApiError.unprocessable(
+        `DMT amount exceeds the per-transaction limit of ₹${(env.DMT_MAX_PER_TXN_PAISE / 100).toLocaleString('en-IN')}`,
+      );
+    }
+    const { rows: monthRows } = await query<{ sum: string | null }>(
+      `SELECT COALESCE(SUM(amount_paise), 0)::text AS sum
+         FROM dmt_transactions
+        WHERE user_id = $1
+          AND status IN ('pending', 'success')
+          AND created_at >= date_trunc('month', now())`,
+      [userId],
+    );
+    const spentThisMonth = BigInt(monthRows[0]?.sum ?? '0');
+    if (spentThisMonth + BigInt(amountPaise) > BigInt(env.DMT_MAX_PER_MONTH_PAISE)) {
+      throw ApiError.unprocessable(
+        `This transfer would exceed the monthly DMT limit of ₹${(env.DMT_MAX_PER_MONTH_PAISE / 100).toLocaleString('en-IN')} per remitter`,
+      );
+    }
+
     const provider = getDmtProvider();
 
     const { transaction, idempotent } = await runServiceTransaction({

@@ -69,8 +69,15 @@ export const env = {
   PROVIDER_MATM: optional('PROVIDER_MATM', 'sandbox'),
   PROVIDER_AADHAAR_PAY: optional('PROVIDER_AADHAAR_PAY', 'sandbox'),
   PROVIDER_PAN_CARD: optional('PROVIDER_PAN_CARD', 'sandbox'),
+  PROVIDER_TRAVEL: optional('PROVIDER_TRAVEL', 'sandbox'),
+  PROVIDER_INSURANCE: optional('PROVIDER_INSURANCE', 'sandbox'),
 
   HTTP_TIMEOUT_MS: int('HTTP_TIMEOUT_MS', 20_000),
+
+  // ---- Compliance limits (paise). RBI-aligned DMT defaults ------------
+  // DMT: ₹5,000 per transaction, ₹25,000 per remitter per calendar month.
+  DMT_MAX_PER_TXN_PAISE: int('DMT_MAX_PER_TXN_PAISE', 500_000),
+  DMT_MAX_PER_MONTH_PAISE: int('DMT_MAX_PER_MONTH_PAISE', 2_500_000),
 
   // ---- Razorpay / RazorpayX ------------------------------------------
   RAZORPAY_KEY_ID: optional('RAZORPAY_KEY_ID', ''),
