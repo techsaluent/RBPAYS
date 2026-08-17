@@ -47,6 +47,7 @@ const Api = {
   get(p) { return this.call(p); },
   post(p, body, auth = true) { return this.call(p, { method: 'POST', body, auth }); },
   patch(p, body) { return this.call(p, { method: 'PATCH', body }); },
+  del(p) { return this.call(p, { method: 'DELETE' }); },
 };
 
 // ---------------- Auth ----------------
@@ -120,17 +121,22 @@ const UI = {
 // network; admin runs the platform.
 const TXN_ROLES = ['retailer', 'user'];
 const MGMT_ROLES = ['distributor', 'master_distributor'];
+const NETWORK_ROLES = ['retailer', 'user', 'distributor', 'master_distributor'];
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', roles: '*' },
   { key: 'new', label: 'New Transaction', roles: TXN_ROLES },
-  { key: 'wallet', label: 'Wallet', roles: ['retailer', 'user', 'distributor', 'master_distributor'] },
-  { key: 'txns', label: 'Transactions', roles: ['retailer', 'user', 'distributor', 'master_distributor'] },
+  { key: 'wallet', label: 'Wallet', roles: NETWORK_ROLES },
+  { key: 'addmoney', label: 'Add Money', roles: NETWORK_ROLES },
+  { key: 'txns', label: 'Transactions', roles: NETWORK_ROLES },
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
-  { key: 'kyc', label: 'My KYC', roles: ['retailer', 'user', 'distributor', 'master_distributor'] },
+  { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'members', label: 'Users', roles: ['admin'] },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin'] },
+  { key: 'topupreview', label: 'Top-up Requests', roles: ['admin'] },
+  { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin'] },
   { key: 'plans', label: 'Commission', roles: ['admin'] },
   { key: 'adminservices', label: 'Services', roles: ['admin'] },
+  { key: 'providers', label: 'Providers', roles: ['admin'] },
 ];
 function allowed(item) { return item.roles === '*' || item.roles.includes(State.user.role); }
 
@@ -194,6 +200,9 @@ const Screens = {
           <div class="card"><div class="k">Wallet balance</div><div class="v">${money(w.wallet.balance)}</div></div>
           <div class="card"><div class="k">Commission earned</div><div class="v">${money(earn)}</div></div>
         </div>
+        <div class="panel mt"><h2>Quick actions</h2>
+          <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
+          <a class="btn sm ghost" href="#/network">Manage network</a></div>
         <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My downline</h2>
           <a class="btn sm" href="#/network">Manage network</a></div><div>${dc || 'No members yet'}</div></div>
         <div class="panel mt"><h2>Recent commission</h2><div class="tbl-wrap"><table>
@@ -214,7 +223,7 @@ const Screens = {
         </div>
         <div class="panel mt"><h2>Quick actions</h2>
           <a class="btn sm" href="#/new">＋ New transaction</a> &nbsp;
-          <a class="btn sm ghost" href="#/wallet">Top up wallet</a> &nbsp;
+          <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
           <a class="btn sm ghost" href="#/txns">View transactions</a></div>`;
     }
   },
@@ -251,6 +260,47 @@ const Screens = {
         <button class="btn sm" onclick="Actions.topup()">Top up (test gateway)</button></div>
         <div class="tbl-wrap"><table><thead><tr><th>Amount</th><th>Source</th><th>Description</th><th class="right">Balance</th><th>When</th></tr></thead>
         <tbody>${rows || '<tr><td colspan=5 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Add money: deposit into a company bank account (cash/bank/UPI) and
+  // submit the reference for admin approval; also list my requests.
+  async addmoney() {
+    const [banks, mine] = await Promise.all([
+      Api.get('/topup/bank-accounts').catch(() => ({ items: [] })),
+      Api.get('/topup?limit=20').catch(() => ({ items: [] })),
+    ]);
+    const bankCards = banks.items.map(b => `
+      <div class="card" style="text-align:left">
+        <div class="k">${esc(b.label)}</div>
+        <div style="font-size:14px;line-height:1.7">
+          <b>${esc(b.bank_name)}</b><br>
+          A/c Name: ${esc(b.account_name)}<br>
+          A/c No: <b>${esc(b.account_number)}</b><br>
+          IFSC: ${esc(b.ifsc)}${b.branch ? ' · ' + esc(b.branch) : ''}${b.upi_id ? '<br>UPI: <b>' + esc(b.upi_id) + '</b>' : ''}
+          ${b.instructions ? '<br><span class="muted">' + esc(b.instructions) + '</span>' : ''}
+        </div>
+      </div>`).join('') || '<div class="muted">No bank accounts published yet — contact admin.</div>';
+    const bankOpts = banks.items.map(b => `<option value="${b.id}">${esc(b.label)} — ${esc(b.account_number)}</option>`).join('');
+    const rows = mine.items.map(t => `<tr><td>${money(t.amount)}</td><td>${esc(t.method)}</td>
+      <td class="muted">${esc(t.reference || '')}</td><td>${UI.statusTag(t.status)}</td>
+      <td class="muted">${esc(t.remarks || '')}</td>
+      <td class="muted">${new Date(t.created_at).toLocaleString('en-IN')}</td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><h2>Deposit to a company bank account</h2>
+        <p class="muted">Transfer money to any account below (cash deposit, bank transfer or UPI), then submit the reference (UTR) here. Your wallet is credited after admin verifies it.</p>
+        <div class="grid cards">${bankCards}</div></div>
+      <div class="panel mt" style="max-width:560px"><h2>Submit a top-up request</h2>
+        <div class="field"><label>Amount (₹)</label><input id="tu_amt" type="number" step="0.01" min="1"></div>
+        <div class="field"><label>Method</label><select id="tu_method">
+          <option value="cash_deposit">Cash deposit</option><option value="bank_transfer">Bank transfer</option>
+          <option value="upi">UPI</option><option value="other">Other</option></select></div>
+        <div class="field"><label>Deposited to account</label><select id="tu_bank"><option value="">— select —</option>${bankOpts}</select></div>
+        <div class="field"><label>Reference / UTR</label><input id="tu_ref" placeholder="UTR / txn id"></div>
+        <div class="field"><label>Proof URL (optional)</label><input id="tu_proof" placeholder="https://…"></div>
+        <button class="btn" onclick="Actions.submitTopup()">Submit request</button></div>
+      <div class="panel mt"><h2>My top-up requests</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Amount</th><th>Method</th><th>Reference</th><th>Status</th><th>Remarks</th><th>When</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=6 class=muted>No requests yet</td></tr>'}</tbody></table></div></div>`;
   },
 
   new() {
@@ -344,11 +394,77 @@ const Screens = {
 
   async adminservices() {
     const d = await Api.get('/admin/services');
+    const inf = 9223372036854775807;
     const rows = d.items.map(s => `<tr><td>${esc(s.code)}</td><td>${esc(s.name)}</td>
       <td>${s.enabled ? '<span class="tag active">on</span>' : '<span class="tag blocked">off</span>'}</td>
-      <td><button class="btn sm ghost" onclick="Actions.toggleService('${s.code}',${!s.enabled})">${s.enabled ? 'Disable' : 'Enable'}</button></td></tr>`).join('');
-    $('view').innerHTML = `<div class="panel"><h2>Services</h2><div class="tbl-wrap"><table>
-      <thead><tr><th>Code</th><th>Name</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+      <td>${money((s.activation_charge_paise||0)/100)}</td>
+      <td>${money((s.min_commission_paise||0)/100)} – ${(+s.max_commission_paise>=inf) ? '∞' : money((s.max_commission_paise||0)/100)}</td>
+      <td>
+        <button class="btn sm ghost" onclick="Actions.toggleService('${s.code}',${!s.enabled})">${s.enabled ? 'Disable' : 'Enable'}</button>
+        <button class="btn sm ghost" onclick="Actions.setServiceLimits('${s.code}',${s.min_commission_paise||0},'${(+s.max_commission_paise>=inf)?'':((s.max_commission_paise||0)/100)}')">Limits</button>
+        <button class="btn sm" onclick="location.hash='#/providers';Actions._provService='${s.code}'">Providers</button>
+      </td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Services</h2>
+      <p class="muted">Set the per-service commission floor/ceiling; commission rules must stay within these bounds. Manage upstream providers per service.</p>
+      <div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Name</th><th>Status</th><th>Activation</th><th>Commission min–max</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
+  },
+
+  // Admin: review wallet top-up requests.
+  async topupreview() {
+    const d = await Api.get('/admin/topups?status=pending&limit=50');
+    const rows = d.items.map(t => `<tr>
+      <td>${esc(t.full_name)} <span class="muted">${esc(t.username||'')}</span></td>
+      <td>${esc(t.role)}</td><td class="right">${money(t.amount)}</td><td>${esc(t.method)}</td>
+      <td class="muted">${esc(t.reference||'')}</td>
+      <td>${t.proof_url ? `<a href="${esc(t.proof_url)}" target="_blank">proof</a>` : ''}</td>
+      <td>${new Date(t.created_at).toLocaleString('en-IN')}</td>
+      <td><button class="btn sm" onclick="Actions.approveTopup('${t.id}')">Approve</button>
+          <button class="btn sm ghost" onclick="Actions.rejectTopup('${t.id}')">Reject</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Pending top-up requests</h2><div class="tbl-wrap"><table>
+      <thead><tr><th>Member</th><th>Role</th><th class="right">Amount</th><th>Method</th><th>Reference</th><th>Proof</th><th>When</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=8 class=muted>Nothing pending</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: manage company bank accounts shown to the network for deposits.
+  async bankaccounts() {
+    const d = await Api.get('/admin/bank-accounts');
+    const rows = d.items.map(b => `<tr>
+      <td>${esc(b.label)}</td><td>${esc(b.bank_name)}</td><td>${esc(b.account_name)}</td>
+      <td>${esc(b.account_number)}</td><td>${esc(b.ifsc)}</td><td>${esc(b.upi_id||'')}</td>
+      <td>${b.is_active ? '<span class="tag active">active</span>' : '<span class="tag blocked">off</span>'}</td>
+      <td><button class="btn sm ghost" onclick="Actions.toggleBank('${b.id}',${!b.is_active})">${b.is_active ? 'Disable' : 'Enable'}</button>
+          <button class="btn sm ghost" onclick="Actions.deleteBank('${b.id}')">Delete</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
+      <h2>Company bank accounts</h2><button class="btn sm" onclick="Actions.addBank()">+ Add account</button></div>
+      <p class="muted">These accounts are shown to master distributors, distributors and retailers for cash / bank / UPI deposits.</p>
+      <div class="tbl-wrap"><table>
+      <thead><tr><th>Label</th><th>Bank</th><th>A/c name</th><th>A/c no</th><th>IFSC</th><th>UPI</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=8 class=muted>No accounts yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: manage upstream providers per service (multiple, one active).
+  async providers() {
+    const svcs = await Api.get('/admin/services');
+    const codes = svcs.items.map(s => s.code);
+    const sel = Actions._provService && codes.includes(Actions._provService) ? Actions._provService : codes[0];
+    const opts = svcs.items.map(s => `<option value="${s.code}" ${s.code===sel?'selected':''}>${esc(s.code)} — ${esc(s.name)}</option>`).join('');
+    const list = await Api.get(`/admin/services/${sel}/providers`);
+    const rows = list.items.map(p => `<tr>
+      <td>${esc(p.label)}</td><td>${esc(p.driver)}</td><td class="muted">${esc(p.base_url||'')}</td>
+      <td>${p.is_active ? '<span class="tag active">active</span>' : ''}</td>
+      <td>${p.api_key ? '••••' : '<span class="muted">no key</span>'}</td>
+      <td>${p.is_active ? '' : `<button class="btn sm" onclick="Actions.activateProvider('${p.id}')">Activate</button>`}
+          <button class="btn sm ghost" onclick="Actions.deleteProvider('${p.id}')">Delete</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
+      <h2>Service providers</h2><button class="btn sm" onclick="Actions.addProvider('${sel}')">+ Add provider</button></div>
+      <div class="field" style="max-width:360px"><label>Service</label>
+        <select id="prov_svc" onchange="Actions._provService=this.value;App.route()">${opts}</select></div>
+      <p class="muted">Register one or more providers per service and activate the one to route through. Paste API keys here — going live is just adding keys and activating.</p>
+      <div class="tbl-wrap"><table>
+      <thead><tr><th>Label</th><th>Driver</th><th>Base URL</th><th>Active</th><th>Key</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No providers — add one</td></tr>'}</tbody></table></div></div>`;
   },
 };
 
@@ -478,6 +594,112 @@ const Actions = {
   },
   async toggleService(code, enabled) {
     try { await Api.patch(`/admin/services/${code}`, { enabled }); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  setServiceLimits(code, minPaise, maxRupees) {
+    UI.modal(`<h3>Commission limits — ${esc(code)}</h3>
+      <p class="muted">Total commission distributed per transaction must fall between these bounds (in ₹). Leave max blank for no ceiling.</p>
+      <div class="field"><label>Minimum commission (₹)</label><input id="lim_min" type="number" step="0.01" min="0" value="${(minPaise||0)/100}"></div>
+      <div class="field"><label>Maximum commission (₹)</label><input id="lim_max" type="number" step="0.01" min="0" value="${maxRupees}"></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveServiceLimits('${code}')">Save</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveServiceLimits(code) {
+    const body = { min_commission: +val('lim_min') };
+    if (val('lim_max') !== '') body.max_commission = +val('lim_max');
+    try { await Api.patch(`/admin/services/${code}`, body); UI.closeModal(); UI.toast('Limits saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+
+  // ----- wallet top-up (member) -----
+  async submitTopup() {
+    const body = { amount: +val('tu_amt'), method: val('tu_method'), reference: val('tu_ref') };
+    if (val('tu_bank')) body.bank_account_id = val('tu_bank');
+    if (val('tu_proof')) body.proof_url = val('tu_proof');
+    if (!body.amount) return UI.toast('Enter an amount', 'err');
+    try { await Api.post('/topup', body); UI.toast('Top-up request submitted for approval'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async approveTopup(id) {
+    const remarks = prompt('Approve this top-up? Optional remarks:', 'Verified');
+    if (remarks === null) return;
+    try { await Api.post(`/admin/topups/${id}/approve`, { remarks }); UI.toast('Approved & wallet credited'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async rejectTopup(id) {
+    const remarks = prompt('Reject this top-up? Reason:', '');
+    if (remarks === null) return;
+    try { await Api.post(`/admin/topups/${id}/reject`, { remarks }); UI.toast('Rejected'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+
+  // ----- company bank accounts (admin) -----
+  addBank() {
+    UI.modal(`<h3>Add company bank account</h3>
+      <div class="field"><label>Label</label><input id="b_label" placeholder="HDFC Current — Mumbai"></div>
+      <div class="field"><label>Bank name</label><input id="b_bank"></div>
+      <div class="field"><label>Account name</label><input id="b_name" value="REAL BROTHERS TECHNOLOGY SERVICES LLP"></div>
+      <div class="field"><label>Account number</label><input id="b_acc"></div>
+      <div class="field"><label>IFSC</label><input id="b_ifsc"></div>
+      <div class="field"><label>Branch (optional)</label><input id="b_branch"></div>
+      <div class="field"><label>UPI ID (optional)</label><input id="b_upi"></div>
+      <div class="field"><label>Instructions (optional)</label><input id="b_instr" placeholder="Deposit and share UTR"></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveBank()">Add</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveBank() {
+    const body = { label: val('b_label'), bank_name: val('b_bank'), account_name: val('b_name'),
+      account_number: val('b_acc'), ifsc: val('b_ifsc').toUpperCase() };
+    if (val('b_branch')) body.branch = val('b_branch');
+    if (val('b_upi')) body.upi_id = val('b_upi');
+    if (val('b_instr')) body.instructions = val('b_instr');
+    try { await Api.post('/admin/bank-accounts', body); UI.closeModal(); UI.toast('Account added'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async toggleBank(id, is_active) {
+    try { await Api.patch(`/admin/bank-accounts/${id}`, { is_active }); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async deleteBank(id) {
+    if (!confirm('Delete this bank account?')) return;
+    try { await Api.del(`/admin/bank-accounts/${id}`); UI.toast('Deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+
+  // ----- service providers (admin) -----
+  _provService: null,
+  addProvider(code) {
+    UI.modal(`<h3>Add provider — ${esc(code)}</h3>
+      <div class="field"><label>Label</label><input id="p_label" placeholder="Paysprint / RazorpayX"></div>
+      <div class="field"><label>Driver</label><select id="p_driver">
+        <option value="sandbox">sandbox (test)</option><option value="aggregator">aggregator (DMT/BBPS/recharge switch)</option>
+        <option value="razorpay">razorpay (payout/gateway)</option><option value="generic">generic</option></select></div>
+      <div class="field"><label>Base URL</label><input id="p_url" placeholder="https://api.provider.com"></div>
+      <div class="field"><label>API key</label><input id="p_key"></div>
+      <div class="field"><label>API secret</label><input id="p_secret"></div>
+      <div class="field"><label>Auth token</label><input id="p_token"></div>
+      <div class="field"><label>Partner ID</label><input id="p_partner"></div>
+      <div class="field"><label><input type="checkbox" id="p_active" checked> Make active (route through this)</label></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveProvider('${code}')">Add</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveProvider(code) {
+    const body = { label: val('p_label'), driver: val('p_driver'), is_active: $('p_active').checked };
+    if (val('p_url')) body.base_url = val('p_url');
+    if (val('p_key')) body.api_key = val('p_key');
+    if (val('p_secret')) body.api_secret = val('p_secret');
+    if (val('p_token')) body.auth_token = val('p_token');
+    if (val('p_partner')) body.partner_id = val('p_partner');
+    try { await Api.post(`/admin/services/${code}/providers`, body); UI.closeModal(); UI.toast('Provider added'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async activateProvider(id) {
+    try { await Api.post(`/admin/providers/${id}/activate`, {}); UI.toast('Activated'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async deleteProvider(id) {
+    if (!confirm('Delete this provider?')) return;
+    try { await Api.del(`/admin/providers/${id}`); UI.toast('Deleted'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   addRule(planId) {

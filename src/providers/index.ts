@@ -31,14 +31,21 @@ import {
   aggregatorGeneric,
   aggregatorRecharge,
 } from './aggregator';
+import { activeDriver } from './registry';
 
 /**
- * Provider registry. Each getter resolves the configured provider for a module
- * from env (PROVIDER_*). Unknown values fall back to sandbox so the API never
- * hard-fails on a typo — the choice is logged at call sites via provider.name.
+ * Provider registry. Each getter resolves the driver for a module: the
+ * super-admin-selected active provider (from the `service_providers` table,
+ * cached in the registry) wins; otherwise it falls back to env (PROVIDER_*).
+ * Unknown values fall back to sandbox so the API never hard-fails on a typo —
+ * the choice is logged at call sites via provider.name.
  */
+function driverFor(serviceCode: string, envValue: string): string {
+  return activeDriver(serviceCode) ?? envValue;
+}
+
 export function getDmtProvider(): DmtProvider {
-  switch (env.PROVIDER_DMT) {
+  switch (driverFor('dmt', env.PROVIDER_DMT)) {
     case 'aggregator':
       return aggregatorDmt;
     default:
@@ -47,7 +54,7 @@ export function getDmtProvider(): DmtProvider {
 }
 
 export function getBbpsProvider(): BbpsProvider {
-  switch (env.PROVIDER_BBPS) {
+  switch (driverFor('bbps', env.PROVIDER_BBPS)) {
     case 'aggregator':
       return aggregatorBbps;
     default:
@@ -56,7 +63,7 @@ export function getBbpsProvider(): BbpsProvider {
 }
 
 export function getRechargeProvider(): RechargeProvider {
-  switch (env.PROVIDER_RECHARGE) {
+  switch (driverFor('recharge', env.PROVIDER_RECHARGE)) {
     case 'aggregator':
       return aggregatorRecharge;
     default:
@@ -65,7 +72,7 @@ export function getRechargeProvider(): RechargeProvider {
 }
 
 export function getPayoutProvider(): PayoutProvider {
-  switch (env.PROVIDER_PAYOUT) {
+  switch (driverFor('payout', env.PROVIDER_PAYOUT)) {
     case 'razorpay':
       return razorpayPayout;
     default:
@@ -74,19 +81,21 @@ export function getPayoutProvider(): PayoutProvider {
 }
 
 export function getAepsProvider(): AepsProvider {
-  return env.PROVIDER_AEPS === 'aggregator' ? aggregatorAeps : sandboxAeps;
+  return driverFor('aeps', env.PROVIDER_AEPS) === 'aggregator' ? aggregatorAeps : sandboxAeps;
 }
 
 export function getCmsProvider(): CmsProvider {
-  return env.PROVIDER_CMS === 'aggregator' ? aggregatorCms : sandboxCms;
+  return driverFor('cms', env.PROVIDER_CMS) === 'aggregator' ? aggregatorCms : sandboxCms;
 }
 
 export function getCardSwipeProvider(): CardSwipeProvider {
-  return env.PROVIDER_CARD_SWIPE === 'aggregator' ? aggregatorCardSwipe : sandboxCardSwipe;
+  return driverFor('card_swipe', env.PROVIDER_CARD_SWIPE) === 'aggregator'
+    ? aggregatorCardSwipe
+    : sandboxCardSwipe;
 }
 
-// Simple services share one generic provider, chosen per-service via env.
-const GENERIC_CHOICE: Record<string, string> = {
+// Simple services share one generic provider, chosen per-service.
+const GENERIC_ENV: Record<string, string> = {
   upi: env.PROVIDER_UPI,
   matm: env.PROVIDER_MATM,
   aadhaar_pay: env.PROVIDER_AADHAAR_PAY,
@@ -96,11 +105,13 @@ const GENERIC_CHOICE: Record<string, string> = {
 };
 
 export function getGenericProvider(service: string): GenericServiceProvider {
-  return GENERIC_CHOICE[service] === 'aggregator' ? aggregatorGeneric : sandboxGeneric;
+  return driverFor(service, GENERIC_ENV[service] ?? 'sandbox') === 'aggregator'
+    ? aggregatorGeneric
+    : sandboxGeneric;
 }
 
 export function getGatewayProvider(): GatewayProvider {
-  switch (env.PROVIDER_GATEWAY) {
+  switch (driverFor('payment_gateway', env.PROVIDER_GATEWAY)) {
     case 'razorpay':
       return razorpayGateway;
     default:

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import authRoutes from './modules/auth/auth.routes';
 import walletRoutes from './modules/wallet/wallet.routes';
+import topupRoutes from './modules/topup/topup.routes';
 import beneficiaryRoutes from './modules/beneficiaries/beneficiaries.routes';
 import dmtRoutes from './modules/dmt/dmt.routes';
 import bbpsRoutes from './modules/bbps/bbps.routes';
@@ -26,6 +27,7 @@ const router = Router();
 
 router.use('/auth', authRoutes);
 router.use('/wallet', walletRoutes);
+router.use('/topup', topupRoutes);
 router.use('/beneficiaries', beneficiaryRoutes);
 router.use('/dmt', dmtRoutes);
 router.use('/bbps', bbpsRoutes);
