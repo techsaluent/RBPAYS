@@ -12,6 +12,7 @@ import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
 import { refreshProviderRegistry } from '../../providers/registry';
 import { postJournal } from '../_shared/ledger';
+import { runReconciliation, MisRow } from '../recon/recon.service';
 
 const router = Router();
 router.use(requireAuth, requireRole('admin'));
@@ -424,6 +425,167 @@ router.get(
       limit: q.limit,
       offset: q.offset,
     });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Reconciliation (bank/switch MIS vs internal ledger)
+// ---------------------------------------------------------------------
+const reconRunSchema = z.object({
+  label: z.string().trim().min(2).max(120),
+  rows: z.array(z.object({
+    reference: z.string().trim().min(1).max(80),
+    bank_status: z.enum(['settled', 'reversed', 'not_found']),
+    amount_paise: z.coerce.number().int().min(0).optional(),
+    rrn: z.string().trim().max(40).optional(),
+  })).min(1).max(5000),
+});
+
+router.post(
+  '/recon/run',
+  validate(reconRunSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof reconRunSchema>;
+    const summary = await runReconciliation(b.label, b.rows as MisRow[], req.user.id);
+    res.status(201).json({ summary });
+  }),
+);
+
+router.get(
+  '/recon/batches',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT * FROM recon_batches ORDER BY created_at DESC LIMIT 50');
+    res.json({ items: rows });
+  }),
+);
+
+router.get(
+  '/recon/batches/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const batch = await query('SELECT * FROM recon_batches WHERE id = $1', [req.params.id]);
+    if (!batch.rows[0]) throw ApiError.notFound('Batch not found');
+    const records = await query(
+      'SELECT * FROM recon_records WHERE batch_id = $1 ORDER BY match_status, created_at',
+      [req.params.id],
+    );
+    res.json({ batch: batch.rows[0], records: records.rows });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Maker-checker manual adjustments (dual control)
+// ---------------------------------------------------------------------
+const adjProposeSchema = z.object({
+  target_user_id: z.string().uuid(),
+  kind: z.enum(['credit', 'debit', 'clawback']),
+  amount: z.coerce.number().positive().max(10_000_000),
+  reason: z.string().trim().min(3).max(300),
+  reference: z.string().trim().max(80).optional(),
+});
+
+// Maker proposes an adjustment (no money moves yet).
+router.post(
+  '/adjustments',
+  validate(adjProposeSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof adjProposeSchema>;
+    const tgt = await query('SELECT 1 FROM users WHERE id = $1', [b.target_user_id]);
+    if (!tgt.rowCount) throw ApiError.notFound('Target user not found');
+    const { rows } = await query(
+      `INSERT INTO manual_adjustments (target_user, kind, amount_paise, reason, reference, maker_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [b.target_user_id, b.kind, rupeesToPaise(b.amount), b.reason, b.reference ?? null, req.user.id],
+    );
+    res.status(201).json({ adjustment: rows[0] });
+  }),
+);
+
+router.get(
+  '/adjustments',
+  asyncHandler(async (req: Request, res: Response) => {
+    const status = typeof req.query.status === 'string' ? req.query.status : null;
+    const { rows } = await query(
+      `SELECT a.*, u.full_name AS target_name, m.full_name AS maker_name, c.full_name AS checker_name
+         FROM manual_adjustments a
+         JOIN users u ON u.id = a.target_user
+         LEFT JOIN users m ON m.id = a.maker_id
+         LEFT JOIN users c ON c.id = a.checker_id
+        WHERE ($1::text IS NULL OR a.status = $1)
+        ORDER BY a.created_at DESC LIMIT 100`,
+      [status],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const adjDecideSchema = z.object({ note: z.string().trim().max(300).optional() });
+
+// Checker approves (must differ from maker) -> applies the wallet + journal.
+router.post(
+  '/adjustments/:id/approve',
+  validate(adjDecideSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const checkerId = req.user.id;
+    const { note } = req.body as z.infer<typeof adjDecideSchema>;
+
+    const result = await withTransaction(async (client) => {
+      const { rows } = await client.query<{
+        id: string; target_user: string; kind: string; amount_paise: string; status: string; maker_id: string;
+      }>('SELECT * FROM manual_adjustments WHERE id = $1 FOR UPDATE', [req.params.id]);
+      const a = rows[0];
+      if (!a) throw ApiError.notFound('Adjustment not found');
+      if (a.status !== 'proposed') throw ApiError.conflict(`Already ${a.status}`);
+      if (a.maker_id === checkerId) throw ApiError.forbidden('Maker and checker must be different officers');
+
+      const amt = Number(a.amount_paise);
+      let journalRef: string;
+      if (a.kind === 'credit') {
+        await credit(client, { userId: a.target_user, amountPaise: amt, source: 'adjustment', referenceId: a.id, description: 'Manual credit (approved)' });
+        journalRef = await postJournal(client, {
+          source: 'adjustment', reference: a.id, narration: 'Manual credit',
+          lines: [
+            { account: 'float_incentive_expense', direction: 'debit', amountPaise: amt },
+            { account: 'member_wallet', direction: 'credit', amountPaise: amt, walletUserId: a.target_user },
+          ],
+        });
+      } else {
+        // debit / clawback: pull from the member's main wallet.
+        await debit(client, { userId: a.target_user, amountPaise: amt, source: 'adjustment', referenceId: a.id, description: `Manual ${a.kind} (approved)` });
+        journalRef = await postJournal(client, {
+          source: 'adjustment', reference: a.id, narration: `Manual ${a.kind}`,
+          lines: [
+            { account: 'member_wallet', direction: 'debit', amountPaise: amt, walletUserId: a.target_user },
+            { account: 'platform_margin', direction: 'credit', amountPaise: amt },
+          ],
+        });
+      }
+      const upd = await client.query(
+        `UPDATE manual_adjustments SET status='approved', checker_id=$1, checker_note=$2, journal_ref=$3, decided_at=now()
+          WHERE id=$4 RETURNING *`,
+        [checkerId, note ?? null, journalRef, a.id],
+      );
+      return upd.rows[0];
+    });
+    res.json({ adjustment: result });
+  }),
+);
+
+router.post(
+  '/adjustments/:id/reject',
+  validate(adjDecideSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { note } = req.body as z.infer<typeof adjDecideSchema>;
+    const { rows } = await query(
+      `UPDATE manual_adjustments SET status='rejected', checker_id=$1, checker_note=$2, decided_at=now()
+        WHERE id=$3 AND status='proposed' RETURNING *`,
+      [req.user.id, note ?? null, req.params.id],
+    );
+    if (!rows[0]) throw ApiError.conflict('Adjustment not found or already decided');
+    res.json({ adjustment: rows[0] });
   }),
 );
 

@@ -142,6 +142,8 @@ const NAV = [
   { key: 'integrations', label: 'Integrations', roles: ['admin'] },
   { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin'] },
   { key: 'risk', label: 'Risk & AML', roles: ['admin'] },
+  { key: 'recon', label: 'Reconciliation', roles: ['admin'] },
+  { key: 'opsdesk', label: 'Ops Desk', roles: ['admin'] },
   { key: 'ledger', label: 'Ledger', roles: ['admin'] },
 ];
 function allowed(item) { return item.roles === '*' || item.roles.includes(State.user.role); }
@@ -532,6 +534,43 @@ const Screens = {
         <tbody>${grows || '<tr><td colspan=6 class=muted>No GST yet</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Admin: reconciliation batches (upload MIS -> match + auto force-settle).
+  async recon() {
+    const d = await Api.get('/admin/recon/batches');
+    const rows = d.items.map(b => `<tr><td>${esc(b.label)}</td><td>${b.total_records}</td>
+      <td class="right">${b.matched}</td><td class="right">${b.force_settled}</td>
+      <td class="right">${b.exceptions}</td><td class="muted">${new Date(b.created_at).toLocaleString('en-IN')}</td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><h2>Run reconciliation</h2>
+        <p class="muted">Paste the bank/switch settlement feed (MIS) as JSON rows: <code>[{"reference":"DMT...","bank_status":"settled","amount_paise":100000,"rrn":"..."}]</code>. Matches the internal ledger, force-settles timed-out (pending) transactions and flags false-successes.</p>
+        <div class="field"><label>Label</label><input id="rc_label" value="EOD ${new Date().toISOString().slice(0,10)}"></div>
+        <div class="field"><label>MIS rows (JSON)</label><textarea id="rc_rows" rows="6" style="width:100%;font-family:monospace">[{"reference":"","bank_status":"settled"}]</textarea></div>
+        <button class="btn" onclick="Actions.runRecon()">Run reconciliation</button></div>
+      <div class="panel mt"><h2>Recent batches</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Label</th><th>Records</th><th class="right">Matched</th><th class="right">Force-settled</th><th class="right">Exceptions</th><th>When</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=6 class=muted>No batches yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: ops desk — maker-checker manual adjustments.
+  async opsdesk() {
+    const d = await Api.get('/admin/adjustments');
+    const rows = d.items.map(a => `<tr>
+      <td>${esc(a.target_name)}</td><td>${esc(a.kind)}</td><td class="right">${money((a.amount_paise||0)/100)}</td>
+      <td class="muted">${esc(a.reason)}</td><td>${esc(a.maker_name||'')}</td>
+      <td>${UI.statusTag(a.status)}</td>
+      <td>${a.status === 'proposed'
+        ? `<button class="btn sm" onclick="Actions.decideAdj('${a.id}','approve')">Approve</button>
+           <button class="btn sm ghost" onclick="Actions.decideAdj('${a.id}','reject')">Reject</button>`
+        : esc(a.checker_name||'')}</td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><div class="row" style="justify-content:space-between"><h2>Ops desk — manual adjustments</h2>
+        <button class="btn sm" onclick="Actions.proposeAdj()">+ Propose adjustment</button></div>
+        <p class="muted">Dual control: one officer proposes, a different officer approves before any money moves.</p>
+        <div class="tbl-wrap"><table>
+        <thead><tr><th>Member</th><th>Kind</th><th class="right">Amount</th><th>Reason</th><th>Maker</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=7 class=muted>No adjustments</td></tr>'}</tbody></table></div></div>`;
+  },
+
   // Admin: risk & AML flagged events.
   async risk() {
     const d = await Api.get('/admin/risk-events?limit=80');
@@ -733,6 +772,26 @@ const Actions = {
       <div class="field"><label><input type="checkbox" id="ig_active" ${isActive ? 'checked' : ''}> Active</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveIntegration('${key}')">Save</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async runRecon() {
+    let rows;
+    try { rows = JSON.parse(val('rc_rows')); } catch { return UI.toast('MIS rows must be valid JSON', 'err'); }
+    try { const d = await Api.post('/admin/recon/run', { label: val('rc_label'), rows });
+      UI.toast(`Recon: ${d.summary.matched} matched, ${d.summary.forceSettled} force-settled, ${d.summary.exceptions} exceptions`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async proposeAdj() {
+    const uid = prompt('Target user ID:'); if (!uid) return;
+    const kind = prompt('Kind (credit / debit / clawback):', 'credit'); if (!kind) return;
+    const amount = prompt('Amount (₹):', '100'); if (!amount) return;
+    const reason = prompt('Reason:', 'adjustment'); if (!reason) return;
+    try { await Api.post('/admin/adjustments', { target_user_id: uid, kind, amount: +amount, reason }); UI.toast('Proposed — needs a second officer to approve'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async decideAdj(id, decision) {
+    const note = prompt(`${decision} note:`, ''); if (note === null) return;
+    try { await Api.post(`/admin/adjustments/${id}/${decision}`, { note }); UI.toast(`Adjustment ${decision}d`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
   async saveIntegration(key) {
     const body = { is_active: $('ig_active').checked };
