@@ -79,6 +79,22 @@ export const env = {
   DMT_MAX_PER_TXN_PAISE: int('DMT_MAX_PER_TXN_PAISE', 500_000),
   DMT_MAX_PER_MONTH_PAISE: int('DMT_MAX_PER_MONTH_PAISE', 2_500_000),
 
+  // ---- Risk / AML engine ---------------------------------------------
+  RISK_ENGINE_ENABLED: optional('RISK_ENGINE_ENABLED', 'true') !== 'false',
+  // Per-user per-service velocity: more than MAX txns within WINDOW minutes.
+  RISK_VELOCITY_WINDOW_MIN: int('RISK_VELOCITY_WINDOW_MIN', 10),
+  RISK_VELOCITY_MAX_COUNT: int('RISK_VELOCITY_MAX_COUNT', 40),
+  // Off-hours window (IST hours) where cash-out is treated as higher risk.
+  RISK_OFF_HOURS_START: int('RISK_OFF_HOURS_START', 23),
+  RISK_OFF_HOURS_END: int('RISK_OFF_HOURS_END', 5),
+  // AePS split-transaction: same Aadhaar again within this many minutes at
+  // the same terminal -> allow the txn but strip hierarchy commission.
+  RISK_AEPS_SPLIT_WINDOW_MIN: int('RISK_AEPS_SPLIT_WINDOW_MIN', 30),
+  // DMT structuring: transfers in this band, repeated, look like smurfing.
+  RISK_DMT_STRUCT_MIN_PAISE: int('RISK_DMT_STRUCT_MIN_PAISE', 490_000),
+  RISK_DMT_STRUCT_MAX_PAISE: int('RISK_DMT_STRUCT_MAX_PAISE', 499_900),
+  RISK_DMT_STRUCT_MAX_PER_HOUR: int('RISK_DMT_STRUCT_MAX_PER_HOUR', 3),
+
   // ---- Statutory tax --------------------------------------------------
   // GST place-of-supply home state (27 = Maharashtra, from GST 27ABIFR6463M1ZH).
   HOME_STATE_CODE: optional('HOME_STATE_CODE', '27'),

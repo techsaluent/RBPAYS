@@ -428,6 +428,32 @@ router.get(
 );
 
 // ---------------------------------------------------------------------
+// Risk & AML — flagged events
+// ---------------------------------------------------------------------
+const riskListSchema = z.object({
+  action: z.enum(['review', 'hold', 'block']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+router.get(
+  '/risk-events',
+  validate(riskListSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof riskListSchema>;
+    const { rows } = await query(
+      `SELECT r.id, r.user_id, u.full_name, r.service_code, r.reference, r.kind,
+              r.score, r.action, r.detail, r.created_at
+         FROM risk_events r LEFT JOIN users u ON u.id = r.user_id
+        WHERE ($1::text IS NULL OR r.action = $1)
+        ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`,
+      [q.action ?? null, q.limit, q.offset],
+    );
+    res.json({ items: rows, limit: q.limit, offset: q.offset });
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop)
 // ---------------------------------------------------------------------
 router.get(

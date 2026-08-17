@@ -141,6 +141,7 @@ const NAV = [
   { key: 'providers', label: 'Providers', roles: ['admin'] },
   { key: 'integrations', label: 'Integrations', roles: ['admin'] },
   { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin'] },
+  { key: 'risk', label: 'Risk & AML', roles: ['admin'] },
   { key: 'ledger', label: 'Ledger', roles: ['admin'] },
 ];
 function allowed(item) { return item.roles === '*' || item.roles.includes(State.user.role); }
@@ -529,6 +530,24 @@ const Screens = {
       <div class="panel mt"><h2>GST invoices (18% on platform margin)</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th class="right">Base</th><th class="right">CGST</th><th class="right">SGST</th><th class="right">IGST</th><th>PoS</th></tr></thead>
         <tbody>${grows || '<tr><td colspan=6 class=muted>No GST yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: risk & AML flagged events.
+  async risk() {
+    const d = await Api.get('/admin/risk-events?limit=80');
+    const badge = (a) => a === 'block' ? '<span class="tag blocked">block</span>'
+      : a === 'hold' ? '<span class="tag" style="background:#fef3c7;color:#92400e">hold</span>'
+      : '<span class="tag" style="background:#e0e7ff;color:#3730a3">review</span>';
+    const rows = d.items.map(r => `<tr>
+      <td>${esc(r.full_name||'—')}</td><td>${esc(r.service_code||'')}</td><td>${esc(r.kind)}</td>
+      <td class="right">${r.score}</td><td>${badge(r.action)}</td>
+      <td class="muted">${esc(JSON.stringify(r.detail||{}))}</td>
+      <td class="muted">${new Date(r.created_at).toLocaleString('en-IN')}</td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Risk &amp; AML events</h2>
+      <p class="muted">Velocity, off-hours, AePS split (commission stripped) and DMT structuring (blocked) flags.</p>
+      <div class="tbl-wrap"><table>
+      <thead><tr><th>Member</th><th>Service</th><th>Kind</th><th class="right">Score</th><th>Action</th><th>Detail</th><th>When</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=7 class=muted>No flags</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Admin: platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop).

@@ -2,6 +2,7 @@ import { PoolClient } from 'pg';
 import { query, withTransaction } from '../../../db';
 import { debit, WalletSource } from '../wallet/wallet.service';
 import { computeDistribution } from '../commission/commission.service';
+import { assessTransaction } from '../risk/risk.service';
 import { settleByReference } from './settle';
 import { makeReference } from '../../utils/reference';
 import { ProviderResult } from '../../providers/types';
@@ -22,6 +23,11 @@ export interface RunOptions {
    *   AEPS earns commission (charge 0); Card Swipe is charged the MDR (charge > 0).
    */
   flow?: 'debit' | 'credit';
+  /**
+   * Strip hierarchy commission for this transaction (e.g. AePS split /
+   * commission-farming detected). The transaction still executes.
+   */
+  suppressCommission?: boolean;
   /** Insert the service detail row (pending). Return its id. */
   insertServiceRow: (client: PoolClient, ctx: { reference: string; chargePaise: number }) => Promise<string>;
   /** Call the external provider (runs after the debit commits). */
@@ -56,9 +62,19 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
   const existing = await loadExisting(reference, opts.table);
   if (existing) return existing;
 
+  // 1b) Risk / AML pre-check (throws 422 when the action is 'block').
+  await assessTransaction({
+    userId: opts.userId,
+    service: opts.serviceCode,
+    amountPaise: opts.amountPaise,
+    reference,
+  });
+
   // 2) Compute the money split up front so the retailer is netted.
   const flow = opts.flow ?? 'debit';
-  const dist = await computeDistribution(opts.userId, opts.serviceCode, opts.amountPaise);
+  const dist = opts.suppressCommission
+    ? { ruleMatched: false, chargePaise: 0, retailerPaise: 0, entries: [] }
+    : await computeDistribution(opts.userId, opts.serviceCode, opts.amountPaise);
   const chargePaise = dist.ruleMatched ? dist.chargePaise : opts.clientChargePaise ?? 0;
   const netPaise =
     flow === 'credit'
