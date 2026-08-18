@@ -14,6 +14,14 @@ import { refreshProviderRegistry } from '../../providers/registry';
 import { postJournal } from '../_shared/ledger';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
+import {
+  createPayoutBatch,
+  generateBatchFile,
+  ingestReverseFeed,
+  treasuryBalances,
+  treasurySweep,
+  BatchRecordInput,
+} from '../payout/batchpayout.service';
 
 const router = Router();
 router.use(requireAuth, requireRole('admin'));
@@ -482,6 +490,106 @@ router.patch(
     );
     if (!rows[0]) throw ApiError.notFound('User not found');
     res.json({ user: rows[0] });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Batch payout engine + treasury
+// ---------------------------------------------------------------------
+const batchCreateSchema = z.object({
+  label: z.string().trim().min(2).max(120),
+  records: z.array(z.object({
+    user_id: z.string().uuid(),
+    amount: z.coerce.number().positive().max(10_000_000),
+    beneficiary_name: z.string().trim().min(2).max(120),
+    account_number: z.string().trim().regex(/^\d{6,20}$/),
+    ifsc: z.string().trim().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/),
+  })).min(1).max(5000),
+});
+
+router.post(
+  '/payout-batches',
+  validate(batchCreateSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof batchCreateSchema>;
+    const records: BatchRecordInput[] = b.records.map((r) => ({
+      user_id: r.user_id,
+      amount_paise: rupeesToPaise(r.amount),
+      beneficiary_name: r.beneficiary_name,
+      account_number: r.account_number,
+      ifsc: r.ifsc,
+    }));
+    const summary = await createPayoutBatch(b.label, records, req.user.id);
+    res.status(201).json({ summary });
+  }),
+);
+
+router.get(
+  '/payout-batches',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT * FROM payout_batches ORDER BY created_at DESC LIMIT 50');
+    res.json({ items: rows });
+  }),
+);
+
+router.get(
+  '/payout-batches/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const batch = await query('SELECT * FROM payout_batches WHERE id = $1', [req.params.id]);
+    if (!batch.rows[0]) throw ApiError.notFound('Batch not found');
+    const records = await query('SELECT * FROM payout_batch_records WHERE batch_id = $1 ORDER BY seq', [req.params.id]);
+    res.json({ batch: batch.rows[0], records: records.rows });
+  }),
+);
+
+router.get(
+  '/payout-batches/:id/file',
+  asyncHandler(async (req: Request, res: Response) => {
+    const file = await generateBatchFile(req.params.id);
+    res.type('text/plain').send(file);
+  }),
+);
+
+const reverseFeedSchema = z.object({
+  rows: z.array(z.object({
+    record_id: z.string().uuid(),
+    status: z.enum(['settled', 'returned']),
+    utr: z.string().trim().max(40).optional(),
+  })).min(1).max(5000),
+});
+
+router.post(
+  '/payout-batches/:id/reverse-feed',
+  validate(reverseFeedSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof reverseFeedSchema>;
+    const result = await ingestReverseFeed(req.params.id, b.rows);
+    res.json({ result });
+  }),
+);
+
+router.get(
+  '/treasury/balances',
+  asyncHandler(async (_req: Request, res: Response) => {
+    res.json({ items: await treasuryBalances() });
+  }),
+);
+
+const sweepSchema = z.object({
+  from_account: z.string().trim(),
+  to_account: z.string().trim(),
+  amount: z.coerce.number().positive().max(1_000_000_000),
+  utr: z.string().trim().max(40).optional(),
+});
+
+router.post(
+  '/treasury/sweep',
+  validate(sweepSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof sweepSchema>;
+    const result = await treasurySweep(b.from_account, b.to_account, rupeesToPaise(b.amount), b.utr);
+    res.status(201).json({ sweep: result });
   }),
 );
 
