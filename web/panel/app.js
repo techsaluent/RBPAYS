@@ -139,6 +139,7 @@ const NAV = [
   { key: 'plans', label: 'Commission', roles: ['admin'] },
   { key: 'adminservices', label: 'Services', roles: ['admin'] },
   { key: 'providers', label: 'Providers', roles: ['admin'] },
+  { key: 'website', label: 'Website', roles: ['admin'] },
   { key: 'integrations', label: 'Integrations', roles: ['admin'] },
   { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin'] },
   { key: 'risk', label: 'Risk & AML', roles: ['admin'] },
@@ -152,10 +153,28 @@ function allowed(item) { return item.roles === '*' || item.roles.includes(State.
 
 // ---------------- App bootstrap + router ----------------
 const App = {
+  async applyBranding() {
+    try {
+      const r = await fetch(Cfg.API + '/site/settings', { cache: 'no-store' });
+      if (!r.ok) return;
+      const { settings: s } = await r.json();
+      if (!s) return;
+      if (s.primary_color) document.documentElement.style.setProperty('--brand', s.primary_color);
+      const brand = s.brand_name || 'TutiPays';
+      document.querySelectorAll('.brand').forEach(el => {
+        const a = el.querySelector('a');
+        if (a) a.textContent = brand;
+        else if (el.querySelector('small')) el.childNodes[0].nodeValue = brand + ' ';
+        else el.textContent = brand;
+      });
+      if (/TutiPays/.test(document.title)) document.title = document.title.replace(/TutiPays/g, brand);
+    } catch (_) {}
+  },
   async boot() {
     try {
       if (!State.user) { const me = await Api.get('/auth/me'); State.user = me.user; }
     } catch { return Auth.logout(); }
+    App.applyBranding();
     $('auth').style.display = 'none'; $('app').style.display = 'grid';
     $('who-name').textContent = State.user.full_name;
     $('who-role').textContent = State.user.role.replace(/_/g, ' ');
@@ -195,6 +214,23 @@ const Screens = {
           <div class="card"><div class="k">Commission paid</div><div class="v">${money(d.commission_paid_paise/100)}</div></div>
           <div class="card"><div class="k">Pending KYC</div><div class="v">${d.pending_kyc}</div></div>
         </div>
+        <div class="panel mt"><h2>Command consoles</h2>
+          <div class="row" style="flex-wrap:wrap;gap:8px">
+            <a class="btn sm ghost" href="#/members">Users</a>
+            <a class="btn sm ghost" href="#/kycreview">KYC Review</a>
+            <a class="btn sm ghost" href="#/topupreview">Top-up Requests</a>
+            <a class="btn sm ghost" href="#/plans">Commission</a>
+            <a class="btn sm ghost" href="#/providers">Providers</a>
+            <a class="btn sm ghost" href="#/integrations">Integrations</a>
+            <a class="btn sm ghost" href="#/website">Website</a>
+            <a class="btn sm ghost" href="#/taxdesk">Tax (TDS/GST)</a>
+            <a class="btn sm ghost" href="#/risk">Risk &amp; AML</a>
+            <a class="btn sm ghost" href="#/recon">Reconciliation</a>
+            <a class="btn sm ghost" href="#/batchpayout">Batch Payouts</a>
+            <a class="btn sm ghost" href="#/treasury">Treasury</a>
+            <a class="btn sm ghost" href="#/opsdesk">Ops Desk</a>
+            <a class="btn sm ghost" href="#/ledger">Ledger</a>
+          </div></div>
         <div class="panel mt"><h2>Users</h2><div>${roles || '—'}</div></div>
         <div class="panel mt"><h2>Service volume (successful)</h2>
           <div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Count</th><th class="right">Amount</th></tr></thead>
@@ -225,15 +261,22 @@ const Screens = {
       const kycBanner = kstat !== 'verified'
         ? `<div class="msg ${kstat === 'rejected' ? 'err' : ''}" style="background:${kstat==='rejected'?'':'#fef7e0'};color:${kstat==='rejected'?'':'#b06000'}">
              Your KYC is <b>${esc(kstat)}</b>. <a href="#/kyc">Complete KYC →</a></div>` : '';
+      const sw = w.sub_wallets || { settlement: '0.00', commission: '0.00' };
+      const quick = SERVICES.slice(0, 8).map(s => `<a class="btn sm ghost" href="#/new" onclick="Actions.presetSvc('${s.key}')">${esc(s.label)}</a>`).join(' ');
       $('view').innerHTML = `
         ${kycBanner}
         <div class="grid cards">
-          <div class="card"><div class="k">Wallet balance</div><div class="v">${money(w.wallet.balance)}</div></div>
+          <div class="card"><div class="k">Main wallet</div><div class="v">${money(w.wallet.balance)}</div></div>
+          <div class="card"><div class="k">AePS settlement</div><div class="v">${money(sw.settlement)}</div></div>
+          <div class="card"><div class="k">Commission (net TDS)</div><div class="v">${money(sw.commission)}</div></div>
           <div class="card"><div class="k">KYC status</div><div class="v" style="font-size:18px">${UI.statusTag(kstat)}</div></div>
         </div>
+        <div class="panel mt"><h2>Banking counter</h2>
+          <div class="row" style="flex-wrap:wrap;gap:8px">${quick}</div></div>
         <div class="panel mt"><h2>Quick actions</h2>
           <a class="btn sm" href="#/new">＋ New transaction</a> &nbsp;
           <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
+          <a class="btn sm ghost" href="#/wallet">Wallets &amp; sweep</a> &nbsp;
           <a class="btn sm ghost" href="#/txns">View transactions</a></div>`;
     }
   },
@@ -369,6 +412,7 @@ const Screens = {
         <button class="btn mt" onclick="Actions.submitTxn()">Submit</button>
         <div id="txn-result" class="mt"></div>
       </div>`;
+    if (Actions._preset) { $('svc').value = Actions._preset; Actions._preset = null; }
     Actions.svcFields();
   },
 
@@ -644,6 +688,40 @@ const Screens = {
       <tbody>${rows || '<tr><td colspan=7 class=muted>No flags</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Admin: website branding + custom pages CMS.
+  async website() {
+    const [st, pg] = await Promise.all([Api.get('/admin/site/settings'), Api.get('/admin/site/pages')]);
+    const s = {}; st.items.forEach(r => s[r.key] = r.value || '');
+    const field = (k, label, ph = '') => `<div class="field"><label>${label}</label><input id="ws_${k}" value="${esc(s[k]||'')}" placeholder="${ph}"></div>`;
+    const prows = pg.items.map(p => `<tr><td>${esc(p.slug)}</td><td>${esc(p.title)}</td>
+      <td>${p.published ? '<span class="tag active">live</span>' : '<span class="tag blocked">draft</span>'}</td>
+      <td><a class="btn sm ghost" href="../page.html?slug=${encodeURIComponent(p.slug)}" target="_blank">View</a>
+          <button class="btn sm" onclick="Actions.editPage('${p.slug}')">Edit</button>
+          <button class="btn sm ghost" onclick="Actions.deletePage('${p.slug}')">Delete</button></td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel" style="max-width:640px"><h2>Branding</h2>
+        <p class="muted">Applies to the landing site and this panel (name, logo, colour, contacts). Leave logo URL blank to use the emoji.</p>
+        ${field('brand_name','Brand name','TutiPays')}
+        ${field('logo_emoji','Logo emoji','₹')}
+        ${field('logo_url','Logo image URL (optional)','https://…')}
+        ${field('primary_color','Primary colour (hex)','#3b39e4')}
+        ${field('tagline','Tagline')}
+        ${field('support_email','Support email')}
+        ${field('admin_email','Admin email')}
+        ${field('phone','Phone')}
+        <h2 class="mt">Company details</h2>
+        ${field('company_name','Legal name')}
+        ${field('company_address','Registered address')}
+        ${field('company_pan','PAN')}
+        ${field('company_gst','GST')}
+        <button class="btn mt" onclick="Actions.saveSite()">Save branding</button></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Custom pages</h2>
+        <button class="btn sm" onclick="Actions.editPage()">+ New page</button></div>
+        <p class="muted">Author extra pages (e.g. Careers, Offers). They render at <code>/page.html?slug=…</code>.</p>
+        <div class="tbl-wrap"><table><thead><tr><th>Slug</th><th>Title</th><th>Status</th><th></th></tr></thead>
+        <tbody>${prows || '<tr><td colspan=4 class=muted>No custom pages yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
   // Admin: platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop).
   async integrations() {
     const d = await Api.get('/admin/integrations');
@@ -879,6 +957,35 @@ const Actions = {
     try { await Api.post(`/admin/adjustments/${id}/${decision}`, { note }); UI.toast(`Adjustment ${decision}d`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  presetSvc(key) { Actions._preset = key; },
+  async saveSite() {
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','company_pan','company_gst'];
+    const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
+    try { await Api.put('/admin/site/settings', { values }); UI.toast('Branding saved'); App.applyBranding(); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async editPage(slug) {
+    let page = { slug: '', title: '', content: '', published: true, sort_order: 0 };
+    if (slug) { const d = await Api.get('/admin/site/pages/' + slug); page = d.page; }
+    UI.modal(`<h3>${slug ? 'Edit' : 'New'} page</h3>
+      <div class="field"><label>Slug (URL)</label><input id="pg_slug" value="${esc(page.slug)}" ${slug?'readonly':''} placeholder="careers"></div>
+      <div class="field"><label>Title</label><input id="pg_title" value="${esc(page.title)}"></div>
+      <div class="field"><label>Content (HTML allowed)</label><textarea id="pg_content" rows="8" style="width:100%;font-family:monospace">${esc(page.content||'')}</textarea></div>
+      <div class="field"><label><input type="checkbox" id="pg_pub" ${page.published?'checked':''}> Published</label></div>
+      <div class="foot"><button class="btn" onclick="Actions.savePage()">Save</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async savePage() {
+    const slug = val('pg_slug');
+    const body = { slug, title: val('pg_title'), content: $('pg_content').value, published: $('pg_pub').checked, sort_order: 0 };
+    try { await Api.put('/admin/site/pages/' + slug, body); UI.closeModal(); UI.toast('Page saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async deletePage(slug) {
+    if (!confirm('Delete page "' + slug + '"?')) return;
+    try { await Api.del('/admin/site/pages/' + slug); UI.toast('Deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
   async saveIntegration(key) {
     const body = { is_active: $('ig_active').checked };
     if (val('ig_prov')) body.provider = val('ig_prov');
@@ -1042,5 +1149,6 @@ async function sha256hex(str) {
 }
 
 // ---------------- start ----------------
+App.applyBranding();
 if (State.token) App.boot();
 else UI.authTab(new URLSearchParams(location.search).has('signup') ? 'signup' : 'login');

@@ -24,6 +24,7 @@ import onboardingRoutes from './modules/onboarding/onboarding.routes';
 import networkRoutes from './modules/network/network.routes';
 import adminRoutes from './modules/admin/admin.routes';
 import transactionRoutes from './modules/transactions/transactions.routes';
+import siteRoutes from './modules/site/site.routes';
 
 const router = Router();
 
@@ -52,5 +53,6 @@ router.use('/tax', taxRoutes);
 router.use('/onboarding', onboardingRoutes);
 router.use('/network', networkRoutes);
 router.use('/admin', adminRoutes);
+router.use('/site', siteRoutes);
 
 export default router;

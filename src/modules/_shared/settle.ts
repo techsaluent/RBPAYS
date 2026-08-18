@@ -3,7 +3,8 @@ import { logger } from '../../config/logger';
 import { credit, reverse, WalletSource } from '../wallet/wallet.service';
 import { creditSub } from '../wallet/subwallet.service';
 import { applyUplineCredits, CommissionEntry } from '../commission/commission.service';
-import { postJournal } from './ledger';
+import { apply194N } from '../tax/tax.service';
+import { postJournal, JournalLine } from './ledger';
 import { ProviderResult } from '../../providers/types';
 
 // Cash-out inflow services accumulate in the retailer's AePS Settlement
@@ -34,6 +35,7 @@ interface TxnRow {
   direction: string; // 'debit' | 'credit'
   service_txn_id: string;
   status: string;
+  amount_paise: string;
   net_paise: string;
   reversed_at: string | null;
   commission_breakdown: CommissionEntry[] | null;
@@ -112,16 +114,27 @@ export async function settleByReference(
       if (txn.direction === 'credit' && Number(txn.net_paise) > 0) {
         const netPaise = Number(txn.net_paise);
         if (SETTLEMENT_WALLET_SERVICES.has(txn.service)) {
+          // Section 194N: withhold TDS on cash-out beyond the annual ceiling.
+          const tds194n = await apply194N(client, {
+            userId: txn.user_id,
+            serviceCode: txn.service,
+            amountPaise: Number(txn.amount_paise),
+            serviceTxnId: txn.service_txn_id,
+            excludeTxnId: txn.id,
+          });
+          const creditPaise = Math.max(0, netPaise - tds194n);
           // Cash-out inflow -> AePS Settlement sub-wallet (DR bank escrow).
-          await creditSub(client, txn.user_id, 'settlement', netPaise);
+          await creditSub(client, txn.user_id, 'settlement', creditPaise);
+          const lines: JournalLine[] = [
+            { account: 'bank_escrow', direction: 'debit', amountPaise: netPaise },
+            { account: 'settlement_wallet', direction: 'credit', amountPaise: creditPaise, walletUserId: txn.user_id },
+          ];
+          if (tds194n > 0) lines.push({ account: 'tds_payable', direction: 'credit', amountPaise: tds194n });
           await postJournal(client, {
             source: txn.service,
             reference: txn.id,
-            narration: `${txn.service} cash-out to settlement wallet (${reference})`,
-            lines: [
-              { account: 'bank_escrow', direction: 'debit', amountPaise: netPaise },
-              { account: 'settlement_wallet', direction: 'credit', amountPaise: netPaise, walletUserId: txn.user_id },
-            ],
+            narration: `${txn.service} cash-out to settlement wallet${tds194n > 0 ? ' (194N TDS withheld)' : ''} (${reference})`,
+            lines,
           });
         } else {
           await credit(client, {
