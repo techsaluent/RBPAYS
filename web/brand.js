@@ -11,14 +11,20 @@
     if (s.primary_color) document.documentElement.style.setProperty('--brand', s.primary_color);
     const brand = s.brand_name || 'TutiPays';
 
-    // Logo blocks: replace with configured emoji/image + brand name.
-    document.querySelectorAll('.logo').forEach((el) => {
-      const dot = s.logo_url
-        ? `<img src="${s.logo_url}" alt="${brand}" style="width:30px;height:30px;border-radius:9px;object-fit:cover">`
-        : `<span class="dot">${s.logo_emoji || '₹'}</span>`;
-      const white = /color:\s*#fff|color:\s*white/i.test(el.getAttribute('style') || '');
-      el.innerHTML = `${dot} <span${white ? ' style="color:#fff"' : ''}>${brand}</span>`;
-    });
+    // Logo blocks: only rewrite when the admin has actually customised the
+    // logo or brand name. Otherwise leave the page's built-in markup untouched
+    // so the default logo doesn't visibly repaint on every load (no flicker).
+    const customLogo = !!s.logo_url || (!!s.logo_emoji && s.logo_emoji !== '₹');
+    const customName = !!s.brand_name && s.brand_name !== 'TutiPays';
+    if (customLogo || customName) {
+      document.querySelectorAll('.logo').forEach((el) => {
+        const dot = s.logo_url
+          ? `<img src="${s.logo_url}" alt="${brand}" style="width:30px;height:30px;border-radius:9px;object-fit:cover">`
+          : `<span class="dot">${s.logo_emoji || '₹'}</span>`;
+        const white = /color:\s*#fff|color:\s*white/i.test(el.getAttribute('style') || '');
+        el.innerHTML = `${dot} <span${white ? ' style="color:#fff"' : ''}>${brand}</span>`;
+      });
+    }
 
     // Title + brand-name text nodes.
     if (/TutiPays/.test(document.title)) document.title = document.title.replace(/TutiPays/g, brand);
@@ -29,7 +35,7 @@
     if (s.admin_email) document.querySelectorAll('a[href^="mailto:admin@"]').forEach((a) => { a.href = 'mailto:' + s.admin_email; a.textContent = s.admin_email; });
 
     // Company detail slots (opt-in via data attributes).
-    const map = { 'company-name': s.company_name, 'company-address': s.company_address, 'company-pan': s.company_pan, 'company-gst': s.company_gst, tagline: s.tagline };
+    const map = { 'company-name': s.company_name, 'company-address': s.company_address, tagline: s.tagline };
     for (const [k, v] of Object.entries(map)) {
       if (v) document.querySelectorAll(`[data-${k}]`).forEach((el) => { el.textContent = v; });
     }

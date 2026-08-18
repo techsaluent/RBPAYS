@@ -857,8 +857,6 @@ const Screens = {
         <h2 class="mt">Company details</h2>
         ${field('company_name','Legal name')}
         ${field('company_address','Registered address')}
-        ${field('company_pan','PAN')}
-        ${field('company_gst','GST')}
         <h2 class="mt">Login / Sign-up offer poster</h2>
         <p class="muted">Shown beside the login and sign-up forms. Leave image URL blank for the default gradient.</p>
         ${field('auth_poster_url','Poster image URL','https://…/offer.jpg')}
@@ -1190,7 +1188,7 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','company_pan','company_gst','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
