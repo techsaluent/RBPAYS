@@ -10,7 +10,7 @@ import { logger } from '../src/config/logger';
 import { hashPassword } from '../src/utils/password';
 
 async function main(): Promise<void> {
-  const name = process.env.ADMIN_NAME ?? 'TutiPays Admin';
+  const name = process.env.ADMIN_NAME ?? 'REAL BROTHERS TECHNOLOGY SERVICES LLP';
   const email = (process.env.ADMIN_EMAIL ?? 'admin@tutipays.com').trim().toLowerCase();
   const phone = (process.env.ADMIN_PHONE ?? '').trim();
   const password = process.env.ADMIN_PASSWORD ?? '';
