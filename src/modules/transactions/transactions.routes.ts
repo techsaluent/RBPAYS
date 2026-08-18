@@ -81,6 +81,55 @@ router.get(
   }),
 );
 
+// Headline stats for the signed-in member's dashboard tiles. Day/month
+// boundaries use India Standard Time so "today" matches the operator's day.
+router.get(
+  '/stats/summary',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { rows } = await query<Record<string, string>>(
+      `SELECT
+          COUNT(*) AS total_count,
+          COUNT(*) FILTER (WHERE status = 'success') AS success_count,
+          COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
+          COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
+          COALESCE(SUM(amount_paise) FILTER (WHERE status = 'success'), 0) AS success_amount,
+          COALESCE(SUM(commission_paise) FILTER (WHERE status = 'success'), 0) AS commission_amount,
+          COUNT(*) FILTER (
+            WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
+          ) AS today_count,
+          COALESCE(SUM(amount_paise) FILTER (
+            WHERE status = 'success'
+              AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
+          ), 0) AS today_amount,
+          COALESCE(SUM(amount_paise) FILTER (
+            WHERE status = 'success'
+              AND date_trunc('month', created_at AT TIME ZONE 'Asia/Kolkata')
+                  = date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata')
+          ), 0) AS month_amount
+        FROM transactions
+        WHERE user_id = $1`,
+      [req.user.id],
+    );
+    const r = rows[0];
+    const n = (k: string) => Number(r[k] ?? 0);
+    const total = n('total_count');
+    const success = n('success_count');
+    res.json({
+      total_count: total,
+      success_count: success,
+      failed_count: n('failed_count'),
+      pending_count: n('pending_count'),
+      success_rate: total ? Math.round((success / total) * 100) : 0,
+      success_amount_paise: n('success_amount'),
+      commission_amount_paise: n('commission_amount'),
+      today_count: n('today_count'),
+      today_amount_paise: n('today_amount'),
+      month_amount_paise: n('month_amount'),
+    });
+  }),
+);
+
 /** Load a transaction the caller may view (own, or any for admin). */
 async function loadOwned(req: Request): Promise<Record<string, unknown>> {
   if (!req.user) throw ApiError.unauthorized();

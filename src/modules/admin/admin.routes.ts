@@ -1,6 +1,7 @@
 import { Request, Response, Router } from 'express';
 import { z } from 'zod';
-import { requireAuth, requireRole } from '../../middleware/auth';
+import { requireAuth } from '../../middleware/auth';
+import { staffConsoleGate } from '../../middleware/permission';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
@@ -26,7 +27,7 @@ import {
 } from '../payout/batchpayout.service';
 
 const router = Router();
-router.use(requireAuth, requireRole('admin'));
+router.use(requireAuth, asyncHandler(staffConsoleGate));
 
 const USER_COLUMNS =
   'id, full_name, username, email, phone, role, status, kyc_status, parent_id, commission_plan_id, activated_at, created_at';

@@ -71,16 +71,17 @@ const Auth = {
     if (f.mpin && f.mpin.value.trim()) body.mpin = f.mpin.value.trim();
     try {
       const d = await Api.post('/auth/login', body, false);
-      // Keep the two portals separate: admins only via the admin URL, partners
-      // only via the main panel. Refuse the mismatch and don't keep the session.
-      if (ADMIN_PORTAL && d.user.role !== 'admin') {
+      // Keep the two portals separate: the admin console (super admin + staff)
+      // only via the admin URL, partners only via the main panel.
+      const isConsole = d.user.role === 'admin' || d.user.role === 'staff';
+      if (ADMIN_PORTAL && !isConsole) {
         Auth.wipe();
         UI.authMsg('This is the administrator console. Partners, please log in at the main panel.', 'err');
         return false;
       }
-      if (!ADMIN_PORTAL && d.user.role === 'admin') {
+      if (!ADMIN_PORTAL && isConsole) {
         Auth.wipe();
-        UI.authMsg('Administrators must sign in through the admin console (separate URL).', 'err');
+        UI.authMsg('Administrators and staff must sign in through the admin console (separate URL).', 'err');
         return false;
       }
       Auth.save(d); await App.boot();
@@ -180,6 +181,12 @@ const UI = {
   },
   closeModal() { $('modal-root').innerHTML = ''; },
   statusTag(s) { return `<span class="tag ${esc(s)}">${esc(s)}</span>`; },
+  // A single statistic tile: colour class, icon, label, big value, sub-line.
+  stat(cls, ico, label, value, sub) {
+    return `<div class="stat ${cls}"><div class="ico">${ico}</div>
+      <div class="k">${esc(label)}</div><div class="v">${value}</div>
+      ${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+  },
 };
 
 // ---------------- Navigation ----------------
@@ -198,24 +205,36 @@ const NAV = [
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
   { key: 'security', label: 'Security', roles: '*' },
-  { key: 'members', label: 'Users', roles: ['admin'] },
-  { key: 'kycreview', label: 'KYC Review', roles: ['admin'] },
-  { key: 'topupreview', label: 'Top-up Requests', roles: ['admin'] },
-  { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin'] },
-  { key: 'plans', label: 'Commission', roles: ['admin'] },
-  { key: 'adminservices', label: 'Services', roles: ['admin'] },
-  { key: 'providers', label: 'Providers', roles: ['admin'] },
-  { key: 'website', label: 'Website', roles: ['admin'] },
-  { key: 'integrations', label: 'Integrations', roles: ['admin'] },
-  { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin'] },
-  { key: 'risk', label: 'Risk & AML', roles: ['admin'] },
-  { key: 'recon', label: 'Reconciliation', roles: ['admin'] },
-  { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin'] },
-  { key: 'treasury', label: 'Treasury', roles: ['admin'] },
-  { key: 'opsdesk', label: 'Ops Desk', roles: ['admin'] },
-  { key: 'ledger', label: 'Ledger', roles: ['admin'] },
+  // Admin console — each item maps to a staff permission (super admin sees all).
+  { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view' },
+  { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review' },
+  { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage' },
+  { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin', 'staff'], perm: 'topup.manage' },
+  { key: 'plans', label: 'Commission', roles: ['admin', 'staff'], perm: 'commission.manage' },
+  { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage' },
+  { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage' },
+  { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage' },
+  { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage' },
+  { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin', 'staff'], perm: 'tax.manage' },
+  { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage' },
+  { key: 'recon', label: 'Reconciliation', roles: ['admin', 'staff'], perm: 'recon.manage' },
+  { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin', 'staff'], perm: 'payouts.manage' },
+  { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage' },
+  { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view' },
+  { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view' },
+  { key: 'staff', label: 'Staff & Roles', roles: ['admin'] },
 ];
-function allowed(item) { return item.roles === '*' || item.roles.includes(State.user.role); }
+// Super admin sees everything; staff see console items only for permissions they hold.
+function hasPerm(p) {
+  const perms = State.user.permissions || [];
+  return perms.includes('*') || perms.includes(p);
+}
+function allowed(item) {
+  if (item.roles === '*') return true;
+  if (!item.roles.includes(State.user.role)) return false;
+  if (item.perm && State.user.role === 'staff') return hasPerm(item.perm);
+  return true;
+}
 
 // ---------------- App bootstrap + router ----------------
 const App = {
@@ -253,14 +272,16 @@ const App = {
   },
   async boot() {
     try {
-      if (!State.user) { const me = await Api.get('/auth/me'); State.user = me.user; }
+      // Always refresh from /me so staff/admin carry their live permission set.
+      const me = await Api.get('/auth/me'); State.user = me.user;
     } catch { return Auth.logout(); }
-    // Enforce the portal/role split on a restored session too.
-    if ((ADMIN_PORTAL && State.user.role !== 'admin') || (!ADMIN_PORTAL && State.user.role === 'admin')) {
+    // Enforce the portal/role split on a restored session too (console = admin + staff).
+    const isConsole = State.user.role === 'admin' || State.user.role === 'staff';
+    if ((ADMIN_PORTAL && !isConsole) || (!ADMIN_PORTAL && isConsole)) {
       Auth.wipe();
       UI.authMsg(ADMIN_PORTAL
         ? 'This is the administrator console. Partners, please log in at the main panel.'
-        : 'Administrators must sign in through the admin console (separate URL).', 'err');
+        : 'Administrators and staff must sign in through the admin console (separate URL).', 'err');
       return;
     }
     App.applyBranding();
@@ -292,16 +313,39 @@ const App = {
 // ---------------- Screens ----------------
 const Screens = {
   async dashboard() {
+    if (State.user.role === 'staff') {
+      // Staff see a focused console: only the sections they're granted.
+      const items = NAV.filter(i => i.roles !== '*' && i.roles.includes('staff') && allowed(i) && i.key !== 'dashboard');
+      const links = items.map(i => `<a class="stat b" href="#/${i.key}" style="text-decoration:none;color:inherit">
+        <div class="ico">▸</div><div class="k">Console</div><div class="v" style="font-size:18px">${esc(i.label)}</div></a>`).join('');
+      let kycTile = '';
+      if (hasPerm('kyc.review')) {
+        const p = await Api.get('/kyc/pending').catch(() => ({ items: [] }));
+        kycTile = UI.stat('o', '🪪', 'Pending KYC', (p.items || []).length, '<a href="#/kycreview">Review now →</a>');
+      }
+      $('view').innerHTML = `
+        <div class="panel"><h2>Welcome, ${esc(State.user.full_name)}</h2>
+          <p class="muted">You're signed in as <b>staff</b>. You can access the sections granted to you below.</p></div>
+        <div class="stats mt">${kycTile}${links || '<div class="muted">No sections assigned yet. Ask the super admin to grant permissions.</div>'}</div>`;
+      return;
+    }
     if (State.user.role === 'admin') {
       const d = await Api.get('/admin/dashboard');
       const roles = Object.entries(d.users_by_role || {}).map(([k, n]) => `${k.replace(/_/g,' ')}: <b>${n}</b>`).join(' &nbsp; ');
-      const vol = Object.entries(d.service_volumes || {}).map(([k, v]) =>
-        `<tr><td>${k}</td><td class="right">${v.success_count}</td><td class="right">${money(v.success_amount_paise/100)}</td></tr>`).join('');
+      const vol = Object.entries(d.service_volumes || {})
+        .sort((a, b) => b[1].success_amount_paise - a[1].success_amount_paise)
+        .map(([k, v]) =>
+        `<tr><td>${esc(k.replace(/_/g,' '))}</td><td class="right">${v.success_count}</td><td class="right">${v.total_count ?? '—'}</td><td class="right">${money(v.success_amount_paise/100)}</td></tr>`).join('');
       $('view').innerHTML = `
-        <div class="grid cards">
-          <div class="card"><div class="k">Wallet float</div><div class="v">${money(d.wallet_float_paise/100)}</div></div>
-          <div class="card"><div class="k">Commission paid</div><div class="v">${money(d.commission_paid_paise/100)}</div></div>
-          <div class="card"><div class="k">Pending KYC</div><div class="v">${d.pending_kyc}</div></div>
+        <div class="stats">
+          ${UI.stat('b','💳','Today\'s volume', money((d.today_amount_paise||0)/100), `<b>${d.today_count||0}</b> transactions today`)}
+          ${UI.stat('t','📈','This month GTV', money((d.month_amount_paise||0)/100), 'Successful value, MTD')}
+          ${UI.stat('g','🏦','Wallet float', money(d.wallet_float_paise/100), 'Across all wallets')}
+          ${UI.stat('p','🎯','Success rate', (d.txn_success_rate??0)+'%', `<b>${d.txn_success_count||0}</b> of ${d.txn_total_count||0} txns`)}
+          ${UI.stat('o','👥','Total users', (d.total_users||0), roles || '—')}
+          ${UI.stat('t','💰','Commission paid', money(d.commission_paid_paise/100), 'To the network, lifetime')}
+          ${UI.stat('r','🪪','Pending KYC', d.pending_kyc, d.pending_kyc ? '<a href="#/kycreview">Review now →</a>' : 'All clear')}
+          ${UI.stat('o','⏳','Pending txns', (d.txn_pending_count||0), 'Awaiting settlement')}
         </div>
         <div class="panel mt"><h2>Command consoles</h2>
           <div class="row" style="flex-wrap:wrap;gap:8px">
@@ -320,48 +364,60 @@ const Screens = {
             <a class="btn sm ghost" href="#/opsdesk">Ops Desk</a>
             <a class="btn sm ghost" href="#/ledger">Ledger</a>
           </div></div>
-        <div class="panel mt"><h2>Users</h2><div>${roles || '—'}</div></div>
-        <div class="panel mt"><h2>Service volume (successful)</h2>
-          <div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Count</th><th class="right">Amount</th></tr></thead>
-          <tbody>${vol}</tbody></table></div></div>`;
+        <div class="panel mt"><h2>Service volume</h2>
+          <div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Success</th><th class="right">Total</th><th class="right">Amount</th></tr></thead>
+          <tbody>${vol || '<tr><td colspan=4 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>`;
     } else if (MGMT_ROLES.includes(State.user.role)) {
       // Distributor / Master distributor — network + earnings, no transactions.
-      const [p, w] = await Promise.all([Api.get('/network/panel').catch(() => null), Api.get('/wallet')]);
+      const [p, w, st] = await Promise.all([
+        Api.get('/network/panel').catch(() => null),
+        Api.get('/wallet'),
+        Api.get('/transactions/stats/summary').catch(() => null),
+      ]);
       const earn = p ? p.earnings.total_paise / 100 : 0;
+      const totalDown = p ? Object.values(p.downline_counts || {}).reduce((a, n) => a + Number(n), 0) : 0;
       const dc = p ? Object.entries(p.downline_counts || {}).map(([k, n]) => `${k.replace(/_/g,' ')}: <b>${n}</b>`).join(' &nbsp; ') : '';
       const recent = (p?.earnings.recent || []).map(e => `<tr><td>${esc(e.service_code)}</td><td>${esc(e.level)}</td><td class="right">${money(e.amount_paise/100)}</td></tr>`).join('');
       $('view').innerHTML = `
-        <div class="grid cards">
-          <div class="card"><div class="k">Wallet balance</div><div class="v">${money(w.wallet.balance)}</div></div>
-          <div class="card"><div class="k">Commission earned</div><div class="v">${money(earn)}</div></div>
+        <div class="stats">
+          ${UI.stat('b','👛','Wallet balance', money(w.wallet.balance), 'Available float')}
+          ${UI.stat('g','💰','Commission earned', money(earn), 'Net of TDS, lifetime')}
+          ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, dc || 'No members yet')}
+          ${st ? UI.stat('t','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : ''}
         </div>
         <div class="panel mt"><h2>Quick actions</h2>
+          <a class="btn sm" href="#/network">Manage network</a> &nbsp;
           <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
-          <a class="btn sm ghost" href="#/network">Manage network</a></div>
-        <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My downline</h2>
-          <a class="btn sm" href="#/network">Manage network</a></div><div>${dc || 'No members yet'}</div></div>
+          <a class="btn sm ghost" href="#/txns">Transactions</a></div>
         <div class="panel mt"><h2>Recent commission</h2><div class="tbl-wrap"><table>
           <thead><tr><th>Service</th><th>Level</th><th class="right">Amount</th></tr></thead>
           <tbody>${recent || '<tr><td colspan=3 class=muted>None yet</td></tr>'}</tbody></table></div></div>`;
     } else {
       // Retailer (and plain user) — transact, wallet, KYC prompt.
-      const [w, kyc] = await Promise.all([Api.get('/wallet'), Api.get('/kyc').catch(() => null)]);
+      const [w, kyc, st] = await Promise.all([
+        Api.get('/wallet'),
+        Api.get('/kyc').catch(() => null),
+        Api.get('/transactions/stats/summary').catch(() => null),
+      ]);
       const kstat = kyc?.kyc_status || State.user.kyc_status;
       const kycBanner = kstat !== 'verified'
         ? `<div class="msg ${kstat === 'rejected' ? 'err' : ''}" style="background:${kstat==='rejected'?'':'#fef7e0'};color:${kstat==='rejected'?'':'#b06000'}">
              Your KYC is <b>${esc(kstat)}</b>. <a href="#/kyc">Complete KYC →</a></div>` : '';
       const sw = w.sub_wallets || { settlement: '0.00', commission: '0.00' };
-      const quick = SERVICES.slice(0, 8).map(s => `<a class="btn sm ghost" href="#/new" onclick="Actions.presetSvc('${s.key}')">${esc(s.label)}</a>`).join(' ');
+      const s = st || {};
+      const quick = SERVICES.slice(0, 8).map(x => `<a class="btn sm ghost" href="#/new" onclick="Actions.presetSvc('${x.key}')">${esc(x.label)}</a>`).join(' ');
       $('view').innerHTML = `
         ${kycBanner}
-        <div class="grid cards">
-          <div class="card"><div class="k">Main wallet</div><div class="v">${money(w.wallet.balance)}</div></div>
-          <div class="card"><div class="k">AePS settlement</div><div class="v">${money(sw.settlement)}</div></div>
-          <div class="card"><div class="k">Commission (net TDS)</div><div class="v">${money(sw.commission)}</div></div>
-          <div class="card"><div class="k">KYC status</div><div class="v" style="font-size:18px">${UI.statusTag(kstat)}</div></div>
+        <div class="stats">
+          ${UI.stat('b','👛','Main wallet', money(w.wallet.balance), 'Available balance')}
+          ${UI.stat('t','🏧','AePS settlement', money(sw.settlement), 'Pending sweep')}
+          ${UI.stat('g','💰','Commission', money(sw.commission), 'Net of TDS')}
+          ${UI.stat('p','💳','Today', money((s.today_amount_paise||0)/100), `<b>${s.today_count||0}</b> transactions`)}
+          ${UI.stat('t','📈','This month', money((s.month_amount_paise||0)/100), 'Successful value')}
+          ${UI.stat('o','🎯','Success rate', (s.success_rate??0)+'%', `<b>${s.success_count||0}</b> of ${s.total_count||0}`)}
         </div>
-        <div class="panel mt"><h2>Banking counter</h2>
-          <div class="row" style="flex-wrap:wrap;gap:8px">${quick}</div></div>
+        <div class="sechead">Banking counter</div>
+        <div class="panel"><div class="row" style="flex-wrap:wrap;gap:8px">${quick}</div></div>
         <div class="panel mt"><h2>Quick actions</h2>
           <a class="btn sm" href="#/new">＋ New transaction</a> &nbsp;
           <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
@@ -559,6 +615,29 @@ const Screens = {
       <div class="panel mt"><h2>Recent commission</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th>Level</th><th class="right">Amount</th><th>When</th></tr></thead>
         <tbody>${erows || '<tr><td colspan=4 class=muted>None yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Super admin: staff team + scoped permissions.
+  async staff() {
+    const [cat, list] = await Promise.all([Api.get('/staff/catalog'), Api.get('/staff')]);
+    App._permCatalog = cat;
+    const rows = (list.items || []).map(s => `<tr>
+      <td>${esc(s.full_name)}</td><td class="muted">${esc(s.email)}</td>
+      <td>${UI.statusTag(s.status)}</td>
+      <td>${(s.permissions||[]).length} power(s)</td>
+      <td>
+        <button class="btn sm" onclick='Actions.editStaff(${JSON.stringify(s).replace(/'/g,"&#39;")})'>Permissions</button>
+        ${s.status === 'active'
+          ? `<button class="btn sm ghost" onclick="Actions.staffStatus('${s.id}','suspended')">Suspend</button>`
+          : `<button class="btn sm" onclick="Actions.staffStatus('${s.id}','active')">Activate</button>`}
+      </td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><div class="row" style="justify-content:space-between"><h2>Staff &amp; roles</h2>
+        <button class="btn sm" onclick="Actions.addStaff()">+ Add staff</button></div>
+        <p class="muted">Staff log in through this admin console but only see the sections you grant. The super admin holds every power.</p>
+        <div class="tbl-wrap"><table>
+        <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Powers</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=5 class=muted>No staff yet — add your first team member.</td></tr>'}</tbody></table></div></div>`;
   },
 
   async members() {
@@ -832,8 +911,6 @@ const Screens = {
         <h2 class="mt">Company details</h2>
         ${field('company_name','Legal name')}
         ${field('company_address','Registered address')}
-        ${field('company_pan','PAN')}
-        ${field('company_gst','GST')}
         <h2 class="mt">Login / Sign-up offer poster</h2>
         <p class="muted">Shown beside the login and sign-up forms. Leave image URL blank for the default gradient.</p>
         ${field('auth_poster_url','Poster image URL','https://…/offer.jpg')}
@@ -1154,6 +1231,59 @@ const Actions = {
     try { await Api.post(`/admin/users/${id}/reset-password`, { new_password: pw }); UI.toast('Password reset'); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  // ---- Staff & permissions ----
+  _permBoxes(selected) {
+    const cat = App._permCatalog || { permissions: [], presets: {} };
+    const sel = new Set(selected || []);
+    const groups = {};
+    cat.permissions.forEach(p => { (groups[p.group] ??= []).push(p); });
+    const body = Object.entries(groups).map(([g, ps]) => `
+      <div style="margin-bottom:10px"><div class="muted" style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.4px">${esc(g)}</div>
+      ${ps.map(p => `<label style="display:flex;gap:8px;align-items:center;margin:6px 0;font-size:13px">
+        <input type="checkbox" class="perm-box" value="${esc(p.key)}" ${sel.has(p.key)?'checked':''}> ${esc(p.label)}</label>`).join('')}</div>`).join('');
+    const presets = Object.entries(cat.presets).map(([k, v]) =>
+      `<button type="button" class="btn sm ghost" onclick="Actions.applyPreset('${k}')">${esc(v.label)}</button>`).join(' ');
+    return `<div class="muted" style="font-size:12px;margin-bottom:6px">Quick presets: ${presets}</div>${body}`;
+  },
+  applyPreset(key) {
+    const preset = (App._permCatalog.presets || {})[key];
+    if (!preset) return;
+    const set = new Set(preset.permissions);
+    document.querySelectorAll('.perm-box').forEach(b => { b.checked = set.has(b.value); });
+  },
+  _collectPerms() { return [...document.querySelectorAll('.perm-box:checked')].map(b => b.value); },
+  async addStaff() {
+    UI.modal(`<h3>Add staff member</h3>
+      <div class="field"><label>Full name</label><input id="st_name"></div>
+      <div class="field"><label>Email</label><input id="st_email" type="email"></div>
+      <div class="field"><label>Mobile (10 digit)</label><input id="st_phone"></div>
+      <div class="field"><label>Temporary password (min 8)</label><input id="st_pw" type="password"></div>
+      <h4 style="margin:14px 0 6px">Powers</h4>
+      <div style="max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:12px">${Actions._permBoxes([])}</div>
+      <div class="foot"><button class="btn" onclick="Actions.saveNewStaff()">Create staff</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveNewStaff() {
+    const body = { full_name: val('st_name'), email: val('st_email'), phone: val('st_phone'),
+      password: $('st_pw').value, permissions: Actions._collectPerms() };
+    try { await Api.post('/staff', body); UI.closeModal(); UI.toast('Staff member added'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async editStaff(s) {
+    UI.modal(`<h3>Permissions — ${esc(s.full_name)}</h3>
+      <p class="muted" style="font-size:13px">Tick the sections this staff member may use.</p>
+      <div style="max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:12px">${Actions._permBoxes(s.permissions || [])}</div>
+      <div class="foot"><button class="btn" onclick="Actions.saveStaffPerms('${s.id}')">Save permissions</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveStaffPerms(id) {
+    try { await Api.patch(`/staff/${id}`, { permissions: Actions._collectPerms() }); UI.closeModal(); UI.toast('Permissions updated'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async staffStatus(id, status) {
+    try { await Api.post(`/staff/${id}/status`, { status }); UI.toast(`Staff ${status}`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
   async saveTaxConfig(codes) {
     const items = codes.map(code => ({
       code,
@@ -1165,7 +1295,7 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','company_pan','company_gst','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';

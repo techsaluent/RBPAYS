@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { ApiError } from '../../utils/ApiError';
 import * as authService from './auth.service';
+import { getStaffPermissions } from '../../middleware/permission';
 
 export async function requestSignupOtp(req: Request, res: Response): Promise<void> {
   const result = await authService.requestSignupOtp(req.body.phone, req.body.email);
@@ -30,7 +31,12 @@ export async function logout(req: Request, res: Response): Promise<void> {
 export async function me(req: Request, res: Response): Promise<void> {
   if (!req.user) throw ApiError.unauthorized();
   const user = await authService.getUserById(req.user.id);
-  res.status(200).json({ user });
+  // Admin holds every power ('*'); staff carry their explicit grants so the
+  // console can show only the sections they're allowed to use.
+  let permissions: string[] | undefined;
+  if (user && user.role === 'admin') permissions = ['*'];
+  else if (user && user.role === 'staff') permissions = await getStaffPermissions(user.id);
+  res.status(200).json({ user: permissions ? { ...user, permissions } : user });
 }
 
 export async function forgotPassword(req: Request, res: Response): Promise<void> {
