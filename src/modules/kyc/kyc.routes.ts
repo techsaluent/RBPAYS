@@ -1,6 +1,7 @@
 import { Request, Response, Router } from 'express';
 import { z } from 'zod';
-import { requireAuth, requireRole } from '../../middleware/auth';
+import { requireAuth } from '../../middleware/auth';
+import { requirePermission } from '../../middleware/permission';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
@@ -55,7 +56,7 @@ const reviewSchema = z.object({
 // List all pending KYC documents (admin).
 router.get(
   '/pending',
-  requireRole('admin'),
+  asyncHandler(requirePermission('kyc.review')),
   asyncHandler(async (_req: Request, res: Response) => {
     const { rows } = await query(
       `SELECT k.*, u.full_name, u.phone, u.role
@@ -81,7 +82,7 @@ async function recomputeUserKyc(client: import('pg').PoolClient, userId: string)
 // Approve / reject a KYC document (admin).
 router.post(
   '/:id/review',
-  requireRole('admin'),
+  asyncHandler(requirePermission('kyc.review')),
   validate(reviewSchema),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();

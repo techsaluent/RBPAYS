@@ -24,6 +24,7 @@ import onboardingRoutes from './modules/onboarding/onboarding.routes';
 import securityRoutes from './modules/security/security.routes';
 import networkRoutes from './modules/network/network.routes';
 import adminRoutes from './modules/admin/admin.routes';
+import staffRoutes from './modules/staff/staff.routes';
 import transactionRoutes from './modules/transactions/transactions.routes';
 import siteRoutes from './modules/site/site.routes';
 
@@ -55,6 +56,7 @@ router.use('/onboarding', onboardingRoutes);
 router.use('/security', securityRoutes);
 router.use('/network', networkRoutes);
 router.use('/admin', adminRoutes);
+router.use('/staff', staffRoutes);
 router.use('/site', siteRoutes);
 
 export default router;
