@@ -70,11 +70,31 @@ export async function signup(input: SignupInput) {
       throw ApiError.conflict('A user with this email, phone or username already exists');
     }
 
+    // Resolve the optional sponsor (upline). Only link when the sponsor
+    // out-ranks the role being applied for, so the hierarchy stays valid.
+    const RANK: Record<string, number> = { retailer: 1, distributor: 2, master_distributor: 3 };
+    let parentId: string | null = null;
+    if (input.sponsor) {
+      const sp = await client.query<{ id: string; role: string }>(
+        `SELECT id, role FROM users
+          WHERE lower(email) = lower($1) OR phone = $1 OR lower(username) = lower($1)
+          LIMIT 1`,
+        [input.sponsor],
+      );
+      const sponsor = sp.rows[0];
+      if (!sponsor || (RANK[sponsor.role] ?? 0) <= (RANK[input.role] ?? 0)) {
+        throw ApiError.badRequest('Invalid sponsor code for the selected role');
+      }
+      parentId = sponsor.id;
+    }
+
+    // New members join with KYC pending; they can log in and complete KYC, but
+    // transacting stays gated until verified. Admin reviews the requested role.
     const { rows } = await client.query<UserRow>(
-      `INSERT INTO users (full_name, email, phone, username, password_hash)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO users (full_name, email, phone, username, password_hash, role, parent_id, kyc_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
        RETURNING ${PUBLIC_COLUMNS}`,
-      [input.full_name, input.email, input.phone, input.username ?? null, password_hash],
+      [input.full_name, input.email, input.phone, input.username ?? null, password_hash, input.role, parentId],
     );
     const user = rows[0];
 
@@ -86,7 +106,48 @@ export async function signup(input: SignupInput) {
   });
 }
 
-export async function login(input: LoginInput) {
+/** Convert an IPv4 string to a 32-bit integer, or null if not IPv4. */
+function ipv4ToInt(ip: string): number | null {
+  const m = ip.replace(/^::ffff:/, '').match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return null;
+  const parts = m.slice(1).map(Number);
+  if (parts.some((p) => p > 255)) return null;
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
+/** True if `ip` matches an allowlist entry (exact IP, or IPv4 CIDR like 1.2.3.0/24). */
+function ipMatches(ip: string, entry: string): boolean {
+  const norm = (s: string) => s.replace(/^::ffff:/, '').trim();
+  const target = norm(ip);
+  const e = entry.trim();
+  if (!e) return false;
+  if (!e.includes('/')) return norm(e) === target;
+  const [base, bitsStr] = e.split('/');
+  const bits = Number(bitsStr);
+  const ipInt = ipv4ToInt(target);
+  const baseInt = ipv4ToInt(base);
+  if (ipInt == null || baseInt == null || !Number.isInteger(bits) || bits < 0 || bits > 32) return false;
+  if (bits === 0) return true;
+  const mask = (0xffffffff << (32 - bits)) >>> 0;
+  return (ipInt & mask) === (baseInt & mask);
+}
+
+/** Refuse admin login when an IP allowlist is configured and the caller is not on it. */
+async function enforceAdminIpAllowlist(clientIp?: string): Promise<void> {
+  const { rows } = await query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = 'security_admin_ip_allowlist'",
+  );
+  const raw = (rows[0]?.value ?? '').trim();
+  if (!raw) return; // allowlist disabled
+  const entries = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  const ip = clientIp ?? '';
+  if (!ip || !entries.some((entry) => ipMatches(ip, entry))) {
+    logger.warn({ clientIp: ip }, 'admin login refused: IP not in allowlist');
+    throw ApiError.forbidden('Admin login is not permitted from this network');
+  }
+}
+
+export async function login(input: LoginInput, clientIp?: string) {
   const { rows } = await query<UserRow>(
     `SELECT ${PUBLIC_COLUMNS}, password_hash, mpin_hash
        FROM users
@@ -106,6 +167,14 @@ export async function login(input: LoginInput) {
   }
   if (user.status !== 'active') {
     throw ApiError.forbidden(`Account is ${user.status}`);
+  }
+
+  // Admin IP allowlist: when the super-admin has configured
+  // security_admin_ip_allowlist (comma-separated IPs / CIDRs), admin-role
+  // logins are refused from any other network — genuine protection that a
+  // separate login URL alone cannot give. Empty setting = disabled.
+  if (user.role === 'admin') {
+    await enforceAdminIpAllowlist(clientIp);
   }
 
   // MPIN second factor: when the account has an MPIN, it must be supplied.

@@ -104,6 +104,10 @@ export interface AepsInput {
   aadhaarRef: string;
   bankIin: string;
   mobile?: string;
+  // Biometric capture (forwarded to the switch, never stored):
+  aadhaarNumber?: string; // full 12-digit, only in-flight
+  pidData?: string;       // encrypted PID XML from the RD service
+  biometricType?: string; // FMR | FIR | IIR
 }
 
 export interface CmsPayInput {

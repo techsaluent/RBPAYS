@@ -21,6 +21,13 @@ const State = {
   user: null,
 };
 
+// Super-admin portal: served from a separate URL (e.g. tutipays.com/admin) so
+// the partner/retailer panel and the admin console never share a login page.
+// Detected from the path (…/admin) or an explicit ?portal=admin flag / global.
+const ADMIN_PORTAL = window.ADMIN_PORTAL === true
+  || new URLSearchParams(location.search).get('portal') === 'admin'
+  || /\/admin\/?$/.test(location.pathname);
+
 const MEMBER_ROLES = ['retailer', 'distributor', 'master_distributor'];
 const money = (v) => '₹' + Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -64,6 +71,18 @@ const Auth = {
     if (f.mpin && f.mpin.value.trim()) body.mpin = f.mpin.value.trim();
     try {
       const d = await Api.post('/auth/login', body, false);
+      // Keep the two portals separate: admins only via the admin URL, partners
+      // only via the main panel. Refuse the mismatch and don't keep the session.
+      if (ADMIN_PORTAL && d.user.role !== 'admin') {
+        Auth.wipe();
+        UI.authMsg('This is the administrator console. Partners, please log in at the main panel.', 'err');
+        return false;
+      }
+      if (!ADMIN_PORTAL && d.user.role === 'admin') {
+        Auth.wipe();
+        UI.authMsg('Administrators must sign in through the admin console (separate URL).', 'err');
+        return false;
+      }
       Auth.save(d); await App.boot();
     } catch (err) {
       if (err.code === 'mpin_required') {
@@ -94,8 +113,9 @@ const Auth = {
     e.preventDefault();
     const f = e.target;
     const body = { full_name: f.full_name.value.trim(), email: f.email.value.trim(),
-      phone: f.phone.value.trim(), password: f.password.value };
+      phone: f.phone.value.trim(), password: f.password.value, role: f.role.value };
     if (f.username.value.trim()) body.username = f.username.value.trim();
+    if (f.sponsor.value.trim()) body.sponsor = f.sponsor.value.trim();
     try {
       const d = await Api.post('/auth/signup', body, false);
       Auth.save(d); await App.boot();
@@ -112,6 +132,11 @@ const Auth = {
       const d = await Api.post('/auth/refresh', { refresh_token: State.refresh }, false);
       Auth.save(d); return true;
     } catch { Auth.logout(); return false; }
+  },
+  // Clear any stored session without touching the (already-visible) auth screen.
+  wipe() {
+    State.token = State.refresh = ''; State.user = null;
+    localStorage.removeItem('rb_token'); localStorage.removeItem('rb_refresh');
   },
   logout() {
     State.token = State.refresh = ''; State.user = null;
@@ -212,6 +237,14 @@ const App = {
     try {
       if (!State.user) { const me = await Api.get('/auth/me'); State.user = me.user; }
     } catch { return Auth.logout(); }
+    // Enforce the portal/role split on a restored session too.
+    if ((ADMIN_PORTAL && State.user.role !== 'admin') || (!ADMIN_PORTAL && State.user.role === 'admin')) {
+      Auth.wipe();
+      UI.authMsg(ADMIN_PORTAL
+        ? 'This is the administrator console. Partners, please log in at the main panel.'
+        : 'Administrators must sign in through the admin console (separate URL).', 'err');
+      return;
+    }
     App.applyBranding();
     $('auth').style.display = 'none'; $('app').style.display = 'grid';
     $('who-name').textContent = State.user.full_name;
@@ -792,6 +825,8 @@ const Screens = {
         <h2 class="mt">Security policy</h2>
         <div class="field"><label><input type="checkbox" id="ws_security_require_txn_mpin" ${s.security_require_txn_mpin==='true'?'checked':''}> Require MPIN to confirm every transaction</label></div>
         <p class="muted">When on, retailers must enter their MPIN (set in Security) to complete each money transaction. They'll be prompted automatically.</p>
+        ${field('security_admin_ip_allowlist','Admin login IP allowlist','1.2.3.4, 10.0.0.0/24 — blank = any')}
+        <p class="muted">Restrict super-admin logins to these IPs/CIDRs (comma-separated). Leave blank to allow admin login from anywhere. The admin portal lives at a separate URL (<code>/admin</code>); this allowlist is the real lock behind it.</p>
         <button class="btn mt" onclick="Actions.saveSite()">Save branding</button></div>
       <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Custom pages</h2>
         <button class="btn sm" onclick="Actions.editPage()">+ New page</button></div>
@@ -861,14 +896,14 @@ const SERVICES = [
   { key: 'cms', label: 'CMS (cash collection)', path: '/cms/pay', fields: [
     ['agent_id', 'Agent / company ID', 'text'], ['account_number', 'Account number', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ agent_id: v.agent_id, account_number: v.account_number, amount: +v.amount }) },
-  { key: 'aeps', label: 'AEPS cash withdrawal', path: '/aeps/cash-withdrawal', fields: [
-    ['aadhaar_ref', 'Aadhaar (masked ref)', 'text'], ['bank_iin', 'Bank IIN', 'text'], ['amount', 'Amount', 'number'] ],
-    build: v => ({ aadhaar_ref: v.aadhaar_ref, bank_iin: v.bank_iin, amount: +v.amount }) },
+  { key: 'aeps', label: 'AEPS cash withdrawal', path: '/aeps/cash-withdrawal', biometric: true, fields: [
+    ['aadhaar', 'Aadhaar number (12 digit)', 'text'], ['bank_iin', 'Bank IIN', 'text'], ['amount', 'Amount', 'number'] ],
+    build: v => ({ aadhaar: v.aadhaar, bank_iin: v.bank_iin, amount: +v.amount }) },
   { key: 'matm', label: 'Micro ATM', path: '/matm/withdrawal', fields: [['amount', 'Amount', 'number']],
     build: v => ({ amount: +v.amount }) },
-  { key: 'aadhaar_pay', label: 'Aadhaar Pay', path: '/aadhaar-pay', fields: [
-    ['aadhaar_ref', 'Aadhaar (masked ref)', 'text'], ['bank_iin', 'Bank IIN', 'text'], ['amount', 'Amount', 'number'] ],
-    build: v => ({ aadhaar_ref: v.aadhaar_ref, bank_iin: v.bank_iin, amount: +v.amount }) },
+  { key: 'aadhaar_pay', label: 'Aadhaar Pay', path: '/aadhaar-pay', biometric: true, fields: [
+    ['aadhaar', 'Aadhaar number (12 digit)', 'text'], ['bank_iin', 'Bank IIN', 'text'], ['amount', 'Amount', 'number'] ],
+    build: v => ({ aadhaar: v.aadhaar, bank_iin: v.bank_iin, amount: +v.amount }) },
   { key: 'pan_card', label: 'PAN Card', path: '/pan-card/apply', fields: [
     ['applicant_name', 'Applicant name', 'text'], ['amount', 'Fee', 'number'] ],
     build: v => ({ applicant_name: v.applicant_name, amount: +v.amount }) },
@@ -891,15 +926,39 @@ const SERVICES = [
 
 // ---------------- Actions (buttons/forms) ----------------
 const Actions = {
+  _bio: null,
   svcFields() {
     const s = SERVICES.find(x => x.key === $('svc').value);
-    $('svc-fields').innerHTML = s.fields.map(([n, label, type]) =>
+    Actions._bio = null;
+    let html = s.fields.map(([n, label, type]) =>
       `<div class="field"><label>${label}</label><input name="${n}" type="${type}" ${type==='number'?'step=0.01 min=0':''} /></div>`).join('');
+    if (s.biometric) {
+      html += `<div class="field"><label>Customer biometric (RD device)</label>
+        <div class="row" style="gap:8px;align-items:center">
+          <select id="bio_type" style="max-width:150px"><option value="FMR">Fingerprint</option><option value="IIR">Iris</option></select>
+          <button type="button" class="btn sm" onclick="Actions.scanBiometric()">🖐 Scan &amp; capture</button>
+        </div>
+        <div id="bio-status" class="muted" style="margin-top:6px">Not captured. Plug in a UIDAI RD device and click Scan. (Sandbox provider accepts a submit without a device.)</div></div>`;
+    }
+    $('svc-fields').innerHTML = html;
+  },
+  async scanBiometric() {
+    const type = $('bio_type').value;
+    $('bio-status').innerHTML = '<span class="muted">Scanning… place the finger / eye on the device.</span>';
+    try {
+      const r = await RDService.capture(type);
+      Actions._bio = r;
+      $('bio-status').innerHTML = `<span style="color:#137333">✔ Captured (${esc(type)})${r.rd_service ? ' · ' + esc(r.rd_service) : ''}</span>`;
+    } catch (err) {
+      Actions._bio = null;
+      $('bio-status').innerHTML = `<span style="color:#c5221f">${esc(err.message)}</span>`;
+    }
   },
   async submitTxn(mpin) {
     const s = SERVICES.find(x => x.key === $('svc').value);
     const v = {}; s.fields.forEach(([n]) => v[n] = document.querySelector(`#svc-fields [name="${n}"]`).value.trim());
     const body = s.build(v);
+    if (s.biometric && Actions._bio) Object.assign(body, Actions._bio);
     if (mpin) body.mpin = mpin;
     $('txn-result').innerHTML = '<span class="muted">Processing…</span>';
     try {
@@ -1086,7 +1145,7 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','company_pan','company_gst','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','company_pan','company_gst','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     try { await Api.put('/admin/site/settings', { values }); UI.toast('Branding saved'); App.applyBranding(); App.route(); }
@@ -1277,6 +1336,17 @@ async function sha256hex(str) {
 }
 
 // ---------------- start ----------------
+// Admin console chrome: no public sign-up, distinct heading, no marketing poster.
+if (ADMIN_PORTAL) {
+  document.title = 'TutiPays — Admin Console';
+  const tabSignup = $('tab-signup'); if (tabSignup) tabSignup.style.display = 'none';
+  const tabLogin = $('tab-login'); if (tabLogin) tabLogin.style.display = 'none';
+  const poster = $('auth-poster'); if (poster) poster.style.display = 'none';
+  const brand = document.querySelector('#auth .brand');
+  if (brand) brand.innerHTML = 'TutiPays <small>Super Admin Console — authorised staff only</small>';
+  const wrap = document.querySelector('#auth .auth-wrap'); if (wrap) wrap.style.gridTemplateColumns = '1fr';
+  const card = document.querySelector('#auth .auth-card'); if (card) card.style.margin = '0 auto';
+}
 App.applyBranding();
 if (State.token) App.boot();
-else UI.authTab(new URLSearchParams(location.search).has('signup') ? 'signup' : 'login');
+else UI.authTab(ADMIN_PORTAL ? 'login' : (new URLSearchParams(location.search).has('signup') ? 'signup' : 'login'));

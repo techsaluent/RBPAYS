@@ -7,6 +7,10 @@ export const usernameSchema = z
   .toLowerCase()
   .regex(/^[a-z][a-z0-9._-]{2,29}$/, 'Username must be 3-30 chars, start with a letter (a-z, 0-9, . _ -)');
 
+// Self-registration roles a prospect may apply for. Admin/agent are never
+// self-assignable — staff accounts are created internally.
+export const signupRoleSchema = z.enum(['retailer', 'distributor', 'master_distributor']);
+
 export const signupSchema = z.object({
   full_name: z.string().trim().min(2).max(120),
   username: usernameSchema.optional(),
@@ -19,6 +23,11 @@ export const signupSchema = z.object({
     .string()
     .min(8, 'Password must be at least 8 characters')
     .max(128),
+  // Which network post the applicant is signing up for. Defaults to retailer.
+  role: signupRoleSchema.default('retailer'),
+  // Optional upline: the sponsor's username, email or phone. When it resolves
+  // to a higher-ranked member, the new account is linked under them.
+  sponsor: z.string().trim().max(120).optional(),
 });
 
 export const loginSchema = z.object({

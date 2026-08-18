@@ -8,7 +8,7 @@ export async function signup(req: Request, res: Response): Promise<void> {
 }
 
 export async function login(req: Request, res: Response): Promise<void> {
-  const result = await authService.login(req.body);
+  const result = await authService.login(req.body, req.ip);
   res.status(200).json(result);
 }
 
