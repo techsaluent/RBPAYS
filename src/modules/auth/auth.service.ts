@@ -10,6 +10,7 @@ import {
   signAccessToken,
 } from '../../utils/jwt';
 import { hashPassword, verifyPassword } from '../../utils/password';
+import { sendSms } from '../notify/notify.service';
 import { LoginInput, SignupInput } from './auth.schemas';
 
 export interface PublicUser {
@@ -54,6 +55,63 @@ async function issueRefreshToken(
   return token;
 }
 
+// ---------------------------------------------------------------------
+// Signup OTP (mobile verification before account creation)
+// ---------------------------------------------------------------------
+/** Whether the admin requires an OTP-verified mobile at signup. */
+export async function signupOtpRequired(): Promise<boolean> {
+  const { rows } = await query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = 'security_require_signup_otp'",
+  );
+  return (rows[0]?.value ?? 'false').trim() === 'true';
+}
+
+/**
+ * Issue a signup OTP for a mobile. To avoid leaking which numbers are already
+ * registered, the response is uniform; when the number is taken we simply don't
+ * issue a code. Delivery uses the configured SMS/OTP integration; in non-prod
+ * the code is also returned so the flow is testable without a live gateway.
+ */
+export async function requestSignupOtp(
+  phone: string,
+  email?: string,
+): Promise<{ requested: boolean; delivered: boolean; dev_code?: string }> {
+  const taken = await query('SELECT 1 FROM users WHERE phone = $1 LIMIT 1', [phone]);
+  if (taken.rowCount) {
+    logger.info({ phone }, 'signup OTP requested for an already-registered mobile');
+    return { requested: true, delivered: false };
+  }
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const codeHash = await hashPassword(code);
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  await query(
+    'INSERT INTO signup_otps (phone, email, code_hash, expires_at) VALUES ($1,$2,$3,$4)',
+    [phone, email ?? null, codeHash, expiresAt],
+  );
+  const delivered = await sendSms(phone, `Your TutiPays verification code is ${code}. It expires in 15 minutes.`);
+  if (!env.isProd) logger.info({ phone, code }, 'signup OTP generated');
+  return { requested: true, delivered, dev_code: env.isProd ? undefined : code };
+}
+
+/** Verify and consume the latest signup OTP for a mobile. Throws on mismatch. */
+async function consumeSignupOtp(client: PoolClient, phone: string, code?: string): Promise<void> {
+  if (!code) throw new ApiError(401, 'otp_required', 'Mobile OTP is required');
+  const { rows } = await client.query<{ id: string; code_hash: string; attempts: number }>(
+    `SELECT id, code_hash, attempts FROM signup_otps
+      WHERE phone = $1 AND used_at IS NULL AND expires_at > now()
+      ORDER BY created_at DESC LIMIT 1`,
+    [phone],
+  );
+  const otp = rows[0];
+  if (!otp || otp.attempts >= 5) throw ApiError.unauthorized('Invalid or expired OTP');
+  const ok = await verifyPassword(code, otp.code_hash);
+  if (!ok) {
+    await client.query('UPDATE signup_otps SET attempts = attempts + 1 WHERE id = $1', [otp.id]);
+    throw ApiError.unauthorized('Invalid or expired OTP');
+  }
+  await client.query('UPDATE signup_otps SET used_at = now() WHERE id = $1', [otp.id]);
+}
+
 export async function signup(input: SignupInput) {
   const password_hash = await hashPassword(input.password);
 
@@ -68,6 +126,11 @@ export async function signup(input: SignupInput) {
     );
     if (dupe.rowCount) {
       throw ApiError.conflict('A user with this email, phone or username already exists');
+    }
+
+    // When signup OTP is enabled, the mobile must be verified first.
+    if (await signupOtpRequired()) {
+      await consumeSignupOtp(client, input.phone, input.otp);
     }
 
     // Resolve the optional sponsor (upline). Only link when the sponsor

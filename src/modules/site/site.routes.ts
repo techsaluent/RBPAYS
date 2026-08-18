@@ -10,12 +10,19 @@ import { query } from '../../../db';
  */
 const router = Router();
 
+// Settings that must never be exposed on the public endpoint (they configure
+// security policy, not branding). Everything else is safe to render publicly.
+const PRIVATE_SETTING_KEYS = new Set(['security_admin_ip_allowlist']);
+
 router.get(
   '/settings',
   asyncHandler(async (_req: Request, res: Response) => {
     const { rows } = await query<{ key: string; value: string | null }>('SELECT key, value FROM site_settings');
     const settings: Record<string, string> = {};
-    for (const r of rows) settings[r.key] = r.value ?? '';
+    for (const r of rows) {
+      if (PRIVATE_SETTING_KEYS.has(r.key)) continue;
+      settings[r.key] = r.value ?? '';
+    }
     res.json({ settings });
   }),
 );

@@ -28,6 +28,14 @@ export const signupSchema = z.object({
   // Optional upline: the sponsor's username, email or phone. When it resolves
   // to a higher-ranked member, the new account is linked under them.
   sponsor: z.string().trim().max(120).optional(),
+  // 6-digit mobile OTP; required only when signup OTP is enabled by the admin.
+  otp: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit OTP').optional(),
+});
+
+// Step 1 of OTP signup: request a code for a mobile (email optional).
+export const requestSignupOtpSchema = z.object({
+  phone: z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
+  email: z.string().trim().toLowerCase().email().optional(),
 });
 
 export const loginSchema = z.object({

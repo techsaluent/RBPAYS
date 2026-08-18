@@ -93,6 +93,19 @@ const Auth = {
     }
     return false;
   },
+  async sendSignupOtp() {
+    const f = $('signup-form');
+    const phone = f.phone.value.trim();
+    const msg = $('signup-otp-msg');
+    if (!/^[6-9]\d{9}$/.test(phone)) { msg.innerHTML = '<span style="color:#c5221f">Enter a valid 10-digit mobile first.</span>'; return; }
+    msg.textContent = 'Sending OTP…';
+    try {
+      const r = await Api.post('/auth/signup/request-otp', { phone, email: f.email.value.trim() || undefined }, false);
+      let t = r.delivered ? 'OTP sent to your mobile.' : 'OTP generated. If SMS is not configured, ask the admin for the code.';
+      if (r.dev_code) t += ` (Test code: ${r.dev_code})`;
+      msg.innerHTML = `<span style="color:#137333">${esc(t)}</span>`;
+    } catch (err) { msg.innerHTML = `<span style="color:#c5221f">${esc(err.message)}</span>`; }
+  },
   async forgotPassword() {
     const id = prompt('Enter your registered email, phone or username:');
     if (!id) return false;
@@ -116,6 +129,7 @@ const Auth = {
       phone: f.phone.value.trim(), password: f.password.value, role: f.role.value };
     if (f.username.value.trim()) body.username = f.username.value.trim();
     if (f.sponsor.value.trim()) body.sponsor = f.sponsor.value.trim();
+    if (f.otp && f.otp.value.trim()) body.otp = f.otp.value.trim();
     try {
       const d = await Api.post('/auth/signup', body, false);
       Auth.save(d); await App.boot();
@@ -211,6 +225,10 @@ const App = {
       if (!r.ok) return;
       const { settings: s } = await r.json();
       if (!s) return;
+      App._site = s;
+      // Reveal the mobile-OTP step on sign-up when the admin requires it.
+      const otpBox = document.getElementById('signup-otp');
+      if (otpBox) otpBox.classList.toggle('hidden', s.security_require_signup_otp !== 'true');
       if (s.primary_color) document.documentElement.style.setProperty('--brand', s.primary_color);
       const brand = s.brand_name || 'TutiPays';
       document.querySelectorAll('.brand').forEach(el => {
@@ -825,6 +843,8 @@ const Screens = {
         <h2 class="mt">Security policy</h2>
         <div class="field"><label><input type="checkbox" id="ws_security_require_txn_mpin" ${s.security_require_txn_mpin==='true'?'checked':''}> Require MPIN to confirm every transaction</label></div>
         <p class="muted">When on, retailers must enter their MPIN (set in Security) to complete each money transaction. They'll be prompted automatically.</p>
+        <div class="field"><label><input type="checkbox" id="ws_security_require_signup_otp" ${s.security_require_signup_otp==='true'?'checked':''}> Require mobile OTP verification at sign-up</label></div>
+        <p class="muted">When on, new users must verify their mobile with an OTP before their account is created. Configure the SMS/OTP gateway in <b>Integrations</b> first.</p>
         ${field('security_admin_ip_allowlist','Admin login IP allowlist','1.2.3.4, 10.0.0.0/24 — blank = any')}
         <p class="muted">Restrict super-admin logins to these IPs/CIDRs (comma-separated). Leave blank to allow admin login from anywhere. The admin portal lives at a separate URL (<code>/admin</code>); this allowlist is the real lock behind it.</p>
         <button class="btn mt" onclick="Actions.saveSite()">Save branding</button></div>
@@ -1148,6 +1168,7 @@ const Actions = {
     const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','company_pan','company_gst','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
+    values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
     try { await Api.put('/admin/site/settings', { values }); UI.toast('Branding saved'); App.applyBranding(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
