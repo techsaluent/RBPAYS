@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <title>TutiPays — Admin Console</title>
+  <!-- Clean admin URL: tutipays.com/admin -> opens the panel in admin-console
+       mode. Served automatically as the /admin directory index (no nginx
+       config needed); the panel itself lives under /panel. -->
+  <script>window.location.replace('/panel/?portal=admin' + location.hash);</script>
+</head>
+<body>
+  <noscript>Enable JavaScript, then open <a href="/panel/?portal=admin">the admin console</a>.</noscript>
+</body>
+</html>

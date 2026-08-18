@@ -81,7 +81,8 @@ const Auth = {
       }
       if (!ADMIN_PORTAL && isConsole) {
         Auth.wipe();
-        UI.authMsg('Administrators and staff must sign in through the admin console (separate URL).', 'err');
+        $('auth-msg').innerHTML = `<div class="msg err">Administrators &amp; staff sign in at the admin console.
+          <a href="admin.html" style="font-weight:600;text-decoration:underline">Open admin console →</a></div>`;
         return false;
       }
       Auth.save(d); await App.boot();
@@ -283,9 +284,12 @@ const App = {
     const isConsole = State.user.role === 'admin' || State.user.role === 'staff';
     if ((ADMIN_PORTAL && !isConsole) || (!ADMIN_PORTAL && isConsole)) {
       Auth.wipe();
-      UI.authMsg(ADMIN_PORTAL
-        ? 'This is the administrator console. Partners, please log in at the main panel.'
-        : 'Administrators and staff must sign in through the admin console (separate URL).', 'err');
+      if (ADMIN_PORTAL) {
+        UI.authMsg('This is the administrator console. Partners, please log in at the main panel.', 'err');
+      } else {
+        $('auth-msg').innerHTML = `<div class="msg err">Administrators &amp; staff sign in at the admin console.
+          <a href="admin.html" style="font-weight:600;text-decoration:underline">Open admin console →</a></div>`;
+      }
       return;
     }
     App.applyBranding();
