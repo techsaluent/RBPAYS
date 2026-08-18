@@ -75,6 +75,7 @@ export function permissionForPath(path: string, method: string): string | null |
   if (/^\/treasury\b/.test(path)) return 'payouts.manage';
   if (/^\/recon\b/.test(path)) return 'recon.manage';
   if (/^\/adjustments\b/.test(path)) return 'recon.manage';
+  if (/^\/transactions\b/.test(path)) return 'recon.manage'; // refund / resolve / ops list
 
   if (/^\/site\b/.test(path)) return 'website.manage';
   if (/^\/integrations\b/.test(path)) return 'integrations.manage';
@@ -83,6 +84,7 @@ export function permissionForPath(path: string, method: string): string | null |
 
   if (/^\/bank-accounts\b/.test(path)) return 'topup.manage';
   if (/^\/topups\b/.test(path)) return 'topup.manage';
+  if (/^\/withdrawals\b/.test(path)) return 'payouts.manage';
 
   return 'DENY';
 }

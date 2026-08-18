@@ -9,6 +9,8 @@ import { rupeesToPaise } from '../../utils/money';
 import { getWalletByUser, listLedger, credit } from './wallet.service';
 import { subBalances, debitSub } from './subwallet.service';
 import { postJournal } from '../_shared/ledger';
+import { requestWithdrawal } from '../withdrawal/withdrawal.service';
+import { query } from '../../../db';
 
 const router = Router();
 router.use(requireAuth);
@@ -61,6 +63,46 @@ router.post(
       return newMain;
     });
     res.json({ main_balance_paise: result });
+  }),
+);
+
+// ---- Wallet withdrawal to bank (agent cash-out) ----
+const withdrawSchema = z.object({
+  amount: z.coerce.number().positive().max(2_000_000),
+  account_name: z.string().trim().min(2).max(120),
+  account_number: z.string().trim().regex(/^\d{6,20}$/, 'Invalid account number'),
+  ifsc: z.string().trim().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC'),
+  mode: z.enum(['IMPS', 'NEFT', 'RTGS']).default('IMPS'),
+});
+
+router.post(
+  '/withdraw',
+  validate(withdrawSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof withdrawSchema>;
+    const w = await requestWithdrawal(req.user.id, {
+      amountPaise: rupeesToPaise(b.amount),
+      accountName: b.account_name,
+      accountNumber: b.account_number,
+      ifsc: b.ifsc.toUpperCase(),
+      mode: b.mode,
+    });
+    res.status(201).json({ withdrawal: w });
+  }),
+);
+
+router.get(
+  '/withdrawals',
+  validate(pageSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { limit, offset } = req.query as unknown as { limit: number; offset: number };
+    const { rows } = await query(
+      'SELECT * FROM wallet_withdrawals WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+      [req.user.id, limit, offset],
+    );
+    res.json({ items: rows, limit, offset });
   }),
 );
 
