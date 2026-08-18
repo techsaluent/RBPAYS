@@ -206,6 +206,7 @@ const NAV = [
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
+  { key: 'profile', label: 'Profile', roles: '*' },
   { key: 'security', label: 'Security', roles: '*' },
   // Admin console — grouped into sidebar sections; each maps to a staff permission.
   { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
@@ -454,6 +455,24 @@ const Screens = {
           <a class="btn sm ghost" href="#/wallet">Wallets &amp; sweep</a> &nbsp;
           <a class="btn sm ghost" href="#/txns">View transactions</a></div>`;
     }
+  },
+
+  // My profile: name / email / phone (company details for admin live in Website).
+  async profile() {
+    const u = State.user;
+    const companyNote = u.role === 'admin'
+      ? `<div class="panel mt" style="max-width:520px"><h2>Company details</h2>
+          <p class="muted">Your legal name, address and contacts shown on the site &amp; receipts are managed under <a href="#/website">Website settings</a>.</p></div>`
+      : '';
+    $('view').innerHTML = `
+      <div class="panel" style="max-width:520px"><h2>My profile</h2>
+        <div class="field"><label>${u.role === 'admin' ? 'Company / display name' : 'Full name'}</label><input id="pf_name" value="${esc(u.full_name||'')}"></div>
+        <div class="field"><label>Email</label><input id="pf_email" type="email" value="${esc(u.email||'')}"></div>
+        <div class="field"><label>Mobile (10 digit)</label><input id="pf_phone" value="${esc(u.phone||'')}"></div>
+        <div class="field"><label>Role</label><input value="${esc((u.role||'').replace(/_/g,' '))}" disabled></div>
+        ${u.username ? `<div class="field"><label>Username</label><input value="${esc(u.username)}" disabled></div>` : ''}
+        <button class="btn" onclick="Actions.saveProfile()">Save profile</button></div>
+      ${companyNote}`;
   },
 
   // Account security: change password, set/remove login MPIN.
@@ -1391,6 +1410,19 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   presetSvc(key) { Actions._preset = key; },
+  async saveProfile() {
+    const body = {};
+    if (val('pf_name')) body.full_name = val('pf_name');
+    if (val('pf_email')) body.email = val('pf_email');
+    if (val('pf_phone')) body.phone = val('pf_phone');
+    try {
+      const d = await Api.patch('/auth/me', body);
+      // Refresh cached user + the header name.
+      State.user = { ...State.user, ...d.user };
+      $('who-name').textContent = State.user.full_name;
+      UI.toast('Profile updated'); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
   async changePassword() {
     const body = { current_password: val('cp_cur'), new_password: val('cp_new') };
     if (body.new_password.length < 8) return UI.toast('New password must be at least 8 characters', 'err');

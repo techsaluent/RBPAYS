@@ -58,6 +58,12 @@ export const resetPasswordSchema = z.object({
   new_password: z.string().min(8).max(128),
 });
 
+export const updateProfileSchema = z.object({
+  full_name: z.string().trim().min(2).max(120).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
+  phone: z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit mobile').optional(),
+}).refine((v) => v.full_name || v.email || v.phone, { message: 'Nothing to update' });
+
 export const changePasswordSchema = z.object({
   current_password: z.string().min(1),
   new_password: z.string().min(8).max(128),

@@ -3,6 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
   <title>TutiPays Panel</title>
   <style>
     :root {
@@ -189,8 +191,15 @@
   </div>
 
   <div id="modal-root"></div>
-  <script src="charts.js"></script>
-  <script src="rdservice.js"></script>
-  <script src="app.js"></script>
+  <!-- Cache-busting loader: always pull the latest panel assets after a deploy,
+       so the UI is never stale. Order is preserved by sequential document.write. -->
+  <script>
+    (function () {
+      var v = Date.now();
+      ['charts.js', 'rdservice.js', 'app.js'].forEach(function (s) {
+        document.write('<script src="' + s + '?v=' + v + '"><\/script>');
+      });
+    })();
+  </script>
 </body>
 </html>

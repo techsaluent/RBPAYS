@@ -269,6 +269,35 @@ async function verifyCurrentPassword(userId: string, currentPassword: string): P
   }
 }
 
+/** Update the signed-in user's own profile (name / email / phone). */
+export async function updateProfile(
+  userId: string,
+  input: { full_name?: string; email?: string; phone?: string },
+) {
+  if (input.email || input.phone) {
+    const dupe = await query(
+      `SELECT 1 FROM users
+        WHERE id <> $1
+          AND (($2::text IS NOT NULL AND lower(email) = lower($2))
+            OR ($3::text IS NOT NULL AND phone = $3))
+        LIMIT 1`,
+      [userId, input.email ?? null, input.phone ?? null],
+    );
+    if (dupe.rowCount) throw ApiError.conflict('That email or phone is already in use');
+  }
+  const { rows } = await query<UserRow>(
+    `UPDATE users SET
+        full_name = COALESCE($2, full_name),
+        email = COALESCE($3, email),
+        phone = COALESCE($4, phone)
+      WHERE id = $1
+      RETURNING ${PUBLIC_COLUMNS}`,
+    [userId, input.full_name ?? null, input.email ?? null, input.phone ?? null],
+  );
+  if (!rows[0]) throw ApiError.notFound('User not found');
+  return rows[0];
+}
+
 export async function changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
   await verifyCurrentPassword(userId, currentPassword);
   const hash = await hashPassword(newPassword);

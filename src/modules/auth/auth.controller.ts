@@ -28,6 +28,12 @@ export async function logout(req: Request, res: Response): Promise<void> {
   res.status(204).send();
 }
 
+export async function updateMe(req: Request, res: Response): Promise<void> {
+  if (!req.user) throw ApiError.unauthorized();
+  const user = await authService.updateProfile(req.user.id, req.body);
+  res.status(200).json({ user });
+}
+
 export async function me(req: Request, res: Response): Promise<void> {
   if (!req.user) throw ApiError.unauthorized();
   const user = await authService.getUserById(req.user.id);
