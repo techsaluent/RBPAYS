@@ -198,6 +198,8 @@ const NETWORK_ROLES = ['retailer', 'user', 'distributor', 'master_distributor'];
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', roles: '*' },
   { key: 'new', label: 'New Transaction', roles: TXN_ROLES },
+  { key: 'beneficiaries', label: 'Beneficiaries', roles: TXN_ROLES },
+  { key: 'devices', label: 'My Devices', roles: TXN_ROLES },
   { key: 'wallet', label: 'Wallet', roles: NETWORK_ROLES },
   { key: 'addmoney', label: 'Add Money', roles: NETWORK_ROLES },
   { key: 'txns', label: 'Transactions', roles: NETWORK_ROLES },
@@ -205,24 +207,24 @@ const NAV = [
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
   { key: 'security', label: 'Security', roles: '*' },
-  // Admin console — each item maps to a staff permission (super admin sees all).
-  { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view' },
-  { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review' },
-  { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage' },
-  { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin', 'staff'], perm: 'topup.manage' },
-  { key: 'plans', label: 'Commission', roles: ['admin', 'staff'], perm: 'commission.manage' },
-  { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage' },
-  { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage' },
-  { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage' },
-  { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage' },
-  { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin', 'staff'], perm: 'tax.manage' },
-  { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage' },
-  { key: 'recon', label: 'Reconciliation', roles: ['admin', 'staff'], perm: 'recon.manage' },
-  { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin', 'staff'], perm: 'payouts.manage' },
-  { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage' },
-  { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view' },
-  { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view' },
-  { key: 'staff', label: 'Staff & Roles', roles: ['admin'] },
+  // Admin console — grouped into sidebar sections; each maps to a staff permission.
+  { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
+  { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review', section: 'Users & KYC' },
+  { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
+  { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
+  { key: 'plans', label: 'Commission', roles: ['admin', 'staff'], perm: 'commission.manage', section: 'Finance' },
+  { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin', 'staff'], perm: 'tax.manage', section: 'Finance' },
+  { key: 'recon', label: 'Reconciliation', roles: ['admin', 'staff'], perm: 'recon.manage', section: 'Finance' },
+  { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
+  { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
+  { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
+  { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
+  { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
+  { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
+  { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
+  { key: 'staff', label: 'Staff & Roles', roles: ['admin'], section: 'Settings' },
 ];
 // Super admin sees everything; staff see console items only for permissions they hold.
 function hasPerm(p) {
@@ -288,8 +290,14 @@ const App = {
     $('auth').style.display = 'none'; $('app').style.display = 'grid';
     $('who-name').textContent = State.user.full_name;
     $('who-role').textContent = State.user.role.replace(/_/g, ' ');
-    $('nav').innerHTML = NAV.filter(allowed)
-      .map(i => `<a href="#/${i.key}" data-k="${i.key}">${i.label}</a>`).join('');
+    // Render nav, inserting a section header whenever the group changes.
+    let lastSection = null;
+    $('nav').innerHTML = NAV.filter(allowed).map(i => {
+      let head = '';
+      if (i.section && i.section !== lastSection) { head = `<div class="nav-sec">${esc(i.section)}</div>`; lastSection = i.section; }
+      else if (!i.section) lastSection = null;
+      return `${head}<a href="#/${i.key}" data-k="${i.key}">${i.label}</a>`;
+    }).join('');
     await App.refreshWallet();
     window.onhashchange = App.route;
     if (!location.hash) location.hash = '#/dashboard';
@@ -505,7 +513,10 @@ const Screens = {
     $('view').innerHTML = `
       <div class="grid cards">
         <div class="card"><div class="k">Main wallet</div><div class="v">${money(w.wallet.balance)}</div>
+          ${w.wallet.held_paise ? `<div class="muted" style="font-size:12px;margin-top:4px">Available <b>${money(w.wallet.available)}</b> · 🔒 blocked ${money(w.wallet.held)}</div>` : ''}
           <a class="btn sm ghost" href="#/addmoney">Add money</a></div>
+        ${w.wallet.held_paise ? `<div class="card"><div class="k">Blocked (lien)</div><div class="v" style="color:var(--warn)">${money(w.wallet.held)}</div>
+          <div class="muted" style="font-size:12px">Held by admin — can't be spent</div></div>` : ''}
         <div class="card"><div class="k">AePS settlement</div><div class="v">${money(sw.settlement)}</div>
           ${sw.settlement_paise > 0 ? `<button class="btn sm" onclick="Actions.sweep('settlement',${sw.settlement_paise/100})">Sweep to main</button>` : ''}</div>
         <div class="card"><div class="k">Commission (net of TDS)</div><div class="v">${money(sw.commission)}</div>
@@ -638,6 +649,33 @@ const Screens = {
         <tbody>${erows || '<tr><td colspan=4 class=muted>None yet</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Retailer: saved DMT/payout beneficiaries.
+  async beneficiaries() {
+    const d = await Api.get('/beneficiaries');
+    const rows = (d.items || []).map(b => `<tr>
+      <td>${esc(b.name)}</td><td>${esc(b.account_number)}</td><td>${esc(b.ifsc)}</td><td>${esc(b.bank_name||'')}</td>
+      <td><button class="btn sm ghost" onclick="Actions.delBeneficiary('${b.id}')">Delete</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between"><h2>Saved beneficiaries</h2>
+      <button class="btn sm" onclick="Actions.addBeneficiary()">+ Add beneficiary</button></div>
+      <p class="muted">Save payees once, then pick them on the DMT / payout screen.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Account</th><th>IFSC</th><th>Bank</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No saved beneficiaries yet.</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Retailer: bound biometric / AEPS devices.
+  async devices() {
+    const d = await Api.get('/onboarding/devices');
+    const rows = (d.items || []).map(v => `<tr>
+      <td>${esc(v.label||'Device')}</td><td class="muted">${esc(v.device_uuid)}</td>
+      <td>${esc(v.imei||'')}</td><td>${v.is_active ? UI.statusTag('active') : '<span class="tag">inactive</span>'}</td>
+      <td class="muted">${v.bound_at ? new Date(v.bound_at).toLocaleDateString('en-IN') : ''}</td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between"><h2>My devices</h2>
+      <button class="btn sm" onclick="Actions.bindDevice()">+ Bind device</button></div>
+      <p class="muted">Register the biometric scanner / mobile you use for AEPS so transactions are tied to a known device.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Label</th><th>Device ID</th><th>IMEI</th><th>Status</th><th>Bound</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No devices bound yet.</td></tr>'}</tbody></table></div></div>`;
+  },
+
   // Super admin: staff team + scoped permissions.
   async staff() {
     const [cat, list] = await Promise.all([Api.get('/staff/catalog'), Api.get('/staff')]);
@@ -671,7 +709,8 @@ const Screens = {
           ? `<button class="btn sm ghost" onclick="Actions.setStatus('${u.id}','suspended')">Suspend</button>`
           : `<button class="btn sm" onclick="Actions.setStatus('${u.id}','active')">Activate</button>`}
         <button class="btn sm ghost" onclick="Actions.resetUserPw('${u.id}','${esc(u.full_name)}')">Reset PW</button>
-        ${u.role !== 'admin' ? `<button class="btn sm ghost" onclick="Actions.assessOnb('${u.id}')">Score</button>
+        ${u.role !== 'admin' ? `<button class="btn sm ghost" onclick="Actions.holds('${u.id}','${esc(u.full_name)}')">Lien</button>
+        <button class="btn sm ghost" onclick="Actions.assessOnb('${u.id}')">Score</button>
         <button class="btn sm ghost" onclick="Actions.promote('${u.id}')">Promote</button>` : ''}
       </td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
@@ -761,7 +800,15 @@ const Screens = {
 
   // Admin: double-entry journal audit view.
   async ledger() {
-    const d = await Api.get('/admin/ledger/journal?limit=40');
+    const [d, acc] = await Promise.all([
+      Api.get('/admin/ledger/journal?limit=40'),
+      Api.get('/admin/ledger/accounts').catch(() => ({ items: [] })),
+    ]);
+    const accRows = (acc.items || []).map(a => `<tr><td>${esc(a.code)}</td><td>${esc(a.name||'')}</td>
+      <td class="muted">${esc(a.type||'')}</td><td class="muted">${esc(a.normal_balance||'')}${a.per_member?' · per-member':''}</td></tr>`).join('');
+    const accBlock = accRows ? `<div class="panel mt"><h2>Chart of accounts</h2><div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Normal side</th></tr></thead>
+      <tbody>${accRows}</tbody></table></div></div>` : '';
     const blocks = d.items.map(e => {
       const lines = e.lines.map(l => `<tr>
         <td>${l.direction === 'debit' ? 'DR' : '&nbsp;&nbsp;CR'}</td>
@@ -775,7 +822,7 @@ const Screens = {
         <tbody>${lines}</tbody></table></div></div>`;
     }).join('');
     $('view').innerHTML = `<div class="panel"><h2>Double-entry ledger</h2>
-      <p class="muted">Immutable journal — every entry has equal debits and credits.</p></div>${blocks || '<div class="panel muted">No journal entries yet</div>'}`;
+      <p class="muted">Immutable journal — every entry has equal debits and credits.</p></div>${accBlock}${blocks || '<div class="panel muted">No journal entries yet</div>'}`;
   },
 
   // Admin: TDS (194H/194N) + GST desk.
@@ -1016,39 +1063,39 @@ const SERVICES = [
   { key: 'bbps', label: 'BBPS (bill pay)', path: '/bbps/pay', provider: true, fields: [
     ['biller_id', 'Biller ID', 'text'], ['consumer_number', 'Consumer number', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ biller_id: v.biller_id, consumer_number: v.consumer_number, amount: +v.amount }) },
-  { key: 'payout', label: 'Payout', path: '/payout', fields: [
+  { key: 'payout', label: 'Payout', path: '/payout', provider: true, fields: [
     ['beneficiary_name', 'Beneficiary name', 'text'], ['account_number', 'Account number', 'text'],
     ['ifsc', 'IFSC', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ beneficiary_name: v.beneficiary_name, account_number: v.account_number, ifsc: v.ifsc.toUpperCase(), amount: +v.amount, mode: 'IMPS' }) },
-  { key: 'upi', label: 'UPI payout', path: '/upi/pay', fields: [
+  { key: 'upi', label: 'UPI payout', path: '/upi/pay', provider: true, fields: [
     ['vpa', 'UPI ID (name@bank)', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ vpa: v.vpa, amount: +v.amount }) },
   { key: 'cms', label: 'CMS (cash collection)', path: '/cms/pay', provider: true, fields: [
     ['agent_id', 'Agent / company ID', 'text'], ['account_number', 'Account number', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ agent_id: v.agent_id, account_number: v.account_number, amount: +v.amount }) },
-  { key: 'aeps', label: 'AEPS cash withdrawal', path: '/aeps/cash-withdrawal', biometric: true, fields: [
+  { key: 'aeps', label: 'AEPS cash withdrawal', path: '/aeps/cash-withdrawal', provider: true, biometric: true, fields: [
     ['aadhaar', 'Aadhaar number (12 digit)', 'text'], ['bank_iin', 'Bank IIN', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ aadhaar: v.aadhaar, bank_iin: v.bank_iin, amount: +v.amount }) },
-  { key: 'matm', label: 'Micro ATM', path: '/matm/withdrawal', fields: [['amount', 'Amount', 'number']],
+  { key: 'matm', label: 'Micro ATM', path: '/matm/withdrawal', provider: true, fields: [['amount', 'Amount', 'number']],
     build: v => ({ amount: +v.amount }) },
-  { key: 'aadhaar_pay', label: 'Aadhaar Pay', path: '/aadhaar-pay', biometric: true, fields: [
+  { key: 'aadhaar_pay', label: 'Aadhaar Pay', path: '/aadhaar-pay', provider: true, biometric: true, fields: [
     ['aadhaar', 'Aadhaar number (12 digit)', 'text'], ['bank_iin', 'Bank IIN', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ aadhaar: v.aadhaar, bank_iin: v.bank_iin, amount: +v.amount }) },
-  { key: 'pan_card', label: 'PAN Card', path: '/pan-card/apply', fields: [
+  { key: 'pan_card', label: 'PAN Card', path: '/pan-card/apply', provider: true, fields: [
     ['applicant_name', 'Applicant name', 'text'], ['amount', 'Fee', 'number'] ],
     build: v => ({ applicant_name: v.applicant_name, amount: +v.amount }) },
-  { key: 'card_swipe', label: 'Card Swipe', path: '/card-swipe', fields: [['amount', 'Amount', 'number']],
+  { key: 'card_swipe', label: 'Card Swipe', path: '/card-swipe', provider: true, fields: [['amount', 'Amount', 'number']],
     build: v => ({ amount: +v.amount, card_type: 'debit' }) },
   { key: 'wallet_transfer', label: 'Wallet transfer (to member)', path: '/wallet-transfer', fields: [
     ['to', 'To (phone / email / username)', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ to: v.to, amount: +v.amount }) },
-  { key: 'travel', label: 'Travel booking', path: '/travel/book', fields: [
+  { key: 'travel', label: 'Travel booking', path: '/travel/book', provider: true, fields: [
     ['booking_type', 'Type (flight/bus/train/hotel)', 'text'], ['operator', 'Operator', 'text'],
     ['from_location', 'From', 'text'], ['to_location', 'To', 'text'],
     ['passenger_name', 'Passenger', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ booking_type: v.booking_type || 'flight', operator: v.operator, from_location: v.from_location,
       to_location: v.to_location, passenger_name: v.passenger_name, amount: +v.amount }) },
-  { key: 'insurance', label: 'Insurance', path: '/insurance/buy', fields: [
+  { key: 'insurance', label: 'Insurance', path: '/insurance/buy', provider: true, fields: [
     ['category', 'Category (motor/health/life/travel)', 'text'], ['insurer', 'Insurer', 'text'],
     ['customer_name', 'Customer', 'text'], ['amount', 'Premium', 'number'] ],
     build: v => ({ category: v.category || 'health', insurer: v.insurer, customer_name: v.customer_name, amount: +v.amount }) },
@@ -1062,7 +1109,8 @@ const Actions = {
     const s = SERVICES.find(x => x.key === $('svc').value);
     Actions._bio = null;
     Actions._provider = null;
-    let html = s.fields.map(([n, label, type, options]) => {
+    // Optional helper UI injected above the fields (saved payees, biller picker).
+    let html = '<div id="svc-enhance"></div>' + s.fields.map(([n, label, type, options]) => {
       if (type === 'select') {
         const opts = (options || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
         return `<div class="field"><label>${label}</label><select name="${n}">${opts}</select></div>`;
@@ -1082,6 +1130,47 @@ const Actions = {
     }
     $('svc-fields').innerHTML = html;
     if (s.provider) Actions.loadProviders(s.key);
+    Actions.enhanceSvc(s.key);
+  },
+  // Wire in extra helpers for specific services (saved payees, BBPS billers).
+  async enhanceSvc(key) {
+    const box = $('svc-enhance'); if (!box) return;
+    if (key === 'dmt') {
+      try {
+        const d = await Api.get('/beneficiaries');
+        const list = d.items || [];
+        const opts = ['<option value="">— pick a saved payee —</option>']
+          .concat(list.map(b => `<option value="${esc(b.id)}" data-n="${esc(b.name)}" data-a="${esc(b.account_number)}" data-i="${esc(b.ifsc)}">${esc(b.name)} · ${esc(b.account_number)}</option>`));
+        box.innerHTML = `<div class="field"><label>Saved beneficiaries</label>
+          <div class="row" style="gap:8px"><select id="ben_pick" onchange="Actions.fillBeneficiary(this)" style="flex:1">${opts.join('')}</select>
+          <a class="btn sm ghost" href="#/beneficiaries">Manage</a></div>
+          <label style="display:flex;gap:6px;align-items:center;margin-top:8px;font-size:12px"><input type="checkbox" id="ben_save"> Save this beneficiary for next time</label></div>`;
+      } catch { box.innerHTML = ''; }
+    } else if (key === 'bbps') {
+      try {
+        const c = await Api.get('/bbps/categories');
+        const cats = (c.items || []).map(x => `<option value="${esc(x.category)}">${esc(x.category)} (${x.billers})</option>`).join('');
+        box.innerHTML = `<div class="field"><label>Biller category</label>
+          <select id="bbps_cat" onchange="Actions.loadBillers(this.value)"><option value="">— select —</option>${cats}</select></div>
+          <div class="field" id="bbps_biller_wrap" style="display:none"><label>Biller</label>
+          <select id="bbps_biller" onchange="document.querySelector('#svc-fields [name=biller_id]').value=this.value"></select></div>`;
+      } catch { box.innerHTML = ''; }
+    } else { box.innerHTML = ''; }
+  },
+  fillBeneficiary(sel) {
+    const o = sel.selectedOptions[0]; if (!o || !o.value) return;
+    const set = (n, v) => { const el = document.querySelector(`#svc-fields [name="${n}"]`); if (el) el.value = v; };
+    set('beneficiary_name', o.dataset.n); set('account_number', o.dataset.a); set('ifsc', o.dataset.i);
+  },
+  async loadBillers(category) {
+    const wrap = $('bbps_biller_wrap'); const sel = $('bbps_biller');
+    if (!category) { wrap.style.display = 'none'; return; }
+    try {
+      const d = await Api.get('/bbps/billers?category=' + encodeURIComponent(category));
+      sel.innerHTML = (d.items || []).map(b => `<option value="${esc(b.biller_id)}">${esc(b.name)}</option>`).join('') || '<option value="">No billers</option>';
+      wrap.style.display = '';
+      const first = sel.querySelector('option'); if (first) document.querySelector('#svc-fields [name=biller_id]').value = first.value;
+    } catch { wrap.style.display = 'none'; }
   },
   // Fetch the live providers for a service and render a chooser when >1.
   async loadProviders(serviceKey) {
@@ -1125,6 +1214,11 @@ const Actions = {
       const d = await Api.post(s.path, body);
       const t = d.transaction || d.transfer;
       $('txn-result').innerHTML = `<div class="msg ok">Done — status: <b>${esc(t.status)}</b>${t.reference ? ' · ref ' + esc(t.reference) : ''}</div>`;
+      // Optionally save the DMT payee for next time.
+      const save = $('ben_save');
+      if (s.key === 'dmt' && save && save.checked && body.account_number) {
+        Api.post('/beneficiaries', { name: body.beneficiary_name, account_number: body.account_number, ifsc: body.ifsc }).catch(() => {});
+      }
       App.refreshWallet();
     } catch (err) {
       if (err.code === 'txn_mpin_required' || err.code === 'unauthorized' && /MPIN/i.test(err.message)) {
@@ -1264,8 +1358,10 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async decideAdj(id, decision) {
-    const note = prompt(`${decision} note:`, ''); if (note === null) return;
-    try { await Api.post(`/admin/adjustments/${id}/${decision}`, { note }); UI.toast(`Adjustment ${decision}d`); App.route(); }
+    const note = prompt(`${decision === 'approve' ? 'Approve' : 'Reject'} this adjustment — enter a remark (required):`, '');
+    if (note === null) return;
+    if (!note.trim()) return UI.toast('A remark is required', 'err');
+    try { await Api.post(`/admin/adjustments/${id}/${decision}`, { note: note.trim() }); UI.toast(`Adjustment ${decision}d`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   presetSvc(key) { Actions._preset = key; },
@@ -1285,6 +1381,76 @@ const Actions = {
     const pw = prompt('Enter your current password to remove the MPIN:');
     if (!pw) return;
     try { await Api.call('/security/mpin', { method: 'DELETE', body: { current_password: pw } }); UI.toast('MPIN removed'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- beneficiaries -----
+  addBeneficiary() {
+    UI.modal(`<h3>Add beneficiary</h3>
+      <div class="field"><label>Name</label><input id="bn_name"></div>
+      <div class="field"><label>Account number</label><input id="bn_acc"></div>
+      <div class="field"><label>IFSC</label><input id="bn_ifsc" placeholder="HDFC0001234"></div>
+      <div class="field"><label>Bank name (optional)</label><input id="bn_bank"></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveBeneficiary()">Save</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveBeneficiary() {
+    const body = { name: val('bn_name'), account_number: val('bn_acc'), ifsc: val('bn_ifsc').toUpperCase() };
+    if (val('bn_bank')) body.bank_name = val('bn_bank');
+    try { await Api.post('/beneficiaries', body); UI.closeModal(); UI.toast('Beneficiary saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async delBeneficiary(id) {
+    if (!confirm('Delete this beneficiary?')) return;
+    try { await Api.del('/beneficiaries/' + id); UI.toast('Deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- device binding -----
+  bindDevice() {
+    UI.modal(`<h3>Bind a device</h3>
+      <div class="field"><label>Device label</label><input id="dv_label" placeholder="Mantra MFS110"></div>
+      <div class="field"><label>Device ID / UUID</label><input id="dv_uuid" placeholder="serial or UUID"></div>
+      <div class="field"><label>IMEI (optional)</label><input id="dv_imei"></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveDevice()">Bind</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveDevice() {
+    const body = { device_uuid: val('dv_uuid') };
+    if (val('dv_label')) body.label = val('dv_label');
+    if (val('dv_imei')) body.imei = val('dv_imei');
+    if (!body.device_uuid) return UI.toast('Enter a device ID', 'err');
+    try { await Api.post('/onboarding/device', body); UI.closeModal(); UI.toast('Device bound'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Wallet lien / blocked amount: view, place and release holds on a user.
+  async holds(userId, name) {
+    const d = await Api.get(`/admin/users/${userId}/holds`);
+    const rows = (d.items || []).map(h => `<tr>
+      <td class="right">${money(h.amount_paise/100)}</td>
+      <td>${esc(h.reason||'')}</td>
+      <td>${UI.statusTag(h.status)}</td>
+      <td class="muted">${new Date(h.created_at).toLocaleDateString('en-IN')}</td>
+      <td>${h.status==='active' ? `<button class="btn sm" onclick="Actions.releaseHold('${userId}','${h.id}','${esc(name)}')">Release</button>` : `<span class="muted">by ${esc(h.released_by_name||'')}</span>`}</td>
+    </tr>`).join('');
+    UI.modal(`<h3>Wallet holds — ${esc(name)}</h3>
+      <p class="muted" style="font-size:13px">Currently blocked: <b>${money((d.held_paise||0)/100)}</b>. Held funds can't be spent until released.</p>
+      <div class="row" style="gap:8px;align-items:end">
+        <div class="field" style="margin:0"><label>Amount (₹)</label><input id="hold_amt" type="number" min="1" step="0.01" style="width:130px"></div>
+        <div class="field" style="margin:0;flex:1"><label>Reason</label><input id="hold_reason" placeholder="dispute / pending settlement"></div>
+        <button class="btn sm" onclick="Actions.placeHold('${userId}','${esc(name)}')">Place hold</button>
+      </div>
+      <div class="tbl-wrap mt"><table><thead><tr><th class="right">Amount</th><th>Reason</th><th>Status</th><th>When</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No holds yet.</td></tr>'}</tbody></table></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async placeHold(userId, name) {
+    const amt = +val('hold_amt'); if (!amt || amt <= 0) return UI.toast('Enter an amount', 'err');
+    try { await Api.post(`/admin/users/${userId}/holds`, { amount: amt, reason: val('hold_reason') || undefined });
+      UI.closeModal(); UI.toast('Hold placed'); Actions.holds(userId, name); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async releaseHold(userId, holdId, name) {
+    try { await Api.post(`/admin/users/${userId}/holds/${holdId}/release`, {});
+      UI.toast('Hold released'); Actions.holds(userId, name); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async resetUserPw(id, name) {
@@ -1427,7 +1593,12 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async reviewKyc(id, status) {
-    try { await Api.post(`/kyc/${id}/review`, { status }); UI.toast('KYC ' + status); App.route(); }
+    // Every approval / rejection must carry a remark for the audit trail.
+    const remarks = prompt(`${status === 'verified' ? 'Approve' : 'Reject'} this document — enter a remark (required):`,
+      status === 'verified' ? 'Documents verified' : '');
+    if (remarks === null) return;
+    if (!remarks.trim()) return UI.toast('A remark is required to approve or reject', 'err');
+    try { await Api.post(`/kyc/${id}/review`, { status, remarks: remarks.trim() }); UI.toast('KYC ' + status); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async submitKyc() {
@@ -1466,15 +1637,17 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async approveTopup(id) {
-    const remarks = prompt('Approve this top-up? Optional remarks:', 'Verified');
+    const remarks = prompt('Approve this top-up — enter a remark (required):', 'Payment verified');
     if (remarks === null) return;
-    try { await Api.post(`/admin/topups/${id}/approve`, { remarks }); UI.toast('Approved & wallet credited'); App.route(); }
+    if (!remarks.trim()) return UI.toast('A remark is required', 'err');
+    try { await Api.post(`/admin/topups/${id}/approve`, { remarks: remarks.trim() }); UI.toast('Approved & wallet credited'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async rejectTopup(id) {
-    const remarks = prompt('Reject this top-up? Reason:', '');
+    const remarks = prompt('Reject this top-up — enter a reason (required):', '');
     if (remarks === null) return;
-    try { await Api.post(`/admin/topups/${id}/reject`, { remarks }); UI.toast('Rejected'); App.route(); }
+    if (!remarks.trim()) return UI.toast('A reason is required to reject', 'err');
+    try { await Api.post(`/admin/topups/${id}/reject`, { remarks: remarks.trim() }); UI.toast('Rejected'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
 

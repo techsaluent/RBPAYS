@@ -8,6 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getGenericProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
+import { resolveProviderChoice } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -18,6 +19,7 @@ const createSchema = z.object({
   payee_name: z.string().trim().max(120).optional(),
   amount: z.coerce.number().positive().max(100000),
   charge: z.coerce.number().min(0).default(0),
+  provider_id: z.string().uuid().optional(),
   reference: z.string().trim().max(64).optional(),
 });
 
@@ -37,7 +39,8 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
-    const provider = getGenericProvider('upi');
+    const providerId = resolveProviderChoice('upi', body.provider_id);
+    const provider = getGenericProvider('upi', providerId);
 
     const { transaction, idempotent } = await runServiceTransaction({
       userId,
@@ -49,6 +52,7 @@ router.post(
       clientChargePaise: rupeesToPaise(body.charge),
       description: `UPI payout to ${body.vpa}`,
       providerName: provider.name,
+      providerId,
       insertServiceRow: async (client, ctx) => {
         const { rows } = await client.query<{ id: string }>(
           `INSERT INTO upi_transactions (user_id, vpa, payee_name, amount_paise, charge_paise, reference, status)
@@ -58,7 +62,7 @@ router.post(
         return rows[0].id;
       },
       callProvider: ({ reference }) =>
-        provider.execute('upi', { reference, amountPaise, meta: { vpa: body.vpa } }),
+        provider.execute('upi', { reference, amountPaise, providerId, meta: { vpa: body.vpa } }),
     });
 
     res.status(idempotent ? 200 : 201).json({ transaction, idempotent });

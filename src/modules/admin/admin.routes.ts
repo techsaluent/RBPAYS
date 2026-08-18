@@ -138,6 +138,63 @@ router.post(
   }),
 );
 
+// ---- Wallet holds (lien / blocked amount) --------------------------------
+const holdSchema = z.object({
+  amount: z.coerce.number().positive().max(10000000), // rupees
+  reason: z.string().trim().max(200).optional(),
+});
+
+// List a user's holds (active + released) + the current blocked total.
+router.get(
+  '/users/:id/holds',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query(
+      `SELECT h.*, pb.full_name AS placed_by_name, rb.full_name AS released_by_name
+         FROM wallet_holds h
+         LEFT JOIN users pb ON pb.id = h.placed_by
+         LEFT JOIN users rb ON rb.id = h.released_by
+        WHERE h.user_id = $1
+        ORDER BY h.created_at DESC`,
+      [req.params.id],
+    );
+    const active = rows.filter((r) => r.status === 'active').reduce((s, r) => s + Number(r.amount_paise), 0);
+    res.json({ items: rows, held_paise: active });
+  }),
+);
+
+// Place a hold on a user's wallet.
+router.post(
+  '/users/:id/holds',
+  validate(holdSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof holdSchema>;
+    const user = await query('SELECT 1 FROM users WHERE id = $1', [req.params.id]);
+    if (!user.rowCount) throw ApiError.notFound('User not found');
+    const { rows } = await query(
+      `INSERT INTO wallet_holds (user_id, amount_paise, reason, placed_by)
+       VALUES ($1,$2,$3,$4) RETURNING *`,
+      [req.params.id, rupeesToPaise(b.amount), b.reason ?? null, req.user.id],
+    );
+    res.status(201).json({ hold: rows[0] });
+  }),
+);
+
+// Release a hold (unblock the funds).
+router.post(
+  '/users/:id/holds/:holdId/release',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { rows } = await query(
+      `UPDATE wallet_holds SET status = 'released', released_by = $1, released_at = now()
+        WHERE id = $2 AND user_id = $3 AND status = 'active' RETURNING *`,
+      [req.user.id, req.params.holdId, req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Active hold not found');
+    res.json({ hold: rows[0] });
+  }),
+);
+
 const planSchema = z.object({ commission_plan_id: z.string().uuid().nullable() });
 
 // Assign a commission plan to a user.

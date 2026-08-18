@@ -8,6 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getCardSwipeProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
+import { resolveProviderChoice } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -19,6 +20,7 @@ const createSchema = z.object({
   card_type: z.enum(['credit', 'debit']).optional(),
   card_last4: z.string().trim().regex(/^\d{4}$/).optional(),
   tid: z.string().trim().max(32).optional(),
+  provider_id: z.string().uuid().optional(),
   reference: z.string().trim().max(64).optional(),
 });
 
@@ -39,7 +41,8 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
-    const provider = getCardSwipeProvider();
+    const providerId = resolveProviderChoice('card_swipe', body.provider_id);
+    const provider = getCardSwipeProvider(providerId);
 
     const { transaction, idempotent } = await runServiceTransaction({
       userId,
@@ -49,6 +52,7 @@ router.post(
       flow: 'credit',
       reference: req.header('Idempotency-Key') || body.reference,
       amountPaise,
+      providerId,
       description: `Card swipe ${body.card_network ?? ''} ${body.card_last4 ?? ''}`.trim(),
       providerName: provider.name,
       insertServiceRow: async (client, ctx) => {
@@ -68,6 +72,7 @@ router.post(
           cardType: body.card_type,
           cardLast4: body.card_last4,
           tid: body.tid,
+          providerId,
         }),
     });
 

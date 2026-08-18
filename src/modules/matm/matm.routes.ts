@@ -8,6 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getGenericProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
+import { resolveProviderChoice } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -17,6 +18,7 @@ const createSchema = z.object({
   amount: z.coerce.number().positive().max(10000),
   card_network: z.enum(['visa', 'mastercard', 'rupay', 'amex']).optional(),
   card_last4: z.string().trim().regex(/^\d{4}$/).optional(),
+  provider_id: z.string().uuid().optional(),
   reference: z.string().trim().max(64).optional(),
 });
 
@@ -36,7 +38,8 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
-    const provider = getGenericProvider('matm');
+    const providerId = resolveProviderChoice('matm', body.provider_id);
+    const provider = getGenericProvider('matm', providerId);
 
     const { transaction, idempotent } = await runServiceTransaction({
       userId,
@@ -48,6 +51,7 @@ router.post(
       amountPaise,
       description: 'Micro ATM withdrawal',
       providerName: provider.name,
+      providerId,
       insertServiceRow: async (client, ctx) => {
         const { rows } = await client.query<{ id: string }>(
           `INSERT INTO matm_transactions (user_id, card_network, card_last4, amount_paise, charge_paise, reference, status)
@@ -56,7 +60,7 @@ router.post(
         );
         return rows[0].id;
       },
-      callProvider: ({ reference }) => provider.execute('matm', { reference, amountPaise }),
+      callProvider: ({ reference }) => provider.execute('matm', { reference, amountPaise, providerId }),
     });
 
     res.status(idempotent ? 200 : 201).json({ transaction, idempotent });
