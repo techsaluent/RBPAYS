@@ -7,6 +7,7 @@ import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
 import { hashPassword } from '../../utils/password';
 import { PERMISSIONS, PERMISSION_KEYS, PRESETS } from './permissions';
+import { logAudit } from '../audit/audit.service';
 
 // Only the super admin manages staff accounts and their powers.
 const router = Router();
@@ -101,6 +102,8 @@ router.post(
       return { id, full_name: b.full_name, email: b.email, phone: b.phone, status: 'active', permissions };
     });
 
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'staff.create',
+      targetType: 'staff', targetId: staff.id, detail: { email: b.email, permissions } });
     res.status(201).json({ staff });
   }),
 );
@@ -115,6 +118,8 @@ router.patch(
     const target = await query<{ id: string }>("SELECT id FROM users WHERE id = $1 AND role = 'staff'", [req.params.id]);
     if (!target.rows[0]) throw ApiError.notFound('Staff member not found');
     await withTransaction((client) => setPermissions(client, req.params.id, b.permissions, req.user!.id));
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'staff.permissions',
+      targetType: 'staff', targetId: req.params.id, detail: { permissions: b.permissions } });
     res.json({ id: req.params.id, permissions: b.permissions });
   }),
 );
@@ -129,6 +134,8 @@ router.post(
       [req.body.status, req.params.id],
     );
     if (!rows[0]) throw ApiError.notFound('Staff member not found');
+    if (req.user) await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'staff.status',
+      targetType: 'staff', targetId: req.params.id, detail: { status: req.body.status } });
     res.json({ staff: rows[0] });
   }),
 );
