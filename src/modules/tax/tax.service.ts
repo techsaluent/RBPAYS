@@ -61,6 +61,58 @@ export async function recordTds(
   );
 }
 
+/** Start of the current Indian financial year (1 April), as an ISO string. */
+export function financialYearStart(): string {
+  const now = new Date();
+  const y = now.getUTCMonth() + 1 >= 4 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+  return `${y}-04-01T00:00:00.000Z`;
+}
+
+/**
+ * Section 194N — TDS on cash withdrawals beyond the annual threshold.
+ * Once a member's cumulative cash-out for the financial year crosses the
+ * threshold (₹1 crore for a filer with a valid PAN, ₹20 lakh otherwise), 2%
+ * TDS is withheld on the withdrawal. Returns the TDS withheld (paise) and
+ * records it; 0 when under the threshold.
+ */
+export async function apply194N(
+  client: PoolClient,
+  p: { userId: string; serviceCode: string; amountPaise: number; serviceTxnId?: string; excludeTxnId?: string },
+): Promise<number> {
+  const prof = (
+    await client.query<{ pan_valid: boolean }>('SELECT pan_valid FROM tax_profiles WHERE user_id = $1', [p.userId])
+  ).rows[0];
+  const filer = !!prof?.pan_valid;
+  const threshold = filer ? env.TDS_194N_THRESHOLD_FILER_PAISE : env.TDS_194N_THRESHOLD_NONFILER_PAISE;
+
+  // Sum this member's prior cash-out this FY, EXCLUDING the current txn (which
+  // settleByReference has already marked success before this runs).
+  const { rows } = await client.query<{ sum: string }>(
+    `SELECT COALESCE(SUM(amount_paise),0)::text sum FROM transactions
+      WHERE user_id = $1 AND service = ANY(ARRAY['aeps','matm'])
+        AND status IN ('pending','success') AND created_at >= $2
+        AND ($3::uuid IS NULL OR id <> $3)`,
+    [p.userId, financialYearStart(), p.excludeTxnId ?? null],
+  );
+  const priorFy = Number(rows[0]?.sum ?? '0');
+  // Only the portion of this withdrawal that pushes past the threshold is taxed.
+  if (priorFy + p.amountPaise <= threshold) return 0;
+  const taxableBase = Math.min(p.amountPaise, priorFy + p.amountPaise - threshold);
+  const tds = applyBps(taxableBase, env.TDS_194N_RATE_BPS);
+  if (tds <= 0) return 0;
+
+  await recordTds(client, {
+    userId: p.userId,
+    serviceTxnId: p.serviceTxnId,
+    serviceCode: p.serviceCode,
+    section: '194N',
+    grossPaise: taxableBase,
+    rateBps: env.TDS_194N_RATE_BPS,
+    tdsPaise: tds,
+  });
+  return tds;
+}
+
 /** Record a GST invoice on the platform margin, split intra/inter-state. */
 export async function recordGst(
   client: PoolClient,

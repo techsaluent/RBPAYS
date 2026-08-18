@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TutiPays</title>
+  <link rel="stylesheet" href="site.css" />
+</head>
+<body>
+  <div class="topbar"><div class="wrap">
+    <span data-company-name><b>REAL BROTHERS TECHNOLOGY SERVICES LLP</b></span>
+    <span>GST: <span data-company-gst>27ABIFR6463M1ZH</span></span>
+    <span>✉ <a href="mailto:support@tutipays.com">support@tutipays.com</a></span>
+  </div></div>
+  <header><div class="wrap nav">
+    <a class="logo" href="index.html"><span class="dot">₹</span> Tuti<b>Pays</b></a>
+    <nav class="links">
+      <a href="index.html#services">Services</a>
+      <a href="about.html">About</a>
+      <a href="faq.html">FAQ</a>
+      <a href="contact.html">Contact</a>
+    </nav>
+    <div class="cta">
+      <a class="btn ghost" href="panel/">Login</a>
+      <a class="btn primary" href="panel/?signup=1">Sign Up</a>
+    </div>
+  </div></header>
+
+  <div class="page-hero"><div class="wrap"><h1 id="page-title">Loading…</h1></div></div>
+
+  <main class="legal" id="page-body"><p class="muted">Loading…</p></main>
+
+  <footer><div class="wrap">
+    <div class="fgrid">
+      <div>
+        <a class="logo" href="index.html" style="color:#fff"><span class="dot">₹</span> Tuti<b style="color:#fff">Pays</b></a>
+        <p class="addr" style="margin-top:12px">
+          <b data-company-name>REAL BROTHERS TECHNOLOGY SERVICES LLP</b><br>
+          <span data-company-address>Mumbai – 400065, Maharashtra, India</span><br><br>
+          PAN: <span data-company-pan>ABIFR6463M</span> · GST: <span data-company-gst>27ABIFR6463M1ZH</span>
+        </p>
+      </div>
+      <div><h5>Company</h5>
+        <a href="about.html">About Us</a><a href="contact.html">Contact Us</a>
+        <a href="grievance.html">Grievance Redressal</a><a href="faq.html">FAQ</a></div>
+      <div><h5>Legal</h5>
+        <a href="terms.html">Terms &amp; Conditions</a><a href="privacy.html">Privacy Policy</a>
+        <a href="refund.html">Refund &amp; Cancellation</a></div>
+      <div><h5>Get in touch</h5>
+        <a href="mailto:support@tutipays.com">support@tutipays.com</a>
+        <a href="mailto:admin@tutipays.com">admin@tutipays.com</a>
+        <a href="panel/">Partner Login</a></div>
+    </div>
+    <div class="fbottom">
+      <span>© <span id="yr"></span> <span data-company-name>REAL BROTHERS TECHNOLOGY SERVICES LLP</span>. All rights reserved.</span>
+    </div>
+  </div></footer>
+
+  <script>document.getElementById('yr').textContent=new Date().getFullYear();</script>
+  <script src="brand.js"></script>
+  <script>
+    (async () => {
+      const slug = new URLSearchParams(location.search).get('slug');
+      const titleEl = document.getElementById('page-title');
+      const bodyEl = document.getElementById('page-body');
+      if (!slug) { titleEl.textContent = 'Page not found'; bodyEl.innerHTML = '<p>No page specified.</p>'; return; }
+      try {
+        const res = await fetch('/api/v1/site/pages/' + encodeURIComponent(slug), { cache: 'no-store' });
+        if (!res.ok) throw new Error('not found');
+        const { page } = await res.json();
+        document.title = page.title + ' — TutiPays';
+        titleEl.textContent = page.title;
+        // content may be HTML authored by the admin
+        bodyEl.innerHTML = page.content || '<p class="muted">This page has no content yet.</p>';
+      } catch {
+        titleEl.textContent = 'Page not found';
+        bodyEl.innerHTML = '<p>The page you requested does not exist.</p>';
+      }
+    })();
+  </script>
+</body>
+</html>

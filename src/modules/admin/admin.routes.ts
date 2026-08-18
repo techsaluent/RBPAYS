@@ -781,6 +781,93 @@ router.get(
 );
 
 // ---------------------------------------------------------------------
+// Website settings + custom pages (branding CMS)
+// ---------------------------------------------------------------------
+router.get(
+  '/site/settings',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT key, value, updated_at FROM site_settings ORDER BY key');
+    res.json({ items: rows });
+  }),
+);
+
+const siteSettingsSchema = z.object({
+  values: z.record(z.string().max(4000)),
+});
+
+// Bulk upsert site settings (brand name, logo, colours, contacts, company).
+router.put(
+  '/site/settings',
+  validate(siteSettingsSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof siteSettingsSchema>;
+    await withTransaction(async (client) => {
+      for (const [key, value] of Object.entries(b.values)) {
+        await client.query(
+          `INSERT INTO site_settings (key, value) VALUES ($1,$2)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+          [key, value],
+        );
+      }
+    });
+    const { rows } = await query('SELECT key, value FROM site_settings ORDER BY key');
+    res.json({ items: rows });
+  }),
+);
+
+router.get(
+  '/site/pages',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT slug, title, published, sort_order, updated_at FROM site_pages ORDER BY sort_order, title');
+    res.json({ items: rows });
+  }),
+);
+
+router.get(
+  '/site/pages/:slug',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query('SELECT * FROM site_pages WHERE slug = $1', [req.params.slug]);
+    if (!rows[0]) throw ApiError.notFound('Page not found');
+    res.json({ page: rows[0] });
+  }),
+);
+
+const pageSchema = z.object({
+  slug: z.string().trim().regex(/^[a-z0-9-]{2,60}$/, 'slug: lowercase letters, numbers, hyphens'),
+  title: z.string().trim().min(2).max(160),
+  content: z.string().max(200000).default(''),
+  published: z.boolean().default(true),
+  sort_order: z.coerce.number().int().default(0),
+});
+
+router.put(
+  '/site/pages/:slug',
+  validate(pageSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof pageSchema>;
+    const { rows } = await query(
+      `INSERT INTO site_pages (slug, title, content, published, sort_order)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (slug) DO UPDATE SET
+         title = EXCLUDED.title, content = EXCLUDED.content,
+         published = EXCLUDED.published, sort_order = EXCLUDED.sort_order
+       RETURNING slug, title, published, sort_order, updated_at`,
+      [req.params.slug, b.title, b.content, b.published, b.sort_order],
+    );
+    res.json({ page: rows[0] });
+  }),
+);
+
+router.delete(
+  '/site/pages/:slug',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('DELETE FROM site_pages WHERE slug = $1', [req.params.slug]);
+    if (!rowCount) throw ApiError.notFound('Page not found');
+    res.status(204).send();
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop)
 // ---------------------------------------------------------------------
 router.get(
