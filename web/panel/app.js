@@ -143,6 +143,8 @@ const NAV = [
   { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin'] },
   { key: 'risk', label: 'Risk & AML', roles: ['admin'] },
   { key: 'recon', label: 'Reconciliation', roles: ['admin'] },
+  { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin'] },
+  { key: 'treasury', label: 'Treasury', roles: ['admin'] },
   { key: 'opsdesk', label: 'Ops Desk', roles: ['admin'] },
   { key: 'ledger', label: 'Ledger', roles: ['admin'] },
 ];
@@ -566,6 +568,44 @@ const Screens = {
         <tbody>${rows || '<tr><td colspan=6 class=muted>No batches yet</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Admin: batch payout engine.
+  async batchpayout() {
+    const d = await Api.get('/admin/payout-batches');
+    const rows = d.items.map(b => `<tr><td>${esc(b.label)}</td><td>${esc(b.rail)}</td>
+      <td class="right">${money((b.total_paise||0)/100)}</td><td class="right">${b.record_count}</td>
+      <td class="right">${b.settled_count}</td><td class="right">${b.returned_count}</td>
+      <td>${UI.statusTag(b.status)}</td>
+      <td><a class="btn sm ghost" href="${Cfg.API}/admin/payout-batches/${b.id}/file" target="_blank">File</a>
+          <button class="btn sm" onclick="Actions.reverseFeed('${b.id}')">Reverse feed</button></td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><h2>Create payout batch</h2>
+        <p class="muted">Records JSON: <code>[{"user_id":"...","amount":3000,"beneficiary_name":"...","account_number":"...","ifsc":"..."}]</code>. Debits each member's settlement wallet into the payout-clearing hold; rail auto-routes (&lt;₹2L NEFT, ≥₹2L RTGS).</p>
+        <div class="field"><label>Label</label><input id="bp_label" value="EOD ${new Date().toISOString().slice(0,10)}"></div>
+        <div class="field"><label>Records (JSON)</label><textarea id="bp_rows" rows="5" style="width:100%;font-family:monospace">[]</textarea></div>
+        <button class="btn" onclick="Actions.createBatch()">Create batch (hold funds)</button></div>
+      <div class="panel mt"><h2>Batches</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Label</th><th>Rail</th><th class="right">Total</th><th class="right">Records</th><th class="right">Settled</th><th class="right">Returned</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=8 class=muted>No batches</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: treasury liquidity (escrow balances + sweeps).
+  async treasury() {
+    const d = await Api.get('/admin/treasury/balances');
+    const rows = d.items.map(i => `<tr><td>${esc(i.account)}</td><td class="muted">${esc(i.name)}</td>
+      <td class="right">${money((i.balance_paise||0)/100)}</td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><h2>Escrow / asset balances</h2>
+        <p class="muted">Derived from the double-entry journal.</p>
+        <div class="tbl-wrap"><table><thead><tr><th>Account</th><th>Name</th><th class="right">Balance</th></tr></thead>
+        <tbody>${rows}</tbody></table></div></div>
+      <div class="panel mt" style="max-width:520px"><h2>Liquidity sweep</h2>
+        <p class="muted">Two-phase asset-to-asset move via the in-transit clearing account.</p>
+        <div class="field"><label>From</label><select id="tr_from"><option value="bank_escrow">bank_escrow (collection)</option><option value="payout_escrow">payout_escrow</option></select></div>
+        <div class="field"><label>To</label><select id="tr_to"><option value="payout_escrow">payout_escrow</option><option value="bank_escrow">bank_escrow (collection)</option></select></div>
+        <div class="field"><label>Amount (₹)</label><input id="tr_amt" type="number" step="0.01" min="1"></div>
+        <button class="btn" onclick="Actions.treasurySweep()">Execute sweep</button></div>`;
+  },
+
   // Admin: ops desk — maker-checker manual adjustments.
   async opsdesk() {
     const d = await Api.get('/admin/adjustments');
@@ -803,6 +843,27 @@ const Actions = {
     try { rows = JSON.parse(val('rc_rows')); } catch { return UI.toast('MIS rows must be valid JSON', 'err'); }
     try { const d = await Api.post('/admin/recon/run', { label: val('rc_label'), rows });
       UI.toast(`Recon: ${d.summary.matched} matched, ${d.summary.forceSettled} force-settled, ${d.summary.exceptions} exceptions`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async createBatch() {
+    let records;
+    try { records = JSON.parse(val('bp_rows')); } catch { return UI.toast('Records must be valid JSON', 'err'); }
+    if (!records.length) return UI.toast('Add at least one record', 'err');
+    try { const d = await Api.post('/admin/payout-batches', { label: val('bp_label'), records });
+      UI.toast(`Batch created: ${d.summary.record_count} records, ${money(d.summary.total_paise/100)} held`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async reverseFeed(batchId) {
+    const raw = prompt('Reverse feed rows JSON [{"record_id":"...","status":"settled|returned","utr":"..."}]:', '[]');
+    if (!raw) return;
+    let rows; try { rows = JSON.parse(raw); } catch { return UI.toast('Invalid JSON', 'err'); }
+    try { const d = await Api.post(`/admin/payout-batches/${batchId}/reverse-feed`, { rows });
+      UI.toast(`Settled ${d.result.settled}, returned ${d.result.returned}`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async treasurySweep() {
+    try { const d = await Api.post('/admin/treasury/sweep', { from_account: val('tr_from'), to_account: val('tr_to'), amount: +val('tr_amt') });
+      UI.toast(`Swept ${money(d.sweep.amount_paise/100)}`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async proposeAdj() {

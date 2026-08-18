@@ -1,8 +1,14 @@
 import { withTransaction } from '../../../db';
 import { logger } from '../../config/logger';
 import { credit, reverse, WalletSource } from '../wallet/wallet.service';
+import { creditSub } from '../wallet/subwallet.service';
 import { applyUplineCredits, CommissionEntry } from '../commission/commission.service';
+import { postJournal } from './ledger';
 import { ProviderResult } from '../../providers/types';
+
+// Cash-out inflow services accumulate in the retailer's AePS Settlement
+// wallet (per the multi-wallet model), not the pre-funded Main wallet.
+const SETTLEMENT_WALLET_SERVICES = new Set(['aeps', 'matm']);
 
 // service code -> detail table + which optional fields it carries.
 const SERVICE_TABLE: Record<string, { table: string; utr?: boolean; rrn?: boolean; balance?: boolean }> = {
@@ -104,13 +110,28 @@ export async function settleByReference(
     if (result.status === 'success') {
       // Credit flow: settle the received amount into the retailer's wallet.
       if (txn.direction === 'credit' && Number(txn.net_paise) > 0) {
-        await credit(client, {
-          userId: txn.user_id,
-          amountPaise: Number(txn.net_paise),
-          source: txn.service as WalletSource,
-          referenceId: txn.id,
-          description: `${txn.service} settlement (${reference})`,
-        });
+        const netPaise = Number(txn.net_paise);
+        if (SETTLEMENT_WALLET_SERVICES.has(txn.service)) {
+          // Cash-out inflow -> AePS Settlement sub-wallet (DR bank escrow).
+          await creditSub(client, txn.user_id, 'settlement', netPaise);
+          await postJournal(client, {
+            source: txn.service,
+            reference: txn.id,
+            narration: `${txn.service} cash-out to settlement wallet (${reference})`,
+            lines: [
+              { account: 'bank_escrow', direction: 'debit', amountPaise: netPaise },
+              { account: 'settlement_wallet', direction: 'credit', amountPaise: netPaise, walletUserId: txn.user_id },
+            ],
+          });
+        } else {
+          await credit(client, {
+            userId: txn.user_id,
+            amountPaise: netPaise,
+            source: txn.service as WalletSource,
+            referenceId: txn.id,
+            description: `${txn.service} settlement (${reference})`,
+          });
+        }
       }
       // Upline commissions (retailer's own commission is already realised:
       // netted into the debit, or included in the credit above).
