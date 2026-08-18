@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
 import { query } from '../../db';
 import { ApiError } from '../utils/ApiError';
+import { verifyPassword } from '../utils/password';
 
 /**
  * Services that any network role (retailer, distributor, master distributor)
@@ -21,10 +22,18 @@ export function requireService(serviceCode: string) {
     try {
       if (!req.user) throw ApiError.unauthorized();
 
-      const { rows } = await query<{ status: string; enabled: boolean | null; active: boolean | null }>(
+      const { rows } = await query<{
+        status: string;
+        enabled: boolean | null;
+        active: boolean | null;
+        mpin_hash: string | null;
+        require_txn_mpin: string | null;
+      }>(
         `SELECT u.status,
                 s.enabled,
-                us.active
+                us.active,
+                u.mpin_hash,
+                (SELECT value FROM site_settings WHERE key = 'security_require_txn_mpin') AS require_txn_mpin
            FROM users u
            LEFT JOIN services s ON s.code = $2
            LEFT JOIN user_services us ON us.user_id = u.id AND us.service_code = $2
@@ -47,6 +56,22 @@ export function requireService(serviceCode: string) {
       if (row.status !== 'active') throw ApiError.forbidden(`Account is ${row.status}`);
       if (row.enabled === false) throw ApiError.forbidden(`Service ${serviceCode} is disabled`);
       if (row.active === false) throw ApiError.forbidden(`Service ${serviceCode} is not active for your account`);
+
+      // Transaction MPIN: when enabled platform-wide, confirm the money
+      // transaction with the member's MPIN (read from the raw body before the
+      // per-route schema strips it). Admins are exempt (support/testing).
+      if (row.require_txn_mpin === 'true' && req.user.role !== 'admin') {
+        if (!row.mpin_hash) {
+          throw new ApiError(403, 'txn_mpin_not_set', 'Set a transaction MPIN in Security before transacting');
+        }
+        const mpin = (req.body && (req.body as { mpin?: unknown }).mpin);
+        if (typeof mpin !== 'string' || !/^\d{4,6}$/.test(mpin)) {
+          throw new ApiError(401, 'txn_mpin_required', 'Transaction MPIN required');
+        }
+        if (!(await verifyPassword(mpin, row.mpin_hash))) {
+          throw ApiError.unauthorized('Invalid transaction MPIN');
+        }
+      }
       next();
     } catch (err) {
       next(err);
