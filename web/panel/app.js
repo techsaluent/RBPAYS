@@ -213,6 +213,7 @@ const NAV = [
   { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review', section: 'Users & KYC' },
   { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
+  { key: 'withdrawals', label: 'Withdrawals', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
   { key: 'plans', label: 'Commission', roles: ['admin', 'staff'], perm: 'commission.manage', section: 'Finance' },
   { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin', 'staff'], perm: 'tax.manage', section: 'Finance' },
@@ -530,6 +531,10 @@ const Screens = {
   async wallet() {
     const w = await Api.get('/wallet');
     const l = await Api.get('/wallet/ledger?limit=25');
+    const wd = await Api.get('/wallet/withdrawals?limit=10').catch(() => ({ items: [] }));
+    const wdRows = (wd.items || []).map(x => `<tr><td class="right">${money(x.amount_paise/100)}</td>
+      <td>${esc(x.account_number)} · ${esc(x.ifsc)}</td><td>${UI.statusTag(x.status)}</td>
+      <td class="muted">${esc(x.utr||'')}</td><td class="muted">${new Date(x.created_at).toLocaleDateString('en-IN')}</td></tr>`).join('');
     const sw = w.sub_wallets || { settlement: '0.00', commission: '0.00', settlement_paise: 0, commission_paise: 0 };
     const rows = l.items.map(r => `<tr><td>${r.direction === 'credit' ? '＋' : '－'} ${money(r.amount)}</td>
       <td>${esc(r.source)}</td><td class="muted">${esc(r.description || '')}</td>
@@ -538,7 +543,8 @@ const Screens = {
       <div class="grid cards">
         <div class="card"><div class="k">Main wallet</div><div class="v">${money(w.wallet.balance)}</div>
           ${w.wallet.held_paise ? `<div class="muted" style="font-size:12px;margin-top:4px">Available <b>${money(w.wallet.available)}</b> · 🔒 blocked ${money(w.wallet.held)}</div>` : ''}
-          <a class="btn sm ghost" href="#/addmoney">Add money</a></div>
+          <div class="row" style="gap:6px;margin-top:6px"><a class="btn sm ghost" href="#/addmoney">Add money</a>
+          <button class="btn sm" onclick="Actions.withdraw()">Withdraw to bank</button></div></div>
         ${w.wallet.held_paise ? `<div class="card"><div class="k">Blocked (lien)</div><div class="v" style="color:var(--warn)">${money(w.wallet.held)}</div>
           <div class="muted" style="font-size:12px">Held by admin — can't be spent</div></div>` : ''}
         <div class="card"><div class="k">AePS settlement</div><div class="v">${money(sw.settlement)}</div>
@@ -549,7 +555,29 @@ const Screens = {
       <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Main wallet ledger</h2>
         <button class="btn sm" onclick="Actions.topup()">Top up (test gateway)</button></div>
         <div class="tbl-wrap"><table><thead><tr><th>Amount</th><th>Source</th><th>Description</th><th class="right">Balance</th><th>When</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan=5 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>`;
+        <tbody>${rows || '<tr><td colspan=5 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><h2>Bank withdrawals</h2>
+        <div class="tbl-wrap"><table><thead><tr><th class="right">Amount</th><th>To account</th><th>Status</th><th>UTR</th><th>When</th></tr></thead>
+        <tbody>${wdRows || '<tr><td colspan=5 class=muted>No withdrawals yet</td></tr>'}</tbody></table></div></div>`;
+  },
+  // Request a wallet-to-bank withdrawal (agent cash-out).
+  withdraw() {
+    UI.modal(`<h3>Withdraw to bank</h3>
+      <p class="muted" style="font-size:13px">The amount leaves your wallet now and is paid to your bank once admin approves. If rejected, it's refunded.</p>
+      <div class="field"><label>Amount (₹)</label><input id="wd_amt" type="number" min="1" step="0.01"></div>
+      <div class="field"><label>Account holder name</label><input id="wd_name"></div>
+      <div class="field"><label>Account number</label><input id="wd_acc"></div>
+      <div class="field"><label>IFSC</label><input id="wd_ifsc" placeholder="HDFC0001234"></div>
+      <div class="field"><label>Mode</label><select id="wd_mode"><option>IMPS</option><option>NEFT</option><option>RTGS</option></select></div>
+      <div class="foot"><button class="btn" onclick="Actions.submitWithdraw()">Request withdrawal</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async submitWithdraw() {
+    const body = { amount: +val('wd_amt'), account_name: val('wd_name'), account_number: val('wd_acc'),
+      ifsc: val('wd_ifsc').toUpperCase(), mode: val('wd_mode') };
+    if (!body.amount || body.amount <= 0) return UI.toast('Enter an amount', 'err');
+    try { await Api.post('/wallet/withdraw', body); UI.closeModal(); UI.toast('Withdrawal requested'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
 
   // Member: PAN / GSTIN submission + TDS statement.
@@ -698,6 +726,22 @@ const Screens = {
       <p class="muted">Register the biometric scanner / mobile you use for AEPS so transactions are tied to a known device.</p>
       <div class="tbl-wrap"><table><thead><tr><th>Label</th><th>Device ID</th><th>IMEI</th><th>Status</th><th>Bound</th></tr></thead>
       <tbody>${rows || '<tr><td colspan=5 class=muted>No devices bound yet.</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Finance: member wallet-to-bank withdrawals to approve / pay.
+  async withdrawals() {
+    const d = await Api.get('/admin/withdrawals?status=pending');
+    const rows = (d.items || []).map(x => `<tr>
+      <td>${esc(x.full_name)}<div class="muted" style="font-size:11px">${esc(x.role)}</div></td>
+      <td class="right">${money(x.amount_paise/100)}</td>
+      <td>${esc(x.account_name)}<div class="muted" style="font-size:11px">${esc(x.account_number)} · ${esc(x.ifsc)} · ${esc(x.mode)}</div></td>
+      <td class="muted">${new Date(x.created_at).toLocaleString('en-IN')}</td>
+      <td><button class="btn sm" onclick="Actions.payWithdrawal('${x.id}')">Mark paid</button>
+          <button class="btn sm ghost" onclick="Actions.rejectWithdrawal2('${x.id}')">Reject</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Pending withdrawals</h2>
+      <p class="muted">Agents' wallet-to-bank cash-outs. "Mark paid" records the bank UTR; "Reject" refunds their wallet.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Member</th><th class="right">Amount</th><th>To account</th><th>Requested</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No pending withdrawals.</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Super admin: activity audit log (who did what).
@@ -1481,6 +1525,23 @@ const Actions = {
     if (val('dv_imei')) body.imei = val('dv_imei');
     if (!body.device_uuid) return UI.toast('Enter a device ID', 'err');
     try { await Api.post('/onboarding/device', body); UI.closeModal(); UI.toast('Device bound'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Withdrawals: mark paid (with UTR) / reject (refunds wallet).
+  async payWithdrawal(id) {
+    const utr = prompt('Enter the bank UTR / reference for this payout:', '');
+    if (utr === null) return;
+    const remarks = prompt('Remark (optional):', 'Paid via NEFT') ?? undefined;
+    try { await Api.post(`/admin/withdrawals/${id}/approve`, { utr: utr.trim() || undefined, remarks });
+      UI.toast('Marked paid'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async rejectWithdrawal2(id) {
+    const remarks = prompt('Reject this withdrawal — reason (required):', '');
+    if (remarks === null) return;
+    if (!remarks.trim()) return UI.toast('A reason is required', 'err');
+    try { await Api.post(`/admin/withdrawals/${id}/reject`, { remarks: remarks.trim() });
+      UI.toast('Rejected & refunded'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   // Wallet lien / blocked amount: view, place and release holds on a user.

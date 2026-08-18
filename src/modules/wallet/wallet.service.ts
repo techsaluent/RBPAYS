@@ -24,7 +24,8 @@ export type WalletSource =
   | 'wallet_transfer'
   | 'travel'
   | 'insurance'
-  | 'float_transfer';
+  | 'float_transfer'
+  | 'withdrawal';
 
 interface WalletRow {
   id: string;

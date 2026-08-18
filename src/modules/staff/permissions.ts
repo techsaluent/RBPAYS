@@ -83,6 +83,7 @@ export function permissionForPath(path: string, method: string): string | null |
 
   if (/^\/bank-accounts\b/.test(path)) return 'topup.manage';
   if (/^\/topups\b/.test(path)) return 'topup.manage';
+  if (/^\/withdrawals\b/.test(path)) return 'payouts.manage';
 
   return 'DENY';
 }

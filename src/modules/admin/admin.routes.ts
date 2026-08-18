@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { staffConsoleGate } from '../../middleware/permission';
 import { logAudit } from '../audit/audit.service';
+import { approveWithdrawal, rejectWithdrawal } from '../withdrawal/withdrawal.service';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
@@ -40,6 +41,50 @@ router.get(
   '/dashboard',
   asyncHandler(async (_req: Request, res: Response) => {
     res.json(await dashboardStats());
+  }),
+);
+
+// ---- Wallet withdrawals (agent cash-out) — finance review ----
+router.get(
+  '/withdrawals',
+  asyncHandler(async (req: Request, res: Response) => {
+    const status = typeof req.query.status === 'string' ? req.query.status : null;
+    const { rows } = await query(
+      `SELECT w.*, u.full_name, u.role, u.phone
+         FROM wallet_withdrawals w JOIN users u ON u.id = w.user_id
+        WHERE ($1::text IS NULL OR w.status = $1)
+        ORDER BY w.created_at DESC LIMIT 100`,
+      [status],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const withdrawalDecideSchema = z.object({ utr: z.string().trim().max(40).optional(), remarks: z.string().trim().max(200).optional() });
+
+router.post(
+  '/withdrawals/:id/approve',
+  validate(withdrawalDecideSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof withdrawalDecideSchema>;
+    const w = await approveWithdrawal(req.params.id, req.user.id, b.utr, b.remarks);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'withdrawal.paid',
+      targetType: 'withdrawal', targetId: req.params.id, detail: { utr: b.utr ?? null, remarks: b.remarks ?? null, amount_paise: Number(w.amount_paise) } });
+    res.json({ withdrawal: w });
+  }),
+);
+
+router.post(
+  '/withdrawals/:id/reject',
+  validate(withdrawalDecideSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof withdrawalDecideSchema>;
+    const w = await rejectWithdrawal(req.params.id, req.user.id, b.remarks);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'withdrawal.reject',
+      targetType: 'withdrawal', targetId: req.params.id, detail: { remarks: b.remarks ?? null } });
+    res.json({ withdrawal: w });
   }),
 );
 
