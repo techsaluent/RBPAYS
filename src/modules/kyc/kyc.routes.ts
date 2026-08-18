@@ -2,6 +2,7 @@ import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permission';
+import { logAudit } from '../audit/audit.service';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
@@ -107,6 +108,8 @@ router.post(
       return updated[0];
     });
 
+    await logAudit({ actorId: reviewerId, actorRole: req.user.role, action: 'kyc.review',
+      targetType: 'kyc', targetId: document.id, detail: { status: b.status, remarks: b.remarks ?? null, user_id: document.user_id } });
     res.json({ document });
   }),
 );

@@ -2,6 +2,7 @@ import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { staffConsoleGate } from '../../middleware/permission';
+import { logAudit } from '../audit/audit.service';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
@@ -39,6 +40,32 @@ router.get(
   '/dashboard',
   asyncHandler(async (_req: Request, res: Response) => {
     res.json(await dashboardStats());
+  }),
+);
+
+// Activity audit log (super admin only — staff hit the fail-closed gate).
+const auditQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  action: z.string().trim().max(60).optional(),
+  actor_id: z.string().uuid().optional(),
+});
+router.get(
+  '/audit',
+  validate(auditQuerySchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof auditQuerySchema>;
+    const { rows } = await query(
+      `SELECT a.*, u.full_name AS actor_name
+         FROM admin_audit_log a
+         LEFT JOIN users u ON u.id = a.actor_id
+        WHERE ($1::text IS NULL OR a.action = $1)
+          AND ($2::uuid IS NULL OR a.actor_id = $2)
+        ORDER BY a.created_at DESC
+        LIMIT $3 OFFSET $4`,
+      [q.action ?? null, q.actor_id ?? null, q.limit, q.offset],
+    );
+    res.json({ items: rows, limit: q.limit, offset: q.offset });
   }),
 );
 
@@ -122,6 +149,8 @@ router.patch(
       [status, req.params.id],
     );
     if (!rows[0]) throw ApiError.notFound('User not found');
+    if (req.user) await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'user.status',
+      targetType: 'user', targetId: req.params.id, detail: { status } });
     res.json({ user: rows[0] });
   }),
 );
@@ -176,6 +205,8 @@ router.post(
        VALUES ($1,$2,$3,$4) RETURNING *`,
       [req.params.id, rupeesToPaise(b.amount), b.reason ?? null, req.user.id],
     );
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'hold.place',
+      targetType: 'user', targetId: req.params.id, detail: { amount_paise: rupeesToPaise(b.amount), reason: b.reason ?? null } });
     res.status(201).json({ hold: rows[0] });
   }),
 );
@@ -191,6 +222,8 @@ router.post(
       [req.user.id, req.params.holdId, req.params.id],
     );
     if (!rows[0]) throw ApiError.notFound('Active hold not found');
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'hold.release',
+      targetType: 'user', targetId: req.params.id, detail: { hold_id: req.params.holdId } });
     res.json({ hold: rows[0] });
   }),
 );
@@ -808,6 +841,8 @@ router.post(
       );
       return upd.rows[0];
     });
+    await logAudit({ actorId: checkerId, actorRole: req.user.role, action: 'adjustment.approve',
+      targetType: 'adjustment', targetId: req.params.id, detail: { note: note ?? null, amount_paise: Number(result.amount_paise), kind: result.kind } });
     res.json({ adjustment: result });
   }),
 );
@@ -824,6 +859,8 @@ router.post(
       [req.user.id, note ?? null, req.params.id],
     );
     if (!rows[0]) throw ApiError.conflict('Adjustment not found or already decided');
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'adjustment.reject',
+      targetType: 'adjustment', targetId: req.params.id, detail: { note: note ?? null } });
     res.json({ adjustment: rows[0] });
   }),
 );
@@ -1281,6 +1318,8 @@ router.post(
       return upd.rows[0];
     });
 
+    await logAudit({ actorId: adminId, actorRole: req.user.role, action: 'topup.approve',
+      targetType: 'topup', targetId: topupId, detail: { remarks: remarks ?? null, amount_paise: Number(result.amount_paise) } });
     res.json({ request: result });
   }),
 );
@@ -1300,6 +1339,8 @@ router.post(
       [req.user.id, remarks ?? null, req.params.id],
     );
     if (!rows[0]) throw ApiError.conflict('Top-up not found or already reviewed');
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'topup.reject',
+      targetType: 'topup', targetId: req.params.id, detail: { remarks: remarks ?? null } });
     res.json({ request: rows[0] });
   }),
 );
@@ -1412,6 +1453,8 @@ router.post(
     );
     if (!rows[0]) throw ApiError.notFound('Provider not found');
     await refreshProviderRegistry();
+    if (req.user) await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'provider.activate',
+      targetType: 'provider', targetId: req.params.id, detail: { service_code: rows[0].service_code, label: rows[0].label } });
     res.json({ provider: rows[0] });
   }),
 );
@@ -1425,6 +1468,8 @@ router.post(
     );
     if (!rows[0]) throw ApiError.notFound('Provider not found');
     await refreshProviderRegistry();
+    if (req.user) await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'provider.deactivate',
+      targetType: 'provider', targetId: req.params.id, detail: { service_code: rows[0].service_code, label: rows[0].label } });
     res.json({ provider: rows[0] });
   }),
 );

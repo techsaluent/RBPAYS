@@ -223,6 +223,7 @@ const NAV = [
   { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
   { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
   { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
+  { key: 'audit', label: 'Audit Log', roles: ['admin'], section: 'Risk & Ops' },
   { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'staff', label: 'Staff & Roles', roles: ['admin'], section: 'Settings' },
 ];
@@ -674,6 +675,31 @@ const Screens = {
       <p class="muted">Register the biometric scanner / mobile you use for AEPS so transactions are tied to a known device.</p>
       <div class="tbl-wrap"><table><thead><tr><th>Label</th><th>Device ID</th><th>IMEI</th><th>Status</th><th>Bound</th></tr></thead>
       <tbody>${rows || '<tr><td colspan=5 class=muted>No devices bound yet.</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Super admin: activity audit log (who did what).
+  async audit() {
+    const d = await Api.get('/admin/audit?limit=100');
+    const label = { 'kyc.review':'KYC review', 'topup.approve':'Top-up approved', 'topup.reject':'Top-up rejected',
+      'hold.place':'Lien placed', 'hold.release':'Lien released', 'user.status':'User status changed',
+      'staff.create':'Staff created', 'staff.permissions':'Staff permissions changed', 'staff.status':'Staff status changed',
+      'provider.activate':'Provider activated', 'provider.deactivate':'Provider deactivated',
+      'adjustment.approve':'Adjustment approved', 'adjustment.reject':'Adjustment rejected' };
+    const rows = (d.items || []).map(a => {
+      const det = a.detail || {};
+      const note = det.remarks || det.reason || det.note || '';
+      const extra = det.amount_paise ? ' · ' + money(det.amount_paise/100) : (det.status ? ' · ' + esc(det.status) : '');
+      return `<tr>
+        <td class="muted" style="white-space:nowrap">${new Date(a.created_at).toLocaleString('en-IN')}</td>
+        <td>${esc(a.actor_name || '—')}<div class="muted" style="font-size:11px">${esc(a.actor_role||'')}</div></td>
+        <td>${esc(label[a.action] || a.action)}${extra}</td>
+        <td class="muted">${esc(a.target_type||'')} ${a.target_id ? esc(String(a.target_id).slice(0,8)) : ''}</td>
+        <td>${note ? esc(note) : '<span class="muted">—</span>'}</td></tr>`;
+    }).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Activity audit log</h2>
+      <p class="muted">Append-only trail of sensitive back-office actions — approvals, liens, staff &amp; provider changes — with the remark.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Remark</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No activity recorded yet.</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Super admin: staff team + scoped permissions.
