@@ -25,6 +25,34 @@ export const loginSchema = z.object({
   // Accept email, phone or username as the identifier.
   identifier: z.string().trim().min(3),
   password: z.string().min(1),
+  // Optional MPIN; required at login when the account has one set.
+  mpin: z.string().trim().regex(/^\d{4,6}$/).optional(),
+});
+
+export const mpinSchema = z.string().trim().regex(/^\d{4,6}$/, 'MPIN must be 4-6 digits');
+
+export const forgotPasswordSchema = z.object({
+  identifier: z.string().trim().min(3),
+});
+
+export const resetPasswordSchema = z.object({
+  identifier: z.string().trim().min(3),
+  code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+  new_password: z.string().min(8).max(128),
+});
+
+export const changePasswordSchema = z.object({
+  current_password: z.string().min(1),
+  new_password: z.string().min(8).max(128),
+});
+
+export const setMpinSchema = z.object({
+  current_password: z.string().min(1),
+  mpin: mpinSchema,
+});
+
+export const removeMpinSchema = z.object({
+  current_password: z.string().min(1),
 });
 
 export const refreshSchema = z.object({

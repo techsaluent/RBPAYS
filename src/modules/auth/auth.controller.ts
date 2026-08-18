@@ -27,3 +27,14 @@ export async function me(req: Request, res: Response): Promise<void> {
   const user = await authService.getUserById(req.user.id);
   res.status(200).json({ user });
 }
+
+export async function forgotPassword(req: Request, res: Response): Promise<void> {
+  const result = await authService.forgotPassword(req.body.identifier);
+  // Generic response to avoid account enumeration; dev_code only in non-prod.
+  res.status(200).json({ message: 'If the account exists, a reset code has been sent.', ...result });
+}
+
+export async function resetPassword(req: Request, res: Response): Promise<void> {
+  await authService.resetPassword(req.body.identifier, req.body.code, req.body.new_password);
+  res.status(200).json({ message: 'Password updated. Please log in.' });
+}
