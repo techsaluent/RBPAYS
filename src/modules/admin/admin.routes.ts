@@ -15,6 +15,7 @@ import { postJournal } from '../_shared/ledger';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
+import { adminResetPassword } from '../auth/auth.service';
 import {
   createPayoutBatch,
   generateBatchFile,
@@ -121,6 +122,18 @@ router.patch(
     );
     if (!rows[0]) throw ApiError.notFound('User not found');
     res.json({ user: rows[0] });
+  }),
+);
+
+const resetPwSchema = z.object({ new_password: z.string().min(8).max(128) });
+
+// Admin resets a member's password (immediate; revokes their sessions).
+router.post(
+  '/users/:id/reset-password',
+  validate(resetPwSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    await adminResetPassword(req.params.id, req.body.new_password);
+    res.json({ message: 'Password reset' });
   }),
 );
 

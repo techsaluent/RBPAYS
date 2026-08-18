@@ -41,7 +41,11 @@ const Api = {
     }
     const text = await res.text();
     const data = text ? JSON.parse(text) : null;
-    if (!res.ok) throw new Error(data?.error?.message || ('HTTP ' + res.status));
+    if (!res.ok) {
+      const e = new Error(data?.error?.message || ('HTTP ' + res.status));
+      e.code = data?.error?.code; e.status = res.status;
+      throw e;
+    }
     return data;
   },
   get(p) { return this.call(p); },
@@ -56,11 +60,33 @@ const Auth = {
   async login(e) {
     e.preventDefault();
     const f = e.target;
+    const body = { identifier: f.identifier.value.trim(), password: f.password.value };
+    if (f.mpin && f.mpin.value.trim()) body.mpin = f.mpin.value.trim();
     try {
-      const d = await Api.post('/auth/login', {
-        identifier: f.identifier.value.trim(), password: f.password.value,
-      }, false);
+      const d = await Api.post('/auth/login', body, false);
       Auth.save(d); await App.boot();
+    } catch (err) {
+      if (err.code === 'mpin_required') {
+        $('mpin-field').classList.remove('hidden');
+        $('mpin-field').querySelector('input').focus();
+        UI.authMsg('Enter your MPIN to continue.', 'ok');
+      } else { UI.authMsg(err.message, 'err'); }
+    }
+    return false;
+  },
+  async forgotPassword() {
+    const id = prompt('Enter your registered email, phone or username:');
+    if (!id) return false;
+    try {
+      const r = await Api.post('/auth/forgot-password', { identifier: id.trim() }, false);
+      let msg = r.message || 'Reset code sent.';
+      if (r.dev_code) msg += `\n\n(Test code: ${r.dev_code})`;
+      const code = prompt(msg + '\n\nEnter the 6-digit reset code:');
+      if (!code) return false;
+      const pw = prompt('Enter your new password (min 8 characters):');
+      if (!pw) return false;
+      await Api.post('/auth/reset-password', { identifier: id.trim(), code: code.trim(), new_password: pw }, false);
+      UI.authMsg('Password updated. Please log in.', 'ok');
     } catch (err) { UI.authMsg(err.message, 'err'); }
     return false;
   },
@@ -132,6 +158,7 @@ const NAV = [
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
+  { key: 'security', label: 'Security', roles: '*' },
   { key: 'members', label: 'Users', roles: ['admin'] },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin'] },
   { key: 'topupreview', label: 'Top-up Requests', roles: ['admin'] },
@@ -290,6 +317,24 @@ const Screens = {
           <a class="btn sm ghost" href="#/wallet">Wallets &amp; sweep</a> &nbsp;
           <a class="btn sm ghost" href="#/txns">View transactions</a></div>`;
     }
+  },
+
+  // Account security: change password, set/remove login MPIN.
+  async security() {
+    const s = await Api.get('/security').catch(() => ({ mpin_set: false }));
+    $('view').innerHTML = `
+      <div class="grid cards"><div class="card"><div class="k">Login MPIN (PIN)</div>
+        <div class="v" style="font-size:18px">${s.mpin_set ? UI.statusTag('verified') : '<span class="tag">not set</span>'}</div></div></div>
+      <div class="panel mt" style="max-width:480px"><h2>Change password</h2>
+        <div class="field"><label>Current password</label><input id="cp_cur" type="password"></div>
+        <div class="field"><label>New password (min 8)</label><input id="cp_new" type="password"></div>
+        <button class="btn" onclick="Actions.changePassword()">Update password</button></div>
+      <div class="panel mt" style="max-width:480px"><h2>Login MPIN (PIN instead of OTP)</h2>
+        <p class="muted">Set a 4-6 digit PIN. Once set, it's required as a second step at every login.</p>
+        <div class="field"><label>Current password</label><input id="mp_pw" type="password"></div>
+        <div class="field"><label>${s.mpin_set ? 'New ' : ''}MPIN (4-6 digits)</label><input id="mp_pin" type="password" inputmode="numeric" maxlength="6"></div>
+        <button class="btn" onclick="Actions.setMpin()">${s.mpin_set ? 'Change' : 'Set'} MPIN</button>
+        ${s.mpin_set ? `<button class="btn ghost mt" onclick="Actions.removeMpin()">Remove MPIN</button>` : ''}</div>`;
   },
 
   // Member self-service KYC: submit documents and see status.
@@ -474,6 +519,7 @@ const Screens = {
         ${u.status === 'active'
           ? `<button class="btn sm ghost" onclick="Actions.setStatus('${u.id}','suspended')">Suspend</button>`
           : `<button class="btn sm" onclick="Actions.setStatus('${u.id}','active')">Activate</button>`}
+        <button class="btn sm ghost" onclick="Actions.resetUserPw('${u.id}','${esc(u.full_name)}')">Reset PW</button>
         ${u.role !== 'admin' ? `<button class="btn sm ghost" onclick="Actions.assessOnb('${u.id}')">Score</button>
         <button class="btn sm ghost" onclick="Actions.promote('${u.id}')">Promote</button>` : ''}
       </td></tr>`).join('');
@@ -987,6 +1033,31 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   presetSvc(key) { Actions._preset = key; },
+  async changePassword() {
+    const body = { current_password: val('cp_cur'), new_password: val('cp_new') };
+    if (body.new_password.length < 8) return UI.toast('New password must be at least 8 characters', 'err');
+    try { await Api.post('/security/password', body); UI.toast('Password changed — please log in again'); Auth.logout(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async setMpin() {
+    const body = { current_password: val('mp_pw'), mpin: val('mp_pin') };
+    if (!/^\d{4,6}$/.test(body.mpin)) return UI.toast('MPIN must be 4-6 digits', 'err');
+    try { await Api.post('/security/mpin', body); UI.toast('MPIN set — required at next login'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async removeMpin() {
+    const pw = prompt('Enter your current password to remove the MPIN:');
+    if (!pw) return;
+    try { await Api.call('/security/mpin', { method: 'DELETE', body: { current_password: pw } }); UI.toast('MPIN removed'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async resetUserPw(id, name) {
+    const pw = prompt(`Set a new password for ${name} (min 8 chars):`);
+    if (!pw) return;
+    if (pw.length < 8) return UI.toast('Min 8 characters', 'err');
+    try { await Api.post(`/admin/users/${id}/reset-password`, { new_password: pw }); UI.toast('Password reset'); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
   async saveTaxConfig(codes) {
     const items = codes.map(code => ({
       code,
