@@ -205,24 +205,24 @@ const NAV = [
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
   { key: 'security', label: 'Security', roles: '*' },
-  // Admin console — each item maps to a staff permission (super admin sees all).
-  { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view' },
-  { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review' },
-  { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage' },
-  { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin', 'staff'], perm: 'topup.manage' },
-  { key: 'plans', label: 'Commission', roles: ['admin', 'staff'], perm: 'commission.manage' },
-  { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage' },
-  { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage' },
-  { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage' },
-  { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage' },
-  { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin', 'staff'], perm: 'tax.manage' },
-  { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage' },
-  { key: 'recon', label: 'Reconciliation', roles: ['admin', 'staff'], perm: 'recon.manage' },
-  { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin', 'staff'], perm: 'payouts.manage' },
-  { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage' },
-  { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view' },
-  { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view' },
-  { key: 'staff', label: 'Staff & Roles', roles: ['admin'] },
+  // Admin console — grouped into sidebar sections; each maps to a staff permission.
+  { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
+  { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review', section: 'Users & KYC' },
+  { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
+  { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
+  { key: 'plans', label: 'Commission', roles: ['admin', 'staff'], perm: 'commission.manage', section: 'Finance' },
+  { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin', 'staff'], perm: 'tax.manage', section: 'Finance' },
+  { key: 'recon', label: 'Reconciliation', roles: ['admin', 'staff'], perm: 'recon.manage', section: 'Finance' },
+  { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
+  { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
+  { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
+  { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
+  { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
+  { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
+  { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
+  { key: 'staff', label: 'Staff & Roles', roles: ['admin'], section: 'Settings' },
 ];
 // Super admin sees everything; staff see console items only for permissions they hold.
 function hasPerm(p) {
@@ -288,8 +288,14 @@ const App = {
     $('auth').style.display = 'none'; $('app').style.display = 'grid';
     $('who-name').textContent = State.user.full_name;
     $('who-role').textContent = State.user.role.replace(/_/g, ' ');
-    $('nav').innerHTML = NAV.filter(allowed)
-      .map(i => `<a href="#/${i.key}" data-k="${i.key}">${i.label}</a>`).join('');
+    // Render nav, inserting a section header whenever the group changes.
+    let lastSection = null;
+    $('nav').innerHTML = NAV.filter(allowed).map(i => {
+      let head = '';
+      if (i.section && i.section !== lastSection) { head = `<div class="nav-sec">${esc(i.section)}</div>`; lastSection = i.section; }
+      else if (!i.section) lastSection = null;
+      return `${head}<a href="#/${i.key}" data-k="${i.key}">${i.label}</a>`;
+    }).join('');
     await App.refreshWallet();
     window.onhashchange = App.route;
     if (!location.hash) location.hash = '#/dashboard';
@@ -505,7 +511,10 @@ const Screens = {
     $('view').innerHTML = `
       <div class="grid cards">
         <div class="card"><div class="k">Main wallet</div><div class="v">${money(w.wallet.balance)}</div>
+          ${w.wallet.held_paise ? `<div class="muted" style="font-size:12px;margin-top:4px">Available <b>${money(w.wallet.available)}</b> · 🔒 blocked ${money(w.wallet.held)}</div>` : ''}
           <a class="btn sm ghost" href="#/addmoney">Add money</a></div>
+        ${w.wallet.held_paise ? `<div class="card"><div class="k">Blocked (lien)</div><div class="v" style="color:var(--warn)">${money(w.wallet.held)}</div>
+          <div class="muted" style="font-size:12px">Held by admin — can't be spent</div></div>` : ''}
         <div class="card"><div class="k">AePS settlement</div><div class="v">${money(sw.settlement)}</div>
           ${sw.settlement_paise > 0 ? `<button class="btn sm" onclick="Actions.sweep('settlement',${sw.settlement_paise/100})">Sweep to main</button>` : ''}</div>
         <div class="card"><div class="k">Commission (net of TDS)</div><div class="v">${money(sw.commission)}</div>
@@ -671,7 +680,8 @@ const Screens = {
           ? `<button class="btn sm ghost" onclick="Actions.setStatus('${u.id}','suspended')">Suspend</button>`
           : `<button class="btn sm" onclick="Actions.setStatus('${u.id}','active')">Activate</button>`}
         <button class="btn sm ghost" onclick="Actions.resetUserPw('${u.id}','${esc(u.full_name)}')">Reset PW</button>
-        ${u.role !== 'admin' ? `<button class="btn sm ghost" onclick="Actions.assessOnb('${u.id}')">Score</button>
+        ${u.role !== 'admin' ? `<button class="btn sm ghost" onclick="Actions.holds('${u.id}','${esc(u.full_name)}')">Lien</button>
+        <button class="btn sm ghost" onclick="Actions.assessOnb('${u.id}')">Score</button>
         <button class="btn sm ghost" onclick="Actions.promote('${u.id}')">Promote</button>` : ''}
       </td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
@@ -1287,6 +1297,38 @@ const Actions = {
     try { await Api.call('/security/mpin', { method: 'DELETE', body: { current_password: pw } }); UI.toast('MPIN removed'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  // Wallet lien / blocked amount: view, place and release holds on a user.
+  async holds(userId, name) {
+    const d = await Api.get(`/admin/users/${userId}/holds`);
+    const rows = (d.items || []).map(h => `<tr>
+      <td class="right">${money(h.amount_paise/100)}</td>
+      <td>${esc(h.reason||'')}</td>
+      <td>${UI.statusTag(h.status)}</td>
+      <td class="muted">${new Date(h.created_at).toLocaleDateString('en-IN')}</td>
+      <td>${h.status==='active' ? `<button class="btn sm" onclick="Actions.releaseHold('${userId}','${h.id}','${esc(name)}')">Release</button>` : `<span class="muted">by ${esc(h.released_by_name||'')}</span>`}</td>
+    </tr>`).join('');
+    UI.modal(`<h3>Wallet holds — ${esc(name)}</h3>
+      <p class="muted" style="font-size:13px">Currently blocked: <b>${money((d.held_paise||0)/100)}</b>. Held funds can't be spent until released.</p>
+      <div class="row" style="gap:8px;align-items:end">
+        <div class="field" style="margin:0"><label>Amount (₹)</label><input id="hold_amt" type="number" min="1" step="0.01" style="width:130px"></div>
+        <div class="field" style="margin:0;flex:1"><label>Reason</label><input id="hold_reason" placeholder="dispute / pending settlement"></div>
+        <button class="btn sm" onclick="Actions.placeHold('${userId}','${esc(name)}')">Place hold</button>
+      </div>
+      <div class="tbl-wrap mt"><table><thead><tr><th class="right">Amount</th><th>Reason</th><th>Status</th><th>When</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No holds yet.</td></tr>'}</tbody></table></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async placeHold(userId, name) {
+    const amt = +val('hold_amt'); if (!amt || amt <= 0) return UI.toast('Enter an amount', 'err');
+    try { await Api.post(`/admin/users/${userId}/holds`, { amount: amt, reason: val('hold_reason') || undefined });
+      UI.closeModal(); UI.toast('Hold placed'); Actions.holds(userId, name); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async releaseHold(userId, holdId, name) {
+    try { await Api.post(`/admin/users/${userId}/holds/${holdId}/release`, {});
+      UI.toast('Hold released'); Actions.holds(userId, name); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
   async resetUserPw(id, name) {
     const pw = prompt(`Set a new password for ${name} (min 8 chars):`);
     if (!pw) return;
@@ -1427,7 +1469,12 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async reviewKyc(id, status) {
-    try { await Api.post(`/kyc/${id}/review`, { status }); UI.toast('KYC ' + status); App.route(); }
+    // Every approval / rejection must carry a remark for the audit trail.
+    const remarks = prompt(`${status === 'verified' ? 'Approve' : 'Reject'} this document — enter a remark (required):`,
+      status === 'verified' ? 'Documents verified' : '');
+    if (remarks === null) return;
+    if (!remarks.trim()) return UI.toast('A remark is required to approve or reject', 'err');
+    try { await Api.post(`/kyc/${id}/review`, { status, remarks: remarks.trim() }); UI.toast('KYC ' + status); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async submitKyc() {
@@ -1466,15 +1513,17 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async approveTopup(id) {
-    const remarks = prompt('Approve this top-up? Optional remarks:', 'Verified');
+    const remarks = prompt('Approve this top-up — enter a remark (required):', 'Payment verified');
     if (remarks === null) return;
-    try { await Api.post(`/admin/topups/${id}/approve`, { remarks }); UI.toast('Approved & wallet credited'); App.route(); }
+    if (!remarks.trim()) return UI.toast('A remark is required', 'err');
+    try { await Api.post(`/admin/topups/${id}/approve`, { remarks: remarks.trim() }); UI.toast('Approved & wallet credited'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async rejectTopup(id) {
-    const remarks = prompt('Reject this top-up? Reason:', '');
+    const remarks = prompt('Reject this top-up — enter a reason (required):', '');
     if (remarks === null) return;
-    try { await Api.post(`/admin/topups/${id}/reject`, { remarks }); UI.toast('Rejected'); App.route(); }
+    if (!remarks.trim()) return UI.toast('A reason is required to reject', 'err');
+    try { await Api.post(`/admin/topups/${id}/reject`, { remarks: remarks.trim() }); UI.toast('Rejected'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
 

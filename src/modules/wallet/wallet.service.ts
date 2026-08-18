@@ -53,7 +53,20 @@ export async function getWalletByUser(userId: string) {
     [userId],
   );
   if (!rows[0]) throw ApiError.notFound('Wallet not found');
-  return serialize(rows[0]);
+  const holdRes = await query<{ total: string }>(
+    "SELECT COALESCE(SUM(amount_paise),0) AS total FROM wallet_holds WHERE user_id = $1 AND status = 'active'",
+    [userId],
+  );
+  const heldPaise = Number(holdRes.rows[0].total);
+  const w = serialize(rows[0]);
+  const availablePaise = w.balance_paise - heldPaise;
+  return {
+    ...w,
+    held_paise: heldPaise,
+    held: paiseToRupees(String(heldPaise)),
+    available_paise: availablePaise,
+    available: paiseToRupees(String(availablePaise)),
+  };
 }
 
 /**
@@ -82,14 +95,27 @@ interface LedgerParams {
  * balance. MUST be called inside withTransaction (needs the same client).
  * Returns the new balance in paise.
  */
+export async function activeHoldTotalPaise(client: PoolClient, userId: string): Promise<number> {
+  const { rows } = await client.query<{ total: string }>(
+    "SELECT COALESCE(SUM(amount_paise),0) AS total FROM wallet_holds WHERE user_id = $1 AND status = 'active'",
+    [userId],
+  );
+  return Number(rows[0].total);
+}
+
 export async function debit(client: PoolClient, p: LedgerParams): Promise<number> {
   if (p.amountPaise <= 0) throw ApiError.badRequest('Debit amount must be positive');
   const wallet = await lockWallet(client, p.userId);
   const balance = Number(wallet.balance_paise);
-  if (balance < p.amountPaise) {
-    throw ApiError.unprocessable('Insufficient wallet balance', {
+  // Spendable = balance minus any active lien/hold on the wallet.
+  const held = await activeHoldTotalPaise(client, p.userId);
+  const available = balance - held;
+  if (available < p.amountPaise) {
+    throw ApiError.unprocessable('Insufficient available balance (some funds are on hold)', {
       required_paise: p.amountPaise,
-      available_paise: balance,
+      available_paise: available,
+      held_paise: held,
+      balance_paise: balance,
     });
   }
   const newBalance = balance - p.amountPaise;
