@@ -789,6 +789,9 @@ const Screens = {
         ${field('auth_poster_title','Poster title','Grow your business with us')}
         ${field('auth_poster_subtitle','Poster subtitle')}
         ${field('auth_poster_link','Poster link (optional)','https://…')}
+        <h2 class="mt">Security policy</h2>
+        <div class="field"><label><input type="checkbox" id="ws_security_require_txn_mpin" ${s.security_require_txn_mpin==='true'?'checked':''}> Require MPIN to confirm every transaction</label></div>
+        <p class="muted">When on, retailers must enter their MPIN (set in Security) to complete each money transaction. They'll be prompted automatically.</p>
         <button class="btn mt" onclick="Actions.saveSite()">Save branding</button></div>
       <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Custom pages</h2>
         <button class="btn sm" onclick="Actions.editPage()">+ New page</button></div>
@@ -893,16 +896,30 @@ const Actions = {
     $('svc-fields').innerHTML = s.fields.map(([n, label, type]) =>
       `<div class="field"><label>${label}</label><input name="${n}" type="${type}" ${type==='number'?'step=0.01 min=0':''} /></div>`).join('');
   },
-  async submitTxn() {
+  async submitTxn(mpin) {
     const s = SERVICES.find(x => x.key === $('svc').value);
     const v = {}; s.fields.forEach(([n]) => v[n] = document.querySelector(`#svc-fields [name="${n}"]`).value.trim());
+    const body = s.build(v);
+    if (mpin) body.mpin = mpin;
     $('txn-result').innerHTML = '<span class="muted">Processing…</span>';
     try {
-      const d = await Api.post(s.path, s.build(v));
+      const d = await Api.post(s.path, body);
       const t = d.transaction || d.transfer;
       $('txn-result').innerHTML = `<div class="msg ok">Done — status: <b>${esc(t.status)}</b>${t.reference ? ' · ref ' + esc(t.reference) : ''}</div>`;
       App.refreshWallet();
-    } catch (err) { $('txn-result').innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
+    } catch (err) {
+      if (err.code === 'txn_mpin_required' || err.code === 'unauthorized' && /MPIN/i.test(err.message)) {
+        const pin = prompt('Enter your transaction MPIN to confirm:');
+        if (pin) return Actions.submitTxn(pin.trim());
+        $('txn-result').innerHTML = '<div class="msg err">Transaction cancelled — MPIN required.</div>';
+        return;
+      }
+      if (err.code === 'txn_mpin_not_set') {
+        $('txn-result').innerHTML = `<div class="msg err">${esc(err.message)} — <a href="#/security">Set MPIN</a></div>`;
+        return;
+      }
+      $('txn-result').innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+    }
   },
   async topup() {
     const amt = prompt('Top-up amount (₹):', '500'); if (!amt) return;
@@ -1071,6 +1088,7 @@ const Actions = {
   async saveSite() {
     const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','company_pan','company_gst','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
+    values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     try { await Api.put('/admin/site/settings', { values }); UI.toast('Branding saved'); App.applyBranding(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
