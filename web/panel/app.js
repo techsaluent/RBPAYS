@@ -332,10 +332,17 @@ const Screens = {
     if (State.user.role === 'admin') {
       const d = await Api.get('/admin/dashboard');
       const roles = Object.entries(d.users_by_role || {}).map(([k, n]) => `${k.replace(/_/g,' ')}: <b>${n}</b>`).join(' &nbsp; ');
-      const vol = Object.entries(d.service_volumes || {})
-        .sort((a, b) => b[1].success_amount_paise - a[1].success_amount_paise)
-        .map(([k, v]) =>
+      const volEntries = Object.entries(d.service_volumes || {})
+        .sort((a, b) => b[1].success_amount_paise - a[1].success_amount_paise);
+      const vol = volEntries.map(([k, v]) =>
         `<tr><td>${esc(k.replace(/_/g,' '))}</td><td class="right">${v.success_count}</td><td class="right">${v.total_count ?? '—'}</td><td class="right">${money(v.success_amount_paise/100)}</td></tr>`).join('');
+      const trend = (d.daily || []).map(x => ({ day: x.day, value: x.amount_paise }));
+      const topSvc = volEntries.slice(0, 7).map(([k, v]) => ({ label: k.replace(/_/g,' '), value: v.success_amount_paise }));
+      const statusSeg = [
+        { label: 'Success', value: d.txn_success_count || 0, color: '#0f9d63' },
+        { label: 'Pending', value: d.txn_pending_count || 0, color: '#bd7a00' },
+        { label: 'Failed', value: d.txn_failed_count || 0, color: '#d43c3c' },
+      ];
       $('view').innerHTML = `
         <div class="stats">
           ${UI.stat('b','💳','Today\'s volume', money((d.today_amount_paise||0)/100), `<b>${d.today_count||0}</b> transactions today`)}
@@ -347,9 +354,17 @@ const Screens = {
           ${UI.stat('r','🪪','Pending KYC', d.pending_kyc, d.pending_kyc ? '<a href="#/kycreview">Review now →</a>' : 'All clear')}
           ${UI.stat('o','⏳','Pending txns', (d.txn_pending_count||0), 'Awaiting settlement')}
         </div>
+        <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Transaction volume — last 14 days</h2>
+          <span class="muted" style="font-size:12px">Successful ₹ per day (IST)</span></div>
+          ${Charts.area(trend, { fmt: Charts.money })}</div>
+        <div class="chart-2 mt">
+          <div class="panel"><h2>Top services by value</h2>${Charts.hbars(topSvc, { fmt: Charts.money })}</div>
+          <div class="panel"><h2>Transaction status</h2>${Charts.donut(statusSeg)}</div>
+        </div>
         <div class="panel mt"><h2>Command consoles</h2>
           <div class="row" style="flex-wrap:wrap;gap:8px">
             <a class="btn sm ghost" href="#/members">Users</a>
+            <a class="btn sm ghost" href="#/staff">Staff &amp; Roles</a>
             <a class="btn sm ghost" href="#/kycreview">KYC Review</a>
             <a class="btn sm ghost" href="#/topupreview">Top-up Requests</a>
             <a class="btn sm ghost" href="#/plans">Commission</a>
@@ -385,6 +400,9 @@ const Screens = {
           ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, dc || 'No members yet')}
           ${st ? UI.stat('t','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : ''}
         </div>
+        ${st && st.daily ? `<div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Network volume — last 7 days</h2>
+          <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
+          ${Charts.area(st.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
         <div class="panel mt"><h2>Quick actions</h2>
           <a class="btn sm" href="#/network">Manage network</a> &nbsp;
           <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
@@ -416,6 +434,9 @@ const Screens = {
           ${UI.stat('t','📈','This month', money((s.month_amount_paise||0)/100), 'Successful value')}
           ${UI.stat('o','🎯','Success rate', (s.success_rate??0)+'%', `<b>${s.success_count||0}</b> of ${s.total_count||0}`)}
         </div>
+        ${s.daily ? `<div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My volume — last 7 days</h2>
+          <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
+          ${Charts.area(s.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
         <div class="sechead">Banking counter</div>
         <div class="panel"><div class="row" style="flex-wrap:wrap;gap:8px">${quick}</div></div>
         <div class="panel mt"><h2>Quick actions</h2>

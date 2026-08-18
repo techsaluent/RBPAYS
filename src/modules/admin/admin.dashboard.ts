@@ -40,6 +40,7 @@ export async function dashboardStats() {
         COUNT(*) AS total_count,
         COUNT(*) FILTER (WHERE status = 'success') AS success_count,
         COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
         COALESCE(SUM(amount_paise) FILTER (WHERE status = 'success'), 0) AS success_amount,
         COUNT(*) FILTER (
           WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
@@ -59,6 +60,30 @@ export async function dashboardStats() {
   const tn = (k: string) => Number(t[k] ?? 0);
   const totalTxn = tn('total_count');
   const successTxn = tn('success_count');
+
+  // 14-day daily trend (IST) for the dashboard chart — successful volume + count.
+  const trend = await query<{ day: string; amount: string; count: string }>(
+    `WITH days AS (
+        SELECT generate_series(
+          (now() AT TIME ZONE 'Asia/Kolkata')::date - INTERVAL '13 days',
+          (now() AT TIME ZONE 'Asia/Kolkata')::date,
+          INTERVAL '1 day')::date AS day
+     )
+     SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
+            COALESCE(SUM(x.amount_paise),0) AS amount,
+            COUNT(x.id) AS count
+       FROM days d
+       LEFT JOIN transactions x
+         ON (x.created_at AT TIME ZONE 'Asia/Kolkata')::date = d.day
+        AND x.status = 'success'
+      GROUP BY d.day
+      ORDER BY d.day`,
+  );
+  const daily = trend.rows.map((r) => ({
+    day: r.day,
+    amount_paise: Number(r.amount),
+    count: Number(r.count),
+  }));
 
   // Per-service volume: successful count + amount.
   const volumes: Record<string, { success_count: number; success_amount_paise: number; total_count: number }> = {};
@@ -99,11 +124,13 @@ export async function dashboardStats() {
     txn_total_count: totalTxn,
     txn_success_count: successTxn,
     txn_pending_count: tn('pending_count'),
+    txn_failed_count: tn('failed_count'),
     txn_success_rate: totalTxn ? Math.round((successTxn / totalTxn) * 100) : 0,
     gtv_paise: tn('success_amount'),
     today_count: tn('today_count'),
     today_amount_paise: tn('today_amount'),
     month_amount_paise: tn('month_amount'),
+    daily,
     service_volumes: volumes,
   };
 }

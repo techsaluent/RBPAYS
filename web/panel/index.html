@@ -83,6 +83,8 @@
     .stat.b { --accent:var(--brand); } .stat.g { --accent:#137333; } .stat.o { --accent:#b06000; }
     .stat.p { --accent:#7c3aed; } .stat.r { --accent:#c5221f; } .stat.t { --accent:#0d9488; }
     .sechead { font-size:13px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:22px 0 12px; }
+    .chart-2 { display:grid; gap:16px; grid-template-columns:1fr 1fr; }
+    @media (max-width:760px){ .chart-2 { grid-template-columns:1fr; } }
     .panel { background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 20px; }
     .panel h2 { font-size:15px; margin:0 0 14px; }
     .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }
@@ -185,6 +187,7 @@
   </div>
 
   <div id="modal-root"></div>
+  <script src="charts.js"></script>
   <script src="rdservice.js"></script>
   <script src="app.js"></script>
 </body>
