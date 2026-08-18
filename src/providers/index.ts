@@ -40,12 +40,12 @@ import { activeDriver } from './registry';
  * Unknown values fall back to sandbox so the API never hard-fails on a typo —
  * the choice is logged at call sites via provider.name.
  */
-function driverFor(serviceCode: string, envValue: string): string {
-  return activeDriver(serviceCode) ?? envValue;
+function driverFor(serviceCode: string, envValue: string, providerId?: string): string {
+  return activeDriver(serviceCode, providerId) ?? envValue;
 }
 
-export function getDmtProvider(): DmtProvider {
-  switch (driverFor('dmt', env.PROVIDER_DMT)) {
+export function getDmtProvider(providerId?: string): DmtProvider {
+  switch (driverFor('dmt', env.PROVIDER_DMT, providerId)) {
     case 'aggregator':
       return aggregatorDmt;
     default:
@@ -53,8 +53,8 @@ export function getDmtProvider(): DmtProvider {
   }
 }
 
-export function getBbpsProvider(): BbpsProvider {
-  switch (driverFor('bbps', env.PROVIDER_BBPS)) {
+export function getBbpsProvider(providerId?: string): BbpsProvider {
+  switch (driverFor('bbps', env.PROVIDER_BBPS, providerId)) {
     case 'aggregator':
       return aggregatorBbps;
     default:
@@ -62,8 +62,8 @@ export function getBbpsProvider(): BbpsProvider {
   }
 }
 
-export function getRechargeProvider(): RechargeProvider {
-  switch (driverFor('recharge', env.PROVIDER_RECHARGE)) {
+export function getRechargeProvider(providerId?: string): RechargeProvider {
+  switch (driverFor('recharge', env.PROVIDER_RECHARGE, providerId)) {
     case 'aggregator':
       return aggregatorRecharge;
     default:
@@ -71,8 +71,8 @@ export function getRechargeProvider(): RechargeProvider {
   }
 }
 
-export function getPayoutProvider(): PayoutProvider {
-  switch (driverFor('payout', env.PROVIDER_PAYOUT)) {
+export function getPayoutProvider(providerId?: string): PayoutProvider {
+  switch (driverFor('payout', env.PROVIDER_PAYOUT, providerId)) {
     case 'razorpay':
       return razorpayPayout;
     default:
@@ -80,16 +80,16 @@ export function getPayoutProvider(): PayoutProvider {
   }
 }
 
-export function getAepsProvider(): AepsProvider {
-  return driverFor('aeps', env.PROVIDER_AEPS) === 'aggregator' ? aggregatorAeps : sandboxAeps;
+export function getAepsProvider(providerId?: string): AepsProvider {
+  return driverFor('aeps', env.PROVIDER_AEPS, providerId) === 'aggregator' ? aggregatorAeps : sandboxAeps;
 }
 
-export function getCmsProvider(): CmsProvider {
-  return driverFor('cms', env.PROVIDER_CMS) === 'aggregator' ? aggregatorCms : sandboxCms;
+export function getCmsProvider(providerId?: string): CmsProvider {
+  return driverFor('cms', env.PROVIDER_CMS, providerId) === 'aggregator' ? aggregatorCms : sandboxCms;
 }
 
-export function getCardSwipeProvider(): CardSwipeProvider {
-  return driverFor('card_swipe', env.PROVIDER_CARD_SWIPE) === 'aggregator'
+export function getCardSwipeProvider(providerId?: string): CardSwipeProvider {
+  return driverFor('card_swipe', env.PROVIDER_CARD_SWIPE, providerId) === 'aggregator'
     ? aggregatorCardSwipe
     : sandboxCardSwipe;
 }
@@ -104,8 +104,8 @@ const GENERIC_ENV: Record<string, string> = {
   insurance: env.PROVIDER_INSURANCE,
 };
 
-export function getGenericProvider(service: string): GenericServiceProvider {
-  return driverFor(service, GENERIC_ENV[service] ?? 'sandbox') === 'aggregator'
+export function getGenericProvider(service: string, providerId?: string): GenericServiceProvider {
+  return driverFor(service, GENERIC_ENV[service] ?? 'sandbox', providerId) === 'aggregator'
     ? aggregatorGeneric
     : sandboxGeneric;
 }

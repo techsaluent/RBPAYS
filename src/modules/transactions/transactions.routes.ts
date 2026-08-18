@@ -111,11 +111,30 @@ router.get(
         WHERE user_id = $1`,
       [req.user.id],
     );
+    // 7-day daily trend (IST) for the member's dashboard chart.
+    const trend = await query<{ day: string; amount: string; count: string }>(
+      `WITH days AS (
+          SELECT generate_series(
+            (now() AT TIME ZONE 'Asia/Kolkata')::date - INTERVAL '6 days',
+            (now() AT TIME ZONE 'Asia/Kolkata')::date,
+            INTERVAL '1 day')::date AS day
+       )
+       SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
+              COALESCE(SUM(x.amount_paise),0) AS amount,
+              COUNT(x.id) AS count
+         FROM days d
+         LEFT JOIN transactions x
+           ON (x.created_at AT TIME ZONE 'Asia/Kolkata')::date = d.day
+          AND x.status = 'success' AND x.user_id = $1
+        GROUP BY d.day ORDER BY d.day`,
+      [req.user.id],
+    );
     const r = rows[0];
     const n = (k: string) => Number(r[k] ?? 0);
     const total = n('total_count');
     const success = n('success_count');
     res.json({
+      daily: trend.rows.map((d) => ({ day: d.day, amount_paise: Number(d.amount), count: Number(d.count) })),
       total_count: total,
       success_count: success,
       failed_count: n('failed_count'),

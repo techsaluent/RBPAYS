@@ -41,8 +41,8 @@ interface AggConfig {
  * makes going live "just add API keys" — either paste them in the admin
  * panel or set AGGREGATOR_* env vars.
  */
-function configFor(service?: string): AggConfig {
-  const a = service ? activeConfig(service) : undefined;
+function configFor(service?: string, providerId?: string): AggConfig {
+  const a = service ? activeConfig(service, providerId) : undefined;
   return {
     baseUrl: a?.baseUrl || env.AGGREGATOR_BASE_URL,
     authToken: a?.authToken || env.AGGREGATOR_AUTH_TOKEN,
@@ -100,8 +100,8 @@ function mapResponse(raw: RawResponse): ProviderResult {
   };
 }
 
-async function post(service: string, path: string, body: unknown): Promise<ProviderResult> {
-  const c = configFor(service);
+async function post(service: string, path: string, body: unknown, providerId?: string): Promise<ProviderResult> {
+  const c = configFor(service, providerId);
   assertConfigured(c);
   try {
     const raw = await httpJson<RawResponse>(`${c.baseUrl}${path}`, {
@@ -130,7 +130,7 @@ export const aggregatorDmt: DmtProvider = {
       account_number: input.accountNumber,
       ifsc: input.ifsc,
       mode: input.mode,
-    });
+    }, input.providerId);
   },
 };
 
@@ -143,7 +143,7 @@ export const aggregatorBbps: BbpsProvider = {
       biller_id: input.billerId,
       consumer_number: input.consumerNumber,
       category: input.category,
-    });
+    }, input.providerId);
   },
 };
 
@@ -157,7 +157,7 @@ export const aggregatorRecharge: RechargeProvider = {
       number: input.number,
       type: input.rechargeType,
       circle: input.circle,
-    });
+    }, input.providerId);
   },
 };
 
@@ -174,7 +174,7 @@ export const aggregatorAeps: AepsProvider = {
       // Biometric authentication block (RD-service PID) for the switch.
       biometric_type: input.biometricType,
       pid_data: input.pidData,
-    });
+    }, input.providerId);
   },
 };
 
@@ -187,7 +187,7 @@ export const aggregatorCms: CmsProvider = {
       agent_id: input.agentId,
       account_number: input.accountNumber,
       customer_name: input.customerName,
-    });
+    }, input.providerId);
   },
 };
 
@@ -200,7 +200,7 @@ export const aggregatorCardSwipe: CardSwipeProvider = {
       card_network: input.cardNetwork,
       card_type: input.cardType,
       tid: input.tid,
-    });
+    }, input.providerId);
   },
 };
 
@@ -211,6 +211,6 @@ export const aggregatorGeneric: GenericServiceProvider = {
       reference: input.reference,
       amount: input.amountPaise / 100,
       ...(input.meta ?? {}),
-    });
+    }, input.providerId);
   },
 };

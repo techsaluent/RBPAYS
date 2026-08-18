@@ -8,6 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getDmtProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
+import { resolveProviderChoice } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 import { env } from '../../config/env';
 import { assertNotDmtStructuring } from '../risk/risk.service';
@@ -23,6 +24,7 @@ const createSchema = z.object({
   mode: z.enum(['IMPS', 'NEFT', 'RTGS']).default('IMPS'),
   charge: z.coerce.number().min(0).default(0),
   remitter_mobile: z.string().trim().regex(/^[6-9]\d{9}$/, 'Invalid remitter mobile').optional(),
+  provider_id: z.string().uuid().optional(),
   reference: z.string().trim().max(64).optional(),
 });
 
@@ -69,7 +71,8 @@ router.post(
     // AML: reject repeated just-under-limit transfers (structuring / smurfing).
     await assertNotDmtStructuring({ userId, amountPaise, remitterMobile: body.remitter_mobile });
 
-    const provider = getDmtProvider();
+    const providerId = resolveProviderChoice('dmt', body.provider_id);
+    const provider = getDmtProvider(providerId);
 
     const { transaction, idempotent } = await runServiceTransaction({
       userId,
@@ -78,6 +81,7 @@ router.post(
       prefix: 'DMT',
       reference: req.header('Idempotency-Key') || body.reference,
       amountPaise,
+      providerId,
       clientChargePaise: rupeesToPaise(body.charge),
       description: `DMT to ${body.beneficiary_name}`,
       providerName: provider.name,
@@ -98,6 +102,7 @@ router.post(
           accountNumber: body.account_number,
           ifsc: body.ifsc,
           mode: body.mode,
+          providerId,
         }),
     });
 

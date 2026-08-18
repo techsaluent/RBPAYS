@@ -332,10 +332,17 @@ const Screens = {
     if (State.user.role === 'admin') {
       const d = await Api.get('/admin/dashboard');
       const roles = Object.entries(d.users_by_role || {}).map(([k, n]) => `${k.replace(/_/g,' ')}: <b>${n}</b>`).join(' &nbsp; ');
-      const vol = Object.entries(d.service_volumes || {})
-        .sort((a, b) => b[1].success_amount_paise - a[1].success_amount_paise)
-        .map(([k, v]) =>
+      const volEntries = Object.entries(d.service_volumes || {})
+        .sort((a, b) => b[1].success_amount_paise - a[1].success_amount_paise);
+      const vol = volEntries.map(([k, v]) =>
         `<tr><td>${esc(k.replace(/_/g,' '))}</td><td class="right">${v.success_count}</td><td class="right">${v.total_count ?? '—'}</td><td class="right">${money(v.success_amount_paise/100)}</td></tr>`).join('');
+      const trend = (d.daily || []).map(x => ({ day: x.day, value: x.amount_paise }));
+      const topSvc = volEntries.slice(0, 7).map(([k, v]) => ({ label: k.replace(/_/g,' '), value: v.success_amount_paise }));
+      const statusSeg = [
+        { label: 'Success', value: d.txn_success_count || 0, color: '#0f9d63' },
+        { label: 'Pending', value: d.txn_pending_count || 0, color: '#bd7a00' },
+        { label: 'Failed', value: d.txn_failed_count || 0, color: '#d43c3c' },
+      ];
       $('view').innerHTML = `
         <div class="stats">
           ${UI.stat('b','💳','Today\'s volume', money((d.today_amount_paise||0)/100), `<b>${d.today_count||0}</b> transactions today`)}
@@ -347,9 +354,17 @@ const Screens = {
           ${UI.stat('r','🪪','Pending KYC', d.pending_kyc, d.pending_kyc ? '<a href="#/kycreview">Review now →</a>' : 'All clear')}
           ${UI.stat('o','⏳','Pending txns', (d.txn_pending_count||0), 'Awaiting settlement')}
         </div>
+        <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Transaction volume — last 14 days</h2>
+          <span class="muted" style="font-size:12px">Successful ₹ per day (IST)</span></div>
+          ${Charts.area(trend, { fmt: Charts.money })}</div>
+        <div class="chart-2 mt">
+          <div class="panel"><h2>Top services by value</h2>${Charts.hbars(topSvc, { fmt: Charts.money })}</div>
+          <div class="panel"><h2>Transaction status</h2>${Charts.donut(statusSeg)}</div>
+        </div>
         <div class="panel mt"><h2>Command consoles</h2>
           <div class="row" style="flex-wrap:wrap;gap:8px">
             <a class="btn sm ghost" href="#/members">Users</a>
+            <a class="btn sm ghost" href="#/staff">Staff &amp; Roles</a>
             <a class="btn sm ghost" href="#/kycreview">KYC Review</a>
             <a class="btn sm ghost" href="#/topupreview">Top-up Requests</a>
             <a class="btn sm ghost" href="#/plans">Commission</a>
@@ -385,6 +400,9 @@ const Screens = {
           ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, dc || 'No members yet')}
           ${st ? UI.stat('t','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : ''}
         </div>
+        ${st && st.daily ? `<div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Network volume — last 7 days</h2>
+          <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
+          ${Charts.area(st.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
         <div class="panel mt"><h2>Quick actions</h2>
           <a class="btn sm" href="#/network">Manage network</a> &nbsp;
           <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
@@ -416,6 +434,9 @@ const Screens = {
           ${UI.stat('t','📈','This month', money((s.month_amount_paise||0)/100), 'Successful value')}
           ${UI.stat('o','🎯','Success rate', (s.success_rate??0)+'%', `<b>${s.success_count||0}</b> of ${s.total_count||0}`)}
         </div>
+        ${s.daily ? `<div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My volume — last 7 days</h2>
+          <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
+          ${Charts.area(s.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
         <div class="sechead">Banking counter</div>
         <div class="panel"><div class="row" style="flex-wrap:wrap;gap:8px">${quick}</div></div>
         <div class="panel mt"><h2>Quick actions</h2>
@@ -892,6 +913,14 @@ const Screens = {
     const [st, pg] = await Promise.all([Api.get('/admin/site/settings'), Api.get('/admin/site/pages')]);
     const s = {}; st.items.forEach(r => s[r.key] = r.value || '');
     const field = (k, label, ph = '') => `<div class="field"><label>${label}</label><input id="ws_${k}" value="${esc(s[k]||'')}" placeholder="${ph}"></div>`;
+    // URL field + a file picker that uploads a photo (stored inline, downscaled).
+    const imgField = (k, label, ph = '') => `<div class="field"><label>${label}</label>
+      <input id="ws_${k}" value="${esc(s[k]||'')}" placeholder="${ph}">
+      <div class="row" style="gap:8px;align-items:center;margin-top:6px">
+        <input type="file" accept="image/*" id="up_${k}" onchange="Actions.uploadImage('${k}', this)" style="font-size:12px">
+        <span id="upmsg_${k}" class="muted" style="font-size:12px"></span>
+        ${s[k] ? `<img src="${esc(s[k])}" alt="" style="height:34px;border-radius:6px;border:1px solid var(--line)">` : ''}
+      </div></div>`;
     const prows = pg.items.map(p => `<tr><td>${esc(p.slug)}</td><td>${esc(p.title)}</td>
       <td>${p.published ? '<span class="tag active">live</span>' : '<span class="tag blocked">draft</span>'}</td>
       <td><a class="btn sm ghost" href="../page.html?slug=${encodeURIComponent(p.slug)}" target="_blank">View</a>
@@ -902,7 +931,7 @@ const Screens = {
         <p class="muted">Applies to the landing site and this panel (name, logo, colour, contacts). Leave logo URL blank to use the emoji.</p>
         ${field('brand_name','Brand name','TutiPays')}
         ${field('logo_emoji','Logo emoji','₹')}
-        ${field('logo_url','Logo image URL (optional)','https://…')}
+        ${imgField('logo_url','Logo image (URL or upload)','https://…')}
         ${field('primary_color','Primary colour (hex)','#3b39e4')}
         ${field('tagline','Tagline')}
         ${field('support_email','Support email')}
@@ -913,7 +942,7 @@ const Screens = {
         ${field('company_address','Registered address')}
         <h2 class="mt">Login / Sign-up offer poster</h2>
         <p class="muted">Shown beside the login and sign-up forms. Leave image URL blank for the default gradient.</p>
-        ${field('auth_poster_url','Poster image URL','https://…/offer.jpg')}
+        ${imgField('auth_poster_url','Poster image (URL or upload)','https://…/offer.jpg')}
         ${field('auth_poster_title','Poster title','Grow your business with us')}
         ${field('auth_poster_subtitle','Poster subtitle')}
         ${field('auth_poster_link','Poster link (optional)','https://…')}
@@ -958,7 +987,9 @@ const Screens = {
       <td>${esc(p.label)}</td><td>${esc(p.driver)}</td><td class="muted">${esc(p.base_url||'')}</td>
       <td>${p.is_active ? '<span class="tag active">active</span>' : ''}</td>
       <td>${p.api_key ? '••••' : '<span class="muted">no key</span>'}</td>
-      <td>${p.is_active ? '' : `<button class="btn sm" onclick="Actions.activateProvider('${p.id}')">Activate</button>`}
+      <td>${p.is_active
+          ? `<button class="btn sm ghost" onclick="Actions.deactivateProvider('${p.id}')">Deactivate</button>`
+          : `<button class="btn sm" onclick="Actions.activateProvider('${p.id}')">Activate</button>`}
           <button class="btn sm ghost" onclick="Actions.deleteProvider('${p.id}')">Delete</button></td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
       <h2>Service providers</h2><button class="btn sm" onclick="Actions.addProvider('${sel}')">+ Add provider</button></div>
@@ -973,14 +1004,16 @@ const Screens = {
 
 // ---------------- Service definitions for the "New transaction" form ----------------
 const SERVICES = [
-  { key: 'recharge', label: 'Recharge', path: '/recharge', fields: [
-    ['operator', 'Operator', 'text'], ['number', 'Mobile / DTH number', 'text'], ['amount', 'Amount', 'number'] ],
-    build: v => ({ operator: v.operator, number: v.number, amount: +v.amount, recharge_type: 'prepaid' }) },
-  { key: 'dmt', label: 'DMT (bank transfer)', path: '/dmt', fields: [
+  { key: 'recharge', label: 'Recharge', path: '/recharge', provider: true, fields: [
+    ['recharge_type', 'Type', 'select', ['prepaid', 'postpaid', 'dth']],
+    ['operator', 'Operator', 'select', ['Jio', 'Airtel', 'Vi', 'BSNL', 'Tata Play (DTH)', 'Dish TV (DTH)', 'Airtel Digital TV (DTH)', 'd2h (DTH)', 'Sun Direct (DTH)']],
+    ['number', 'Mobile / DTH number', 'text'], ['amount', 'Amount', 'number'] ],
+    build: v => ({ operator: v.operator, number: v.number, amount: +v.amount, recharge_type: v.recharge_type || 'prepaid' }) },
+  { key: 'dmt', label: 'DMT (bank transfer)', path: '/dmt', provider: true, fields: [
     ['beneficiary_name', 'Beneficiary name', 'text'], ['account_number', 'Account number', 'text'],
     ['ifsc', 'IFSC', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ beneficiary_name: v.beneficiary_name, account_number: v.account_number, ifsc: v.ifsc.toUpperCase(), amount: +v.amount, mode: 'IMPS' }) },
-  { key: 'bbps', label: 'BBPS (bill pay)', path: '/bbps/pay', fields: [
+  { key: 'bbps', label: 'BBPS (bill pay)', path: '/bbps/pay', provider: true, fields: [
     ['biller_id', 'Biller ID', 'text'], ['consumer_number', 'Consumer number', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ biller_id: v.biller_id, consumer_number: v.consumer_number, amount: +v.amount }) },
   { key: 'payout', label: 'Payout', path: '/payout', fields: [
@@ -990,7 +1023,7 @@ const SERVICES = [
   { key: 'upi', label: 'UPI payout', path: '/upi/pay', fields: [
     ['vpa', 'UPI ID (name@bank)', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ vpa: v.vpa, amount: +v.amount }) },
-  { key: 'cms', label: 'CMS (cash collection)', path: '/cms/pay', fields: [
+  { key: 'cms', label: 'CMS (cash collection)', path: '/cms/pay', provider: true, fields: [
     ['agent_id', 'Agent / company ID', 'text'], ['account_number', 'Account number', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ agent_id: v.agent_id, account_number: v.account_number, amount: +v.amount }) },
   { key: 'aeps', label: 'AEPS cash withdrawal', path: '/aeps/cash-withdrawal', biometric: true, fields: [
@@ -1024,11 +1057,21 @@ const SERVICES = [
 // ---------------- Actions (buttons/forms) ----------------
 const Actions = {
   _bio: null,
+  _provider: null,
   svcFields() {
     const s = SERVICES.find(x => x.key === $('svc').value);
     Actions._bio = null;
-    let html = s.fields.map(([n, label, type]) =>
-      `<div class="field"><label>${label}</label><input name="${n}" type="${type}" ${type==='number'?'step=0.01 min=0':''} /></div>`).join('');
+    Actions._provider = null;
+    let html = s.fields.map(([n, label, type, options]) => {
+      if (type === 'select') {
+        const opts = (options || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
+        return `<div class="field"><label>${label}</label><select name="${n}">${opts}</select></div>`;
+      }
+      return `<div class="field"><label>${label}</label><input name="${n}" type="${type}" ${type==='number'?'step=0.01 min=0':''} /></div>`;
+    }).join('');
+    // Provider chooser: when the super admin has >1 live API for this service,
+    // let the retailer pick which one (e.g. Recharge 1 / Recharge 2).
+    if (s.provider) html += `<div class="field" id="prov-choose"></div>`;
     if (s.biometric) {
       html += `<div class="field"><label>Customer biometric (RD device)</label>
         <div class="row" style="gap:8px;align-items:center">
@@ -1038,6 +1081,25 @@ const Actions = {
         <div id="bio-status" class="muted" style="margin-top:6px">Not captured. Plug in a UIDAI RD device and click Scan. (Sandbox provider accepts a submit without a device.)</div></div>`;
     }
     $('svc-fields').innerHTML = html;
+    if (s.provider) Actions.loadProviders(s.key);
+  },
+  // Fetch the live providers for a service and render a chooser when >1.
+  async loadProviders(serviceKey) {
+    const box = $('prov-choose'); if (!box) return;
+    try {
+      const d = await Api.get('/catalog/providers/' + encodeURIComponent(serviceKey));
+      const list = d.providers || [];
+      if (list.length < 2) { box.innerHTML = ''; return; } // 0/1 provider: nothing to choose
+      Actions._provider = list[0].id;
+      const btns = list.map((p, i) =>
+        `<button type="button" class="btn sm ${i===0?'':'ghost'}" data-pid="${esc(p.id)}"
+           onclick="Actions.pickProvider(this,'${esc(p.id)}')">${esc(p.label)}</button>`).join(' ');
+      box.innerHTML = `<label>Route via provider</label><div class="row" style="gap:8px">${btns}</div>`;
+    } catch { box.innerHTML = ''; }
+  },
+  pickProvider(btn, id) {
+    Actions._provider = id;
+    document.querySelectorAll('#prov-choose .btn').forEach(b => b.classList.toggle('ghost', b !== btn));
   },
   async scanBiometric() {
     const type = $('bio_type').value;
@@ -1056,6 +1118,7 @@ const Actions = {
     const v = {}; s.fields.forEach(([n]) => v[n] = document.querySelector(`#svc-fields [name="${n}"]`).value.trim());
     const body = s.build(v);
     if (s.biometric && Actions._bio) Object.assign(body, Actions._bio);
+    if (s.provider && Actions._provider) body.provider_id = Actions._provider;
     if (mpin) body.mpin = mpin;
     $('txn-result').innerHTML = '<span class="muted">Processing…</span>';
     try {
@@ -1294,6 +1357,35 @@ const Actions = {
     try { await Api.put('/admin/tax-config', { items }); UI.toast('Tax rates saved'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  // Read a chosen image, downscale it and store it inline (data URL) in the
+  // matching URL field. Keeps posters/logos self-contained — no file server.
+  async uploadImage(key, input) {
+    const file = input.files && input.files[0];
+    const msg = $('upmsg_' + key);
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { if (msg) msg.textContent = 'Please choose an image.'; return; }
+    if (msg) msg.textContent = 'Processing…';
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result); fr.onerror = reject;
+        fr.readAsDataURL(file);
+      });
+      const img = await new Promise((resolve, reject) => {
+        const im = new Image(); im.onload = () => resolve(im); im.onerror = reject; im.src = dataUrl;
+      });
+      // Downscale to a sensible max width so the stored string stays small.
+      const maxW = key === 'logo_url' ? 240 : 1200;
+      const scale = Math.min(1, maxW / img.width);
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * scale); cv.height = Math.round(img.height * scale);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      const out = cv.toDataURL('image/jpeg', 0.82);
+      if (out.length > 1500000) { if (msg) msg.textContent = 'Image too large after compression — pick a smaller one.'; return; }
+      $('ws_' + key).value = out;
+      if (msg) msg.innerHTML = `<span style="color:#137333">✔ Uploaded — click Save branding to apply.</span>`;
+    } catch { if (msg) msg.textContent = 'Could not read that image.'; }
+  },
   async saveSite() {
     const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
@@ -1446,6 +1538,10 @@ const Actions = {
     try { await Api.post(`/admin/services/${code}/providers`, body); UI.closeModal(); UI.toast('Provider added'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  async deactivateProvider(id) {
+    try { await Api.post(`/admin/providers/${id}/deactivate`, {}); UI.toast('Deactivated'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
   async activateProvider(id) {
     try { await Api.post(`/admin/providers/${id}/activate`, {}); UI.toast('Activated'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
@@ -1457,7 +1553,10 @@ const Actions = {
   },
   addRule(planId) {
     UI.modal(`<h3>Add commission rule</h3>
-      <div class="field"><label>Service code</label><input id="r_svc" placeholder="recharge"></div>
+      <div class="field"><label>Service code</label><input id="r_svc" placeholder="recharge" onchange="Actions.loadRuleProviders()" onblur="Actions.loadRuleProviders()"></div>
+      <div class="field"><label>Provider (optional)</label>
+        <select id="r_prov"><option value="">All providers (default rate)</option></select>
+        <div class="muted" style="font-size:12px;margin-top:4px">Pick a provider to set a different commission just for that API (e.g. Recharge 1 vs Recharge 2).</div></div>
       <div class="field"><label>Charge type</label><select id="r_ct"><option>flat</option><option>percent</option></select></div>
       <div class="field"><label>Charge value (₹ or %)</label><input id="r_cv" type="number" value="0"></div>
       <div class="field"><label>Retailer</label><input id="r_ret" type="number" value="0"></div>
@@ -1468,11 +1567,21 @@ const Actions = {
       <div class="foot"><button class="btn" onclick="Actions.saveRule('${planId}')">Add</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
   },
+  async loadRuleProviders() {
+    const code = val('r_svc'); const sel = $('r_prov'); if (!code || !sel) return;
+    try {
+      const d = await Api.get(`/admin/services/${encodeURIComponent(code)}/providers`);
+      const opts = ['<option value="">All providers (default rate)</option>']
+        .concat((d.items || []).map(p => `<option value="${esc(p.id)}">${esc(p.label)}${p.is_active?'':' (inactive)'}</option>`));
+      sel.innerHTML = opts.join('');
+    } catch { /* leave default option */ }
+  },
   async saveRule(planId) {
     const lt = val('r_lt');
     const body = { service_code: val('r_svc'), charge_type: val('r_ct'), charge_value: +val('r_cv'),
       retailer_type: lt, retailer_value: +val('r_ret'), distributor_type: lt, distributor_value: +val('r_dist'),
       master_distributor_type: lt, master_distributor_value: +val('r_md'), admin_type: lt, admin_value: +val('r_adm') };
+    if (val('r_prov')) body.provider_id = val('r_prov');
     try { await Api.post(`/admin/commission-plans/${planId}/rules`, body); UI.closeModal(); UI.toast('Rule added'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },

@@ -308,6 +308,7 @@ router.get(
 const cvType = z.enum(['flat', 'percent']);
 const ruleSchema = z.object({
   service_code: z.string().trim().min(1).max(40),
+  provider_id: z.string().uuid().optional(), // omit = default rule for the service
   min_amount: z.coerce.number().min(0).default(0), // rupees
   max_amount: z.coerce.number().min(0).optional(), // rupees; omit = no upper bound
   charge_type: cvType.default('flat'),
@@ -363,15 +364,16 @@ router.post(
     }
     const { rows } = await query(
       `INSERT INTO commission_rules
-         (plan_id, service_code, min_amount_paise, max_amount_paise,
+         (plan_id, service_code, provider_id, min_amount_paise, max_amount_paise,
           charge_type, charge_value,
           retailer_type, retailer_value, distributor_type, distributor_value,
           master_distributor_type, master_distributor_value, admin_type, admin_value)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING *`,
       [
         req.params.id,
         b.service_code,
+        b.provider_id ?? null,
         rupeesToPaise(b.min_amount),
         b.max_amount === undefined ? MAX_BIGINT : rupeesToPaise(b.max_amount),
         b.charge_type, b.charge_value,
@@ -1345,24 +1347,28 @@ router.patch(
 router.post(
   '/providers/:id/activate',
   asyncHandler(async (req: Request, res: Response) => {
-    const provider = await withTransaction(async (client) => {
-      const cur = await client.query<{ service_code: string }>(
-        'SELECT service_code FROM service_providers WHERE id = $1',
-        [req.params.id],
-      );
-      if (!cur.rows[0]) throw ApiError.notFound('Provider not found');
-      await client.query(
-        'UPDATE service_providers SET is_active = false WHERE service_code = $1',
-        [cur.rows[0].service_code],
-      );
-      const { rows } = await client.query(
-        'UPDATE service_providers SET is_active = true WHERE id = $1 RETURNING *',
-        [req.params.id],
-      );
-      return rows[0];
-    });
+    // Multiple providers can be active per service (e.g. Recharge 1 + 2). This
+    // just turns the chosen one on; use /deactivate to turn one off.
+    const { rows } = await query(
+      'UPDATE service_providers SET is_active = true WHERE id = $1 RETURNING *',
+      [req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Provider not found');
     await refreshProviderRegistry();
-    res.json({ provider });
+    res.json({ provider: rows[0] });
+  }),
+);
+
+router.post(
+  '/providers/:id/deactivate',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query(
+      'UPDATE service_providers SET is_active = false WHERE id = $1 RETURNING *',
+      [req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Provider not found');
+    await refreshProviderRegistry();
+    res.json({ provider: rows[0] });
   }),
 );
 
