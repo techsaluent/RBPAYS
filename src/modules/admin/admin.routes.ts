@@ -14,6 +14,7 @@ import { refreshProviderRegistry } from '../../providers/registry';
 import { postJournal } from '../_shared/ledger';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
+import { refreshTaxConfig } from '../tax/tax.config';
 import {
   createPayoutBatch,
   generateBatchFile,
@@ -948,6 +949,43 @@ router.patch(
       [req.params.userId, b.pan_valid ?? null, b.is_206ab_non_filer ?? null],
     );
     res.json({ profile: rows[0] });
+  }),
+);
+
+// Editable tax rates + caps (super admin).
+router.get(
+  '/tax-config',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT code, label, rate_bps, max_amount_paise, enabled, updated_at FROM tax_config ORDER BY code');
+    res.json({ items: rows });
+  }),
+);
+
+const taxConfigSchema = z.object({
+  items: z.array(z.object({
+    code: z.enum(['tds_194h_std', 'tds_194h_high', 'tds_194n', 'gst']),
+    rate_percent: z.coerce.number().min(0).max(100),      // percent, e.g. 5 or 18
+    max_amount: z.coerce.number().min(0).default(0),       // rupees; 0 = no cap
+    enabled: z.boolean().default(true),
+  })).min(1),
+});
+
+router.put(
+  '/tax-config',
+  validate(taxConfigSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof taxConfigSchema>;
+    await withTransaction(async (client) => {
+      for (const it of b.items) {
+        await client.query(
+          `UPDATE tax_config SET rate_bps = $1, max_amount_paise = $2, enabled = $3 WHERE code = $4`,
+          [Math.round(it.rate_percent * 100), rupeesToPaise(it.max_amount), it.enabled, it.code],
+        );
+      }
+    });
+    await refreshTaxConfig();
+    const { rows } = await query('SELECT code, label, rate_bps, max_amount_paise, enabled FROM tax_config ORDER BY code');
+    res.json({ items: rows });
   }),
 );
 

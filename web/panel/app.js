@@ -168,6 +168,17 @@ const App = {
         else el.textContent = brand;
       });
       if (/TutiPays/.test(document.title)) document.title = document.title.replace(/TutiPays/g, brand);
+      // Login/signup offer poster (super-admin configurable).
+      const poster = document.getElementById('auth-poster');
+      if (poster) {
+        if (s.auth_poster_url) poster.style.backgroundImage = `url("${s.auth_poster_url}")`;
+        const t = document.getElementById('poster-title');
+        const sub = document.getElementById('poster-sub');
+        if (t && s.auth_poster_title) t.textContent = s.auth_poster_title;
+        if (sub && s.auth_poster_subtitle) sub.textContent = s.auth_poster_subtitle;
+        poster.setAttribute('href', s.auth_poster_link || '../');
+        if (!s.auth_poster_link) poster.removeAttribute('href');
+      }
     } catch (_) {}
   },
   async boot() {
@@ -572,7 +583,13 @@ const Screens = {
 
   // Admin: TDS (194H/194N) + GST desk.
   async taxdesk() {
-    const [tds, gst] = await Promise.all([Api.get('/admin/tds'), Api.get('/admin/gst')]);
+    const [tds, gst, cfg] = await Promise.all([Api.get('/admin/tds'), Api.get('/admin/gst'), Api.get('/admin/tax-config')]);
+    const crows = cfg.items.map(c => `<tr>
+      <td>${esc(c.label)}</td>
+      <td><input id="tc_rate_${c.code}" type="number" step="0.01" min="0" value="${(c.rate_bps/100)}" style="width:90px"> %</td>
+      <td>₹<input id="tc_max_${c.code}" type="number" step="0.01" min="0" value="${(c.max_amount_paise/100)}" style="width:110px"></td>
+      <td><input id="tc_en_${c.code}" type="checkbox" ${c.enabled?'checked':''}></td></tr>`).join('');
+    const cfgCodes = JSON.stringify(cfg.items.map(c => c.code));
     const trows = tds.items.map(r => `<tr><td>${esc(r.full_name)}</td><td>${esc(r.service_code||'')}</td>
       <td>${esc(r.section)}</td><td class="right">${money((r.gross_paise||0)/100)}</td>
       <td>${(r.rate_bps/100).toFixed(0)}%</td><td class="right">${money((r.tds_paise||0)/100)}</td>
@@ -587,6 +604,12 @@ const Screens = {
         <div class="card"><div class="k">GST collected</div><div class="v">${money((gst.total_gst_paise||0)/100)}</div></div>
         <div class="card"><div class="k">Taxable base</div><div class="v">${money((gst.total_base_paise||0)/100)}</div></div>
       </div>
+      <div class="panel mt"><h2>Tax rates &amp; caps</h2>
+        <p class="muted">Set the rate and an optional maximum tax amount per transaction (0 = no cap). Applied live to new transactions.</p>
+        <div class="tbl-wrap"><table>
+        <thead><tr><th>Tax</th><th>Rate</th><th>Max per txn</th><th>On</th></tr></thead>
+        <tbody data-codes='${cfgCodes}'>${crows}</tbody></table></div>
+        <button class="btn sm mt" onclick='Actions.saveTaxConfig(${cfgCodes})'>Save tax rates</button></div>
       <div class="panel mt"><h2>TDS records (Section 194H / 194N)</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Member</th><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th>When</th></tr></thead>
         <tbody>${trows || '<tr><td colspan=7 class=muted>No TDS yet</td></tr>'}</tbody></table></div></div>
@@ -714,6 +737,12 @@ const Screens = {
         ${field('company_address','Registered address')}
         ${field('company_pan','PAN')}
         ${field('company_gst','GST')}
+        <h2 class="mt">Login / Sign-up offer poster</h2>
+        <p class="muted">Shown beside the login and sign-up forms. Leave image URL blank for the default gradient.</p>
+        ${field('auth_poster_url','Poster image URL','https://…/offer.jpg')}
+        ${field('auth_poster_title','Poster title','Grow your business with us')}
+        ${field('auth_poster_subtitle','Poster subtitle')}
+        ${field('auth_poster_link','Poster link (optional)','https://…')}
         <button class="btn mt" onclick="Actions.saveSite()">Save branding</button></div>
       <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Custom pages</h2>
         <button class="btn sm" onclick="Actions.editPage()">+ New page</button></div>
@@ -958,8 +987,18 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   presetSvc(key) { Actions._preset = key; },
+  async saveTaxConfig(codes) {
+    const items = codes.map(code => ({
+      code,
+      rate_percent: +val('tc_rate_' + code),
+      max_amount: +val('tc_max_' + code),
+      enabled: $('tc_en_' + code).checked,
+    }));
+    try { await Api.put('/admin/tax-config', { items }); UI.toast('Tax rates saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','company_pan','company_gst'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','company_pan','company_gst','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     try { await Api.put('/admin/site/settings', { values }); UI.toast('Branding saved'); App.applyBranding(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }

@@ -2,7 +2,7 @@ import { PoolClient } from 'pg';
 import { query } from '../../../db';
 import { credit } from '../wallet/wallet.service';
 import { creditSub } from '../wallet/subwallet.service';
-import { tdsRateBpsFor, applyBps, recordTds, recordGst } from '../tax/tax.service';
+import { commissionTds, recordTds, recordGst } from '../tax/tax.service';
 import { postJournal, JournalLine } from '../_shared/ledger';
 
 export type Level = 'retailer' | 'distributor' | 'master_distributor' | 'admin';
@@ -168,8 +168,7 @@ export async function applyUplineCredits(
 
     // Distributor / master distributor: withhold 194H TDS, pay net into the
     // member's Commission sub-wallet, and record the double-entry + TDS.
-    const rateBps = await tdsRateBpsFor(e.beneficiaryId);
-    const tds = applyBps(e.amountPaise, rateBps);
+    const { rateBps, tdsPaise: tds } = await commissionTds(e.beneficiaryId, e.amountPaise);
     const net = e.amountPaise - tds;
 
     await creditSub(client, e.beneficiaryId, 'commission', net);

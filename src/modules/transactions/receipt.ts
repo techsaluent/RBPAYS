@@ -101,8 +101,18 @@ const SERVICE_TITLE: Record<string, string> = {
   payment_gateway: 'Wallet Top-up',
 };
 
+export interface TaxBreakdown {
+  tds?: { section: string; gross_paise: number; rate_bps: number; tds_paise: number }[];
+  gst?: { base_paise: number; cgst_paise: number; sgst_paise: number; igst_paise: number } | null;
+}
+
 /** Structured receipt payload (also used to render the printable HTML). */
-export function receiptData(txn: TxnRow, detail: Detail, user: { full_name: string; phone: string }) {
+export function receiptData(
+  txn: TxnRow,
+  detail: Detail,
+  user: { full_name: string; phone: string },
+  tax?: TaxBreakdown,
+) {
   return {
     receipt_no: txn.reference,
     transaction_id: txn.id,
@@ -118,6 +128,7 @@ export function receiptData(txn: TxnRow, detail: Detail, user: { full_name: stri
     commission: paiseToRupees(txn.commission_paise),
     net_paid: paiseToRupees(txn.net_paise),
     direction: txn.direction,
+    tax: tax ?? {},
   };
 }
 
@@ -129,14 +140,33 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 /** Render a compact, printable HTML receipt (58/80mm thermal friendly). */
-export function receiptHtml(txn: TxnRow, detail: Detail, user: { full_name: string; phone: string }): string {
-  const r = receiptData(txn, detail, user);
+export function receiptHtml(
+  txn: TxnRow,
+  detail: Detail,
+  user: { full_name: string; phone: string },
+  tax?: TaxBreakdown,
+  brand = 'TutiPays',
+): string {
+  const r = receiptData(txn, detail, user, tax);
   const rows = Object.entries(r.details)
     .filter(([, v]) => v && v !== '-')
     .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(String(v))}</td></tr>`)
     .join('');
   const money = (label: string, value: string, strong = false) =>
     `<tr class="${strong ? 'total' : ''}"><td>${label}</td><td>₹${value}</td></tr>`;
+  const p = (v: number) => (v / 100).toFixed(2);
+  const taxRows = [
+    ...(r.tax.tds ?? []).map((t) =>
+      `<tr><td>TDS (${escapeHtml(t.section)} @ ${(t.rate_bps / 100).toFixed(t.rate_bps % 100 ? 2 : 0)}%)</td><td>-₹${p(t.tds_paise)}</td></tr>`),
+    ...(r.tax.gst
+      ? [
+          `<tr><td>Taxable value</td><td>₹${p(r.tax.gst.base_paise)}</td></tr>`,
+          r.tax.gst.igst_paise > 0
+            ? `<tr><td>IGST</td><td>₹${p(r.tax.gst.igst_paise)}</td></tr>`
+            : `<tr><td>CGST</td><td>₹${p(r.tax.gst.cgst_paise)}</td></tr><tr><td>SGST</td><td>₹${p(r.tax.gst.sgst_paise)}</td></tr>`,
+        ]
+      : []),
+  ].join('');
 
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -160,7 +190,7 @@ export function receiptHtml(txn: TxnRow, detail: Detail, user: { full_name: stri
 </style></head>
 <body>
   <div class="receipt">
-    <h1>RBPAYS</h1>
+    <h1>${escapeHtml(brand)}</h1>
     <div class="sub">${escapeHtml(r.service_title)} Receipt</div>
     <div class="status">${escapeHtml(r.status)}</div>
     <table>
@@ -175,9 +205,10 @@ export function receiptHtml(txn: TxnRow, detail: Detail, user: { full_name: stri
       ${money('Amount', r.amount)}
       ${Number(r.charge) > 0 ? money('Charge', r.charge) : ''}
       ${Number(r.commission) > 0 ? money('Commission', r.commission) : ''}
+      ${taxRows ? `<tr class="divider"><td colspan="2"></td></tr>${taxRows}` : ''}
       ${money(r.direction === 'credit' ? 'Credited' : 'Net Paid', r.net_paid, true)}
     </table>
-    <div class="foot">This is a computer-generated receipt.<br>Thank you for using RBPAYS.</div>
+    <div class="foot">This is a computer-generated receipt.<br>Thank you for using ${escapeHtml(brand)}.</div>
     <button class="btn noprint" onclick="window.print()">Print</button>
   </div>
 </body></html>`;
