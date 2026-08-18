@@ -751,7 +751,8 @@ const Screens = {
       'hold.place':'Lien placed', 'hold.release':'Lien released', 'user.status':'User status changed',
       'staff.create':'Staff created', 'staff.permissions':'Staff permissions changed', 'staff.status':'Staff status changed',
       'provider.activate':'Provider activated', 'provider.deactivate':'Provider deactivated',
-      'adjustment.approve':'Adjustment approved', 'adjustment.reject':'Adjustment rejected' };
+      'adjustment.approve':'Adjustment approved', 'adjustment.reject':'Adjustment rejected',
+      'txn.refund':'Transaction refunded', 'txn.resolve':'Pending resolved' };
     const rows = (d.items || []).map(a => {
       const det = a.detail || {};
       const note = det.remarks || det.reason || det.note || '';
@@ -1012,7 +1013,24 @@ const Screens = {
 
   // Admin: ops desk — maker-checker manual adjustments.
   async opsdesk() {
-    const d = await Api.get('/admin/adjustments');
+    const [d, tx] = await Promise.all([
+      Api.get('/admin/adjustments'),
+      Api.get('/admin/transactions?limit=60').catch(() => ({ items: [] })),
+    ]);
+    const txRows = (tx.items || []).map(t => `<tr>
+      <td class="muted">${new Date(t.created_at).toLocaleString('en-IN')}</td>
+      <td>${esc(t.user_name||'')}</td><td>${esc(t.service)}</td>
+      <td class="right">${money((t.amount_paise||0)/100)}</td>
+      <td>${UI.statusTag(t.status)}</td>
+      <td>${t.status === 'pending'
+        ? `<button class="btn sm" onclick="Actions.resolveTxn('${t.id}','success')">Mark success</button>
+           <button class="btn sm ghost" onclick="Actions.resolveTxn('${t.id}','failed')">Mark failed</button>`
+        : (t.status === 'success' && t.direction === 'debit'
+          ? `<button class="btn sm ghost" onclick="Actions.refundTxn('${t.id}')">Refund</button>` : '')}</td></tr>`).join('');
+    const txPanel = `<div class="panel mt"><h2>Transaction ops — resolve pending &amp; refund</h2>
+      <p class="muted">Force a stuck pending transaction to success/failed (failure auto-reverses the wallet), or refund a completed debit transaction (refunds the payer &amp; claws back commission).</p>
+      <div class="tbl-wrap"><table><thead><tr><th>When</th><th>Member</th><th>Service</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead>
+      <tbody>${txRows || '<tr><td colspan=6 class=muted>No transactions</td></tr>'}</tbody></table></div></div>`;
     const rows = d.items.map(a => `<tr>
       <td>${esc(a.target_name)}</td><td>${esc(a.kind)}</td><td class="right">${money((a.amount_paise||0)/100)}</td>
       <td class="muted">${esc(a.reason)}</td><td>${esc(a.maker_name||'')}</td>
@@ -1027,7 +1045,23 @@ const Screens = {
         <p class="muted">Dual control: one officer proposes, a different officer approves before any money moves.</p>
         <div class="tbl-wrap"><table>
         <thead><tr><th>Member</th><th>Kind</th><th class="right">Amount</th><th>Reason</th><th>Maker</th><th>Status</th><th></th></tr></thead>
-        <tbody>${rows || '<tr><td colspan=7 class=muted>No adjustments</td></tr>'}</tbody></table></div></div>`;
+        <tbody>${rows || '<tr><td colspan=7 class=muted>No adjustments</td></tr>'}</tbody></table></div></div>
+      ${txPanel}`;
+  },
+  async resolveTxn(id, decision) {
+    const remark = prompt(`Mark this transaction ${decision} — enter a remark (required):`, '');
+    if (remark === null) return;
+    if (!remark.trim()) return UI.toast('A remark is required', 'err');
+    try { await Api.post(`/admin/transactions/${id}/resolve`, { decision, remark: remark.trim() }); UI.toast(`Marked ${decision}`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async refundTxn(id) {
+    const remark = prompt('Refund this transaction — enter a reason (required):', '');
+    if (remark === null) return;
+    if (!remark.trim()) return UI.toast('A reason is required', 'err');
+    if (!confirm('Refund the payer and claw back commission for this transaction?')) return;
+    try { await Api.post(`/admin/transactions/${id}/refund`, { remark: remark.trim() }); UI.toast('Refunded'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
 
   // Admin: risk & AML flagged events.

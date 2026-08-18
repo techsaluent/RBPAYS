@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { staffConsoleGate } from '../../middleware/permission';
 import { logAudit } from '../audit/audit.service';
+import { refundTransaction, resolvePending } from '../transactions/refund.service';
 import { approveWithdrawal, rejectWithdrawal } from '../withdrawal/withdrawal.service';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
@@ -209,6 +210,59 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     await adminResetPassword(req.params.id, req.body.new_password);
     res.json({ message: 'Password reset' });
+  }),
+);
+
+// ---- Transaction ops: refund + pending resolution ------------------------
+const txnDecisionSchema = z.object({ remark: z.string().trim().min(1).max(200) });
+const resolveSchema = z.object({
+  decision: z.enum(['success', 'failed']),
+  remark: z.string().trim().min(1).max(200),
+});
+
+// Refund a successful debit-flow transaction (credits payer, claws back commission).
+router.post(
+  '/transactions/:id/refund',
+  validate(txnDecisionSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const txn = await refundTransaction(req.params.id, req.body.remark);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'txn.refund',
+      targetType: 'transaction', targetId: req.params.id, detail: { remark: req.body.remark } });
+    res.json({ transaction: txn });
+  }),
+);
+
+// Resolve a stuck pending transaction to success or failed.
+router.post(
+  '/transactions/:id/resolve',
+  validate(resolveSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const txn = await resolvePending(req.params.id, req.body.decision, req.body.remark);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'txn.resolve',
+      targetType: 'transaction', targetId: req.params.id, detail: { decision: req.body.decision, remark: req.body.remark } });
+    res.json({ transaction: txn });
+  }),
+);
+
+// Ops list: recent pending / failed transactions across all members.
+router.get(
+  '/transactions',
+  validate(z.object({
+    status: z.enum(['pending', 'failed', 'success', 'refunded']).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { status?: string; limit: number };
+    const { rows } = await query(
+      `SELECT t.*, u.full_name AS user_name
+         FROM transactions t LEFT JOIN users u ON u.id = t.user_id
+        WHERE ($1::text IS NULL OR t.status = $1)
+        ORDER BY t.created_at DESC LIMIT $2`,
+      [q.status ?? null, q.limit],
+    );
+    res.json({ items: rows });
   }),
 );
 
