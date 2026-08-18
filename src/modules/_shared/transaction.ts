@@ -23,6 +23,8 @@ export interface RunOptions {
    *   AEPS earns commission (charge 0); Card Swipe is charged the MDR (charge > 0).
    */
   flow?: 'debit' | 'credit';
+  /** The specific provider chosen for this transaction (routing + commission). */
+  providerId?: string;
   /**
    * Strip hierarchy commission for this transaction (e.g. AePS split /
    * commission-farming detected). The transaction still executes.
@@ -74,7 +76,7 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
   const flow = opts.flow ?? 'debit';
   const dist = opts.suppressCommission
     ? { ruleMatched: false, chargePaise: 0, retailerPaise: 0, entries: [] }
-    : await computeDistribution(opts.userId, opts.serviceCode, opts.amountPaise);
+    : await computeDistribution(opts.userId, opts.serviceCode, opts.amountPaise, opts.providerId);
   const chargePaise = dist.ruleMatched ? dist.chargePaise : opts.clientChargePaise ?? 0;
   const netPaise =
     flow === 'credit'
@@ -88,8 +90,8 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
       const master = await client.query<{ id: string }>(
         `INSERT INTO transactions
            (user_id, service, direction, service_txn_id, reference,
-            amount_paise, charge_paise, commission_paise, net_paise, status, commission_breakdown)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10)
+            amount_paise, charge_paise, commission_paise, net_paise, status, commission_breakdown, provider_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,$11)
          RETURNING id`,
         [
           opts.userId,
@@ -102,6 +104,7 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
           dist.retailerPaise,
           netPaise,
           JSON.stringify(dist.entries),
+          opts.providerId ?? null,
         ],
       );
       // Debit flow reserves funds now; credit flow settles the wallet on success.

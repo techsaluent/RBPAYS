@@ -23,6 +23,8 @@ export interface ProviderResult {
 }
 
 export interface DmtTransferInput {
+  /** Chosen provider (routes to its API config; optional). */
+  providerId?: string;
   reference: string;
   amountPaise: number;
   beneficiaryName: string;
@@ -32,6 +34,8 @@ export interface DmtTransferInput {
 }
 
 export interface PayoutInput {
+  /** Chosen provider (routes to its API config; optional). */
+  providerId?: string;
   reference: string;
   amountPaise: number;
   beneficiaryName: string;
@@ -41,6 +45,8 @@ export interface PayoutInput {
 }
 
 export interface BbpsPayInput {
+  /** Chosen provider (routes to its API config; optional). */
+  providerId?: string;
   reference: string;
   amountPaise: number;
   billerId: string;
@@ -49,6 +55,8 @@ export interface BbpsPayInput {
 }
 
 export interface RechargeInput {
+  /** Chosen provider (routes to its API config; optional). */
+  providerId?: string;
   reference: string;
   amountPaise: number;
   operator: string;
@@ -98,6 +106,8 @@ export interface RechargeProvider {
 }
 
 export interface AepsInput {
+  /** Chosen provider (routes to its API config; optional). */
+  providerId?: string;
   reference: string;
   txnType: 'cash_withdrawal' | 'balance_enquiry' | 'mini_statement';
   amountPaise: number; // 0 for balance enquiry / mini statement
@@ -111,6 +121,8 @@ export interface AepsInput {
 }
 
 export interface CmsPayInput {
+  /** Chosen provider (routes to its API config; optional). */
+  providerId?: string;
   reference: string;
   amountPaise: number;
   agentId: string;
@@ -119,6 +131,8 @@ export interface CmsPayInput {
 }
 
 export interface CardSwipeInput {
+  /** Chosen provider (routes to its API config; optional). */
+  providerId?: string;
   reference: string;
   amountPaise: number;
   cardNetwork?: string;
@@ -143,6 +157,8 @@ export interface CardSwipeProvider {
 }
 
 export interface GenericServiceInput {
+  /** Chosen provider (routes to its API config; optional). */
+  providerId?: string;
   reference: string;
   amountPaise: number;
   meta?: Record<string, unknown>;

@@ -44,19 +44,24 @@ async function resolveRule(
   performerId: string,
   serviceCode: string,
   amountPaise: number,
+  providerId?: string,
 ): Promise<RuleRow | null> {
+  // Prefer a rule targeting the chosen provider; fall back to the service-wide
+  // default (provider_id IS NULL). When no provider is chosen, only the default
+  // matches (a NULL providerId never equals a real provider_id).
   const { rows } = await query<RuleRow>(
     `SELECT r.*
        FROM commission_rules r
        JOIN commission_plans p ON p.id = r.plan_id
       WHERE r.service_code = $2
         AND $3 BETWEEN r.min_amount_paise AND r.max_amount_paise
+        AND (r.provider_id = $4 OR r.provider_id IS NULL)
         AND p.id = COALESCE(
               (SELECT commission_plan_id FROM users WHERE id = $1),
               (SELECT id FROM commission_plans WHERE is_default LIMIT 1))
-      ORDER BY r.min_amount_paise DESC
+      ORDER BY (r.provider_id IS NOT NULL) DESC, r.min_amount_paise DESC
       LIMIT 1`,
-    [performerId, serviceCode, amountPaise],
+    [performerId, serviceCode, amountPaise, providerId ?? null],
   );
   return rows[0] ?? null;
 }
@@ -87,8 +92,9 @@ export async function computeDistribution(
   performerId: string,
   serviceCode: string,
   amountPaise: number,
+  providerId?: string,
 ): Promise<Distribution> {
-  const rule = await resolveRule(performerId, serviceCode, amountPaise);
+  const rule = await resolveRule(performerId, serviceCode, amountPaise, providerId);
   if (!rule) {
     return { ruleMatched: false, chargePaise: 0, retailerPaise: 0, entries: [] };
   }
