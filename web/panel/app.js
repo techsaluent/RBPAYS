@@ -198,6 +198,8 @@ const NETWORK_ROLES = ['retailer', 'user', 'distributor', 'master_distributor'];
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', roles: '*' },
   { key: 'new', label: 'New Transaction', roles: TXN_ROLES },
+  { key: 'beneficiaries', label: 'Beneficiaries', roles: TXN_ROLES },
+  { key: 'devices', label: 'My Devices', roles: TXN_ROLES },
   { key: 'wallet', label: 'Wallet', roles: NETWORK_ROLES },
   { key: 'addmoney', label: 'Add Money', roles: NETWORK_ROLES },
   { key: 'txns', label: 'Transactions', roles: NETWORK_ROLES },
@@ -647,6 +649,33 @@ const Screens = {
         <tbody>${erows || '<tr><td colspan=4 class=muted>None yet</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Retailer: saved DMT/payout beneficiaries.
+  async beneficiaries() {
+    const d = await Api.get('/beneficiaries');
+    const rows = (d.items || []).map(b => `<tr>
+      <td>${esc(b.name)}</td><td>${esc(b.account_number)}</td><td>${esc(b.ifsc)}</td><td>${esc(b.bank_name||'')}</td>
+      <td><button class="btn sm ghost" onclick="Actions.delBeneficiary('${b.id}')">Delete</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between"><h2>Saved beneficiaries</h2>
+      <button class="btn sm" onclick="Actions.addBeneficiary()">+ Add beneficiary</button></div>
+      <p class="muted">Save payees once, then pick them on the DMT / payout screen.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Account</th><th>IFSC</th><th>Bank</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No saved beneficiaries yet.</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Retailer: bound biometric / AEPS devices.
+  async devices() {
+    const d = await Api.get('/onboarding/devices');
+    const rows = (d.items || []).map(v => `<tr>
+      <td>${esc(v.label||'Device')}</td><td class="muted">${esc(v.device_uuid)}</td>
+      <td>${esc(v.imei||'')}</td><td>${v.is_active ? UI.statusTag('active') : '<span class="tag">inactive</span>'}</td>
+      <td class="muted">${v.bound_at ? new Date(v.bound_at).toLocaleDateString('en-IN') : ''}</td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between"><h2>My devices</h2>
+      <button class="btn sm" onclick="Actions.bindDevice()">+ Bind device</button></div>
+      <p class="muted">Register the biometric scanner / mobile you use for AEPS so transactions are tied to a known device.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Label</th><th>Device ID</th><th>IMEI</th><th>Status</th><th>Bound</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No devices bound yet.</td></tr>'}</tbody></table></div></div>`;
+  },
+
   // Super admin: staff team + scoped permissions.
   async staff() {
     const [cat, list] = await Promise.all([Api.get('/staff/catalog'), Api.get('/staff')]);
@@ -771,7 +800,15 @@ const Screens = {
 
   // Admin: double-entry journal audit view.
   async ledger() {
-    const d = await Api.get('/admin/ledger/journal?limit=40');
+    const [d, acc] = await Promise.all([
+      Api.get('/admin/ledger/journal?limit=40'),
+      Api.get('/admin/ledger/accounts').catch(() => ({ items: [] })),
+    ]);
+    const accRows = (acc.items || []).map(a => `<tr><td>${esc(a.code)}</td><td>${esc(a.name||'')}</td>
+      <td class="muted">${esc(a.type||'')}</td><td class="muted">${esc(a.normal_balance||'')}${a.per_member?' · per-member':''}</td></tr>`).join('');
+    const accBlock = accRows ? `<div class="panel mt"><h2>Chart of accounts</h2><div class="tbl-wrap"><table>
+      <thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Normal side</th></tr></thead>
+      <tbody>${accRows}</tbody></table></div></div>` : '';
     const blocks = d.items.map(e => {
       const lines = e.lines.map(l => `<tr>
         <td>${l.direction === 'debit' ? 'DR' : '&nbsp;&nbsp;CR'}</td>
@@ -785,7 +822,7 @@ const Screens = {
         <tbody>${lines}</tbody></table></div></div>`;
     }).join('');
     $('view').innerHTML = `<div class="panel"><h2>Double-entry ledger</h2>
-      <p class="muted">Immutable journal — every entry has equal debits and credits.</p></div>${blocks || '<div class="panel muted">No journal entries yet</div>'}`;
+      <p class="muted">Immutable journal — every entry has equal debits and credits.</p></div>${accBlock}${blocks || '<div class="panel muted">No journal entries yet</div>'}`;
   },
 
   // Admin: TDS (194H/194N) + GST desk.
@@ -1072,7 +1109,8 @@ const Actions = {
     const s = SERVICES.find(x => x.key === $('svc').value);
     Actions._bio = null;
     Actions._provider = null;
-    let html = s.fields.map(([n, label, type, options]) => {
+    // Optional helper UI injected above the fields (saved payees, biller picker).
+    let html = '<div id="svc-enhance"></div>' + s.fields.map(([n, label, type, options]) => {
       if (type === 'select') {
         const opts = (options || []).map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
         return `<div class="field"><label>${label}</label><select name="${n}">${opts}</select></div>`;
@@ -1092,6 +1130,47 @@ const Actions = {
     }
     $('svc-fields').innerHTML = html;
     if (s.provider) Actions.loadProviders(s.key);
+    Actions.enhanceSvc(s.key);
+  },
+  // Wire in extra helpers for specific services (saved payees, BBPS billers).
+  async enhanceSvc(key) {
+    const box = $('svc-enhance'); if (!box) return;
+    if (key === 'dmt') {
+      try {
+        const d = await Api.get('/beneficiaries');
+        const list = d.items || [];
+        const opts = ['<option value="">— pick a saved payee —</option>']
+          .concat(list.map(b => `<option value="${esc(b.id)}" data-n="${esc(b.name)}" data-a="${esc(b.account_number)}" data-i="${esc(b.ifsc)}">${esc(b.name)} · ${esc(b.account_number)}</option>`));
+        box.innerHTML = `<div class="field"><label>Saved beneficiaries</label>
+          <div class="row" style="gap:8px"><select id="ben_pick" onchange="Actions.fillBeneficiary(this)" style="flex:1">${opts.join('')}</select>
+          <a class="btn sm ghost" href="#/beneficiaries">Manage</a></div>
+          <label style="display:flex;gap:6px;align-items:center;margin-top:8px;font-size:12px"><input type="checkbox" id="ben_save"> Save this beneficiary for next time</label></div>`;
+      } catch { box.innerHTML = ''; }
+    } else if (key === 'bbps') {
+      try {
+        const c = await Api.get('/bbps/categories');
+        const cats = (c.items || []).map(x => `<option value="${esc(x.category)}">${esc(x.category)} (${x.billers})</option>`).join('');
+        box.innerHTML = `<div class="field"><label>Biller category</label>
+          <select id="bbps_cat" onchange="Actions.loadBillers(this.value)"><option value="">— select —</option>${cats}</select></div>
+          <div class="field" id="bbps_biller_wrap" style="display:none"><label>Biller</label>
+          <select id="bbps_biller" onchange="document.querySelector('#svc-fields [name=biller_id]').value=this.value"></select></div>`;
+      } catch { box.innerHTML = ''; }
+    } else { box.innerHTML = ''; }
+  },
+  fillBeneficiary(sel) {
+    const o = sel.selectedOptions[0]; if (!o || !o.value) return;
+    const set = (n, v) => { const el = document.querySelector(`#svc-fields [name="${n}"]`); if (el) el.value = v; };
+    set('beneficiary_name', o.dataset.n); set('account_number', o.dataset.a); set('ifsc', o.dataset.i);
+  },
+  async loadBillers(category) {
+    const wrap = $('bbps_biller_wrap'); const sel = $('bbps_biller');
+    if (!category) { wrap.style.display = 'none'; return; }
+    try {
+      const d = await Api.get('/bbps/billers?category=' + encodeURIComponent(category));
+      sel.innerHTML = (d.items || []).map(b => `<option value="${esc(b.biller_id)}">${esc(b.name)}</option>`).join('') || '<option value="">No billers</option>';
+      wrap.style.display = '';
+      const first = sel.querySelector('option'); if (first) document.querySelector('#svc-fields [name=biller_id]').value = first.value;
+    } catch { wrap.style.display = 'none'; }
   },
   // Fetch the live providers for a service and render a chooser when >1.
   async loadProviders(serviceKey) {
@@ -1135,6 +1214,11 @@ const Actions = {
       const d = await Api.post(s.path, body);
       const t = d.transaction || d.transfer;
       $('txn-result').innerHTML = `<div class="msg ok">Done — status: <b>${esc(t.status)}</b>${t.reference ? ' · ref ' + esc(t.reference) : ''}</div>`;
+      // Optionally save the DMT payee for next time.
+      const save = $('ben_save');
+      if (s.key === 'dmt' && save && save.checked && body.account_number) {
+        Api.post('/beneficiaries', { name: body.beneficiary_name, account_number: body.account_number, ifsc: body.ifsc }).catch(() => {});
+      }
       App.refreshWallet();
     } catch (err) {
       if (err.code === 'txn_mpin_required' || err.code === 'unauthorized' && /MPIN/i.test(err.message)) {
@@ -1297,6 +1381,44 @@ const Actions = {
     const pw = prompt('Enter your current password to remove the MPIN:');
     if (!pw) return;
     try { await Api.call('/security/mpin', { method: 'DELETE', body: { current_password: pw } }); UI.toast('MPIN removed'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- beneficiaries -----
+  addBeneficiary() {
+    UI.modal(`<h3>Add beneficiary</h3>
+      <div class="field"><label>Name</label><input id="bn_name"></div>
+      <div class="field"><label>Account number</label><input id="bn_acc"></div>
+      <div class="field"><label>IFSC</label><input id="bn_ifsc" placeholder="HDFC0001234"></div>
+      <div class="field"><label>Bank name (optional)</label><input id="bn_bank"></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveBeneficiary()">Save</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveBeneficiary() {
+    const body = { name: val('bn_name'), account_number: val('bn_acc'), ifsc: val('bn_ifsc').toUpperCase() };
+    if (val('bn_bank')) body.bank_name = val('bn_bank');
+    try { await Api.post('/beneficiaries', body); UI.closeModal(); UI.toast('Beneficiary saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async delBeneficiary(id) {
+    if (!confirm('Delete this beneficiary?')) return;
+    try { await Api.del('/beneficiaries/' + id); UI.toast('Deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- device binding -----
+  bindDevice() {
+    UI.modal(`<h3>Bind a device</h3>
+      <div class="field"><label>Device label</label><input id="dv_label" placeholder="Mantra MFS110"></div>
+      <div class="field"><label>Device ID / UUID</label><input id="dv_uuid" placeholder="serial or UUID"></div>
+      <div class="field"><label>IMEI (optional)</label><input id="dv_imei"></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveDevice()">Bind</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveDevice() {
+    const body = { device_uuid: val('dv_uuid') };
+    if (val('dv_label')) body.label = val('dv_label');
+    if (val('dv_imei')) body.imei = val('dv_imei');
+    if (!body.device_uuid) return UI.toast('Enter a device ID', 'err');
+    try { await Api.post('/onboarding/device', body); UI.closeModal(); UI.toast('Device bound'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   // Wallet lien / blocked amount: view, place and release holds on a user.
