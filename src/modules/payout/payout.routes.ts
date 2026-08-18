@@ -8,6 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getPayoutProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
+import { resolveProviderChoice } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -20,6 +21,7 @@ const createSchema = z.object({
   amount: z.coerce.number().positive().max(1000000),
   mode: z.enum(['IMPS', 'NEFT', 'RTGS', 'UPI']).default('IMPS'),
   charge: z.coerce.number().min(0).default(0),
+  provider_id: z.string().uuid().optional(),
   reference: z.string().trim().max(64).optional(),
 });
 
@@ -39,7 +41,8 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
-    const provider = getPayoutProvider();
+    const providerId = resolveProviderChoice('payout', body.provider_id);
+    const provider = getPayoutProvider(providerId);
 
     const { transaction, idempotent } = await runServiceTransaction({
       userId,
@@ -48,6 +51,7 @@ router.post(
       prefix: 'PO',
       reference: req.header('Idempotency-Key') || body.reference,
       amountPaise,
+      providerId,
       clientChargePaise: rupeesToPaise(body.charge),
       description: `Payout to ${body.beneficiary_name} via ${body.mode}`,
       providerName: provider.name,
@@ -68,6 +72,7 @@ router.post(
           accountNumber: body.account_number,
           ifsc: body.ifsc,
           mode: body.mode,
+          providerId,
         }),
     });
 

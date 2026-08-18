@@ -8,6 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getAepsProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
+import { resolveProviderChoice } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 import { aepsSplitSuppressesCommission } from '../risk/risk.service';
 
@@ -29,6 +30,7 @@ const baseFields = {
   biometric_type: z.enum(['FMR', 'FIR', 'IIR']).optional(),
   device_serial: z.string().trim().max(120).optional(),
   rd_service: z.string().trim().max(200).optional(),
+  provider_id: z.string().uuid().optional(),
   reference: z.string().trim().max(64).optional(),
 };
 const hasAadhaar = (v: { aadhaar_ref?: string; aadhaar?: string }) => !!(v.aadhaar_ref || v.aadhaar);
@@ -48,7 +50,8 @@ function maskAadhaar(full?: string, ref?: string): string {
 async function runAeps(req: Request, res: Response, txnType: TxnType, amountPaise: number, body: Record<string, unknown>) {
   if (!req.user) throw ApiError.unauthorized();
   const userId = req.user.id;
-  const provider = getAepsProvider();
+  const providerId = resolveProviderChoice('aeps', body.provider_id as string | undefined);
+  const provider = getAepsProvider(providerId);
 
   // Commission-farming guard: same Aadhaar again within the window at this
   // terminal keeps serving the customer but strips hierarchy commission.
@@ -66,6 +69,7 @@ async function runAeps(req: Request, res: Response, txnType: TxnType, amountPais
     suppressCommission,
     reference: (req.header('Idempotency-Key') || (body.reference as string)) ?? undefined,
     amountPaise,
+    providerId,
     description: `AEPS ${txnType}`,
     providerName: provider.name,
     insertServiceRow: async (client, ctx) => {
@@ -91,6 +95,7 @@ async function runAeps(req: Request, res: Response, txnType: TxnType, amountPais
         biometricType: body.biometric_type as string | undefined,
         bankIin: body.bank_iin as string,
         mobile: body.mobile as string | undefined,
+        providerId,
       }),
   });
 

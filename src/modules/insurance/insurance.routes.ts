@@ -8,6 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getGenericProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
+import { resolveProviderChoice } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -20,6 +21,7 @@ const createSchema = z.object({
   policy_number: z.string().trim().max(64).optional(),
   amount: z.coerce.number().positive().max(1000000), // premium
   charge: z.coerce.number().min(0).default(0),
+  provider_id: z.string().uuid().optional(),
   reference: z.string().trim().max(64).optional(),
 });
 
@@ -39,7 +41,8 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
-    const provider = getGenericProvider('insurance');
+    const providerId = resolveProviderChoice('insurance', body.provider_id);
+    const provider = getGenericProvider('insurance', providerId);
 
     const { transaction, idempotent } = await runServiceTransaction({
       userId,
@@ -51,6 +54,7 @@ router.post(
       clientChargePaise: rupeesToPaise(body.charge),
       description: `${body.category} insurance ${body.insurer ?? ''}`.trim(),
       providerName: provider.name,
+      providerId,
       insertServiceRow: async (client, ctx) => {
         const { rows } = await client.query<{ id: string }>(
           `INSERT INTO insurance_transactions
@@ -61,7 +65,7 @@ router.post(
         return rows[0].id;
       },
       callProvider: ({ reference }) =>
-        provider.execute('insurance', { reference, amountPaise, meta: { category: body.category } }),
+        provider.execute('insurance', { reference, amountPaise, providerId, meta: { category: body.category } }),
     });
 
     res.status(idempotent ? 200 : 201).json({ transaction, idempotent });

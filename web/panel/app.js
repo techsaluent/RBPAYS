@@ -1026,39 +1026,39 @@ const SERVICES = [
   { key: 'bbps', label: 'BBPS (bill pay)', path: '/bbps/pay', provider: true, fields: [
     ['biller_id', 'Biller ID', 'text'], ['consumer_number', 'Consumer number', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ biller_id: v.biller_id, consumer_number: v.consumer_number, amount: +v.amount }) },
-  { key: 'payout', label: 'Payout', path: '/payout', fields: [
+  { key: 'payout', label: 'Payout', path: '/payout', provider: true, fields: [
     ['beneficiary_name', 'Beneficiary name', 'text'], ['account_number', 'Account number', 'text'],
     ['ifsc', 'IFSC', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ beneficiary_name: v.beneficiary_name, account_number: v.account_number, ifsc: v.ifsc.toUpperCase(), amount: +v.amount, mode: 'IMPS' }) },
-  { key: 'upi', label: 'UPI payout', path: '/upi/pay', fields: [
+  { key: 'upi', label: 'UPI payout', path: '/upi/pay', provider: true, fields: [
     ['vpa', 'UPI ID (name@bank)', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ vpa: v.vpa, amount: +v.amount }) },
   { key: 'cms', label: 'CMS (cash collection)', path: '/cms/pay', provider: true, fields: [
     ['agent_id', 'Agent / company ID', 'text'], ['account_number', 'Account number', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ agent_id: v.agent_id, account_number: v.account_number, amount: +v.amount }) },
-  { key: 'aeps', label: 'AEPS cash withdrawal', path: '/aeps/cash-withdrawal', biometric: true, fields: [
+  { key: 'aeps', label: 'AEPS cash withdrawal', path: '/aeps/cash-withdrawal', provider: true, biometric: true, fields: [
     ['aadhaar', 'Aadhaar number (12 digit)', 'text'], ['bank_iin', 'Bank IIN', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ aadhaar: v.aadhaar, bank_iin: v.bank_iin, amount: +v.amount }) },
-  { key: 'matm', label: 'Micro ATM', path: '/matm/withdrawal', fields: [['amount', 'Amount', 'number']],
+  { key: 'matm', label: 'Micro ATM', path: '/matm/withdrawal', provider: true, fields: [['amount', 'Amount', 'number']],
     build: v => ({ amount: +v.amount }) },
-  { key: 'aadhaar_pay', label: 'Aadhaar Pay', path: '/aadhaar-pay', biometric: true, fields: [
+  { key: 'aadhaar_pay', label: 'Aadhaar Pay', path: '/aadhaar-pay', provider: true, biometric: true, fields: [
     ['aadhaar', 'Aadhaar number (12 digit)', 'text'], ['bank_iin', 'Bank IIN', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ aadhaar: v.aadhaar, bank_iin: v.bank_iin, amount: +v.amount }) },
-  { key: 'pan_card', label: 'PAN Card', path: '/pan-card/apply', fields: [
+  { key: 'pan_card', label: 'PAN Card', path: '/pan-card/apply', provider: true, fields: [
     ['applicant_name', 'Applicant name', 'text'], ['amount', 'Fee', 'number'] ],
     build: v => ({ applicant_name: v.applicant_name, amount: +v.amount }) },
-  { key: 'card_swipe', label: 'Card Swipe', path: '/card-swipe', fields: [['amount', 'Amount', 'number']],
+  { key: 'card_swipe', label: 'Card Swipe', path: '/card-swipe', provider: true, fields: [['amount', 'Amount', 'number']],
     build: v => ({ amount: +v.amount, card_type: 'debit' }) },
   { key: 'wallet_transfer', label: 'Wallet transfer (to member)', path: '/wallet-transfer', fields: [
     ['to', 'To (phone / email / username)', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ to: v.to, amount: +v.amount }) },
-  { key: 'travel', label: 'Travel booking', path: '/travel/book', fields: [
+  { key: 'travel', label: 'Travel booking', path: '/travel/book', provider: true, fields: [
     ['booking_type', 'Type (flight/bus/train/hotel)', 'text'], ['operator', 'Operator', 'text'],
     ['from_location', 'From', 'text'], ['to_location', 'To', 'text'],
     ['passenger_name', 'Passenger', 'text'], ['amount', 'Amount', 'number'] ],
     build: v => ({ booking_type: v.booking_type || 'flight', operator: v.operator, from_location: v.from_location,
       to_location: v.to_location, passenger_name: v.passenger_name, amount: +v.amount }) },
-  { key: 'insurance', label: 'Insurance', path: '/insurance/buy', fields: [
+  { key: 'insurance', label: 'Insurance', path: '/insurance/buy', provider: true, fields: [
     ['category', 'Category (motor/health/life/travel)', 'text'], ['insurer', 'Insurer', 'text'],
     ['customer_name', 'Customer', 'text'], ['amount', 'Premium', 'number'] ],
     build: v => ({ category: v.category || 'health', insurer: v.insurer, customer_name: v.customer_name, amount: +v.amount }) },
@@ -1274,8 +1274,10 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async decideAdj(id, decision) {
-    const note = prompt(`${decision} note:`, ''); if (note === null) return;
-    try { await Api.post(`/admin/adjustments/${id}/${decision}`, { note }); UI.toast(`Adjustment ${decision}d`); App.route(); }
+    const note = prompt(`${decision === 'approve' ? 'Approve' : 'Reject'} this adjustment — enter a remark (required):`, '');
+    if (note === null) return;
+    if (!note.trim()) return UI.toast('A remark is required', 'err');
+    try { await Api.post(`/admin/adjustments/${id}/${decision}`, { note: note.trim() }); UI.toast(`Adjustment ${decision}d`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   presetSvc(key) { Actions._preset = key; },

@@ -8,6 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getGenericProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
+import { resolveProviderChoice } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -23,6 +24,7 @@ const createSchema = z.object({
   biometric_type: z.enum(['FMR', 'FIR', 'IIR']).optional(),
   device_serial: z.string().trim().max(120).optional(),
   rd_service: z.string().trim().max(200).optional(),
+  provider_id: z.string().uuid().optional(),
   reference: z.string().trim().max(64).optional(),
 }).refine((v) => !!(v.aadhaar_ref || v.aadhaar), { message: 'Provide aadhaar or aadhaar_ref', path: ['aadhaar'] });
 
@@ -47,7 +49,8 @@ router.post(
     const userId = req.user.id;
     const body = req.body as z.infer<typeof createSchema>;
     const amountPaise = rupeesToPaise(body.amount);
-    const provider = getGenericProvider('aadhaar_pay');
+    const providerId = resolveProviderChoice('aadhaar_pay', body.provider_id);
+    const provider = getGenericProvider('aadhaar_pay', providerId);
 
     const { transaction, idempotent } = await runServiceTransaction({
       userId,
@@ -59,6 +62,7 @@ router.post(
       amountPaise,
       description: 'Aadhaar Pay collection',
       providerName: provider.name,
+      providerId,
       insertServiceRow: async (client, ctx) => {
         const { rows } = await client.query<{ id: string }>(
           `INSERT INTO aadhaar_pay_transactions
@@ -75,6 +79,7 @@ router.post(
         provider.execute('aadhaar_pay', {
           reference,
           amountPaise,
+          providerId,
           meta: {
             iin: body.bank_iin,
             aadhaar: body.aadhaar,
