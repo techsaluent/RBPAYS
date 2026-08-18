@@ -116,11 +116,43 @@ router.get(
     );
     const user = userRes.rows[0] ?? { full_name: '-', phone: '-' };
 
+    // Statutory tax breakdown recorded against this transaction.
+    const [tdsRes, gstRes, brandRes] = await Promise.all([
+      query<{ section: string; gross_paise: string; rate_bps: number; tds_paise: string }>(
+        'SELECT section, gross_paise, rate_bps, tds_paise FROM tds_records WHERE service_txn_id = $1 ORDER BY section',
+        [txn.service_txn_id],
+      ),
+      query<{ base: string; cgst: string; sgst: string; igst: string }>(
+        `SELECT COALESCE(SUM(taxable_base_paise),0) base, COALESCE(SUM(cgst_paise),0) cgst,
+                COALESCE(SUM(sgst_paise),0) sgst, COALESCE(SUM(igst_paise),0) igst
+           FROM gst_invoices WHERE service_txn_id = $1`,
+        [txn.service_txn_id],
+      ),
+      query<{ value: string }>("SELECT value FROM site_settings WHERE key = 'brand_name'"),
+    ]);
+    const tax = {
+      tds: tdsRes.rows.map((t) => ({
+        section: t.section,
+        gross_paise: Number(t.gross_paise),
+        rate_bps: t.rate_bps,
+        tds_paise: Number(t.tds_paise),
+      })),
+      gst: Number(gstRes.rows[0]?.base ?? '0') > 0
+        ? {
+            base_paise: Number(gstRes.rows[0].base),
+            cgst_paise: Number(gstRes.rows[0].cgst),
+            sgst_paise: Number(gstRes.rows[0].sgst),
+            igst_paise: Number(gstRes.rows[0].igst),
+          }
+        : null,
+    };
+    const brand = brandRes.rows[0]?.value || 'TutiPays';
+
     if (req.query.format === 'json') {
-      res.json({ receipt: receiptData(txn as never, detail, user) });
+      res.json({ receipt: receiptData(txn as never, detail, user, tax) });
       return;
     }
-    res.type('html').send(receiptHtml(txn as never, detail, user));
+    res.type('html').send(receiptHtml(txn as never, detail, user, tax, brand));
   }),
 );
 

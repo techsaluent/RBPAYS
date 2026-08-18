@@ -1,44 +1,48 @@
 import { PoolClient } from 'pg';
 import { query } from '../../../db';
 import { env } from '../../config/env';
+import { taxRate, computeTax } from './tax.config';
 
 /**
  * Statutory tax helpers.
  *
- * TDS (Section 194H on commission): 5% for a member with a valid PAN who is a
- * regular filer; 20% when the PAN is missing/invalid or the member is a 206AB
- * non-filer. GST: 18% on the platform's retained margin, split CGST+SGST for
- * intra-state supply or IGST for inter-state (by place-of-supply state code).
+ * All rates and caps are super-admin editable (tax_config); the defaults are
+ * TDS 194H 5% (valid PAN filer) / 20% (no-PAN or 206AB), TDS 194N 2% on cash
+ * withdrawal beyond the annual threshold, and GST 18% on the platform margin.
  */
-export const TDS_RATE_STD_BPS = 500; // 5%
-export const TDS_RATE_HIGH_BPS = 2000; // 20%
-export const GST_RATE_BPS = 1800; // 18%
-
 export interface TaxProfile {
   pan_valid: boolean;
   is_206ab_non_filer: boolean;
   state_code: string | null;
 }
 
-/** Resolve a member's 194H TDS rate (basis points). Defaults to high if unknown. */
-export async function tdsRateBpsFor(userId: string): Promise<number> {
+/** Which 194H config code applies to a member (std vs high). */
+export async function tds194hCodeFor(userId: string): Promise<'tds_194h_std' | 'tds_194h_high'> {
   const { rows } = await query<TaxProfile>(
     'SELECT pan_valid, is_206ab_non_filer, state_code FROM tax_profiles WHERE user_id = $1',
     [userId],
   );
   const p = rows[0];
-  if (p && p.pan_valid && !p.is_206ab_non_filer) return TDS_RATE_STD_BPS;
-  return TDS_RATE_HIGH_BPS;
+  return p && p.pan_valid && !p.is_206ab_non_filer ? 'tds_194h_std' : 'tds_194h_high';
+}
+
+/** 194H commission TDS for a member: configured rate + cap. */
+export async function commissionTds(userId: string, grossPaise: number): Promise<{ code: string; rateBps: number; tdsPaise: number }> {
+  const code = await tds194hCodeFor(userId);
+  return { code, rateBps: taxRate(code).rateBps, tdsPaise: computeTax(code, grossPaise) };
 }
 
 export function applyBps(amountPaise: number, bps: number): number {
   return Math.round((amountPaise * bps) / 10000);
 }
 
-/** Split a GST-inclusive amount into taxable base + tax at 18%. */
+/** Split a GST-inclusive amount into taxable base + tax at the configured rate (with cap). */
 export function splitGstInclusive(inclusivePaise: number): { basePaise: number; gstPaise: number } {
-  const basePaise = Math.round((inclusivePaise * 10000) / (10000 + GST_RATE_BPS));
-  return { basePaise, gstPaise: inclusivePaise - basePaise };
+  const gstBps = taxRate('gst').enabled ? taxRate('gst').rateBps : 0;
+  let gstPaise = Math.round((inclusivePaise * gstBps) / (10000 + gstBps));
+  const cap = taxRate('gst').maxAmountPaise;
+  if (cap > 0) gstPaise = Math.min(gstPaise, cap);
+  return { basePaise: inclusivePaise - gstPaise, gstPaise };
 }
 
 /** Record a TDS deduction (Form 26Q source). */
@@ -98,7 +102,7 @@ export async function apply194N(
   // Only the portion of this withdrawal that pushes past the threshold is taxed.
   if (priorFy + p.amountPaise <= threshold) return 0;
   const taxableBase = Math.min(p.amountPaise, priorFy + p.amountPaise - threshold);
-  const tds = applyBps(taxableBase, env.TDS_194N_RATE_BPS);
+  const tds = computeTax('tds_194n', taxableBase);
   if (tds <= 0) return 0;
 
   await recordTds(client, {
@@ -107,7 +111,7 @@ export async function apply194N(
     serviceCode: p.serviceCode,
     section: '194N',
     grossPaise: taxableBase,
-    rateBps: env.TDS_194N_RATE_BPS,
+    rateBps: taxRate('tds_194n').rateBps,
     tdsPaise: tds,
   });
   return tds;
