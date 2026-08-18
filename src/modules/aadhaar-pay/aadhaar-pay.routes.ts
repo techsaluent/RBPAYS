@@ -14,12 +14,22 @@ const router = Router();
 router.use(requireAuth);
 
 const createSchema = z.object({
-  aadhaar_ref: z.string().trim().min(4).max(20),
+  aadhaar_ref: z.string().trim().min(4).max(20).optional(),
+  aadhaar: z.string().trim().regex(/^\d{12}$/, 'Aadhaar must be 12 digits').optional(),
   bank_iin: z.string().trim().min(3).max(12),
   mobile: z.string().trim().regex(/^[6-9]\d{9}$/).optional(),
   amount: z.coerce.number().positive().max(100000),
+  pid_data: z.string().max(20000).optional(),
+  biometric_type: z.enum(['FMR', 'FIR', 'IIR']).optional(),
+  device_serial: z.string().trim().max(120).optional(),
+  rd_service: z.string().trim().max(200).optional(),
   reference: z.string().trim().max(64).optional(),
-});
+}).refine((v) => !!(v.aadhaar_ref || v.aadhaar), { message: 'Provide aadhaar or aadhaar_ref', path: ['aadhaar'] });
+
+function maskAadhaar(full?: string, ref?: string): string {
+  if (full) return `XXXXXXXX${full.slice(-4)}`;
+  return ref ?? 'XXXX';
+}
 
 const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -51,14 +61,27 @@ router.post(
       providerName: provider.name,
       insertServiceRow: async (client, ctx) => {
         const { rows } = await client.query<{ id: string }>(
-          `INSERT INTO aadhaar_pay_transactions (user_id, aadhaar_ref, bank_iin, mobile, amount_paise, charge_paise, reference, status)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,'pending') RETURNING id`,
-          [userId, body.aadhaar_ref, body.bank_iin, body.mobile ?? null, amountPaise, ctx.chargePaise, ctx.reference],
+          `INSERT INTO aadhaar_pay_transactions
+             (user_id, aadhaar_ref, bank_iin, mobile, amount_paise, charge_paise,
+              biometric_type, device_serial, rd_service, reference, status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending') RETURNING id`,
+          [userId, maskAadhaar(body.aadhaar, body.aadhaar_ref), body.bank_iin, body.mobile ?? null,
+           amountPaise, ctx.chargePaise, body.biometric_type ?? null, body.device_serial ?? null,
+           body.rd_service ?? null, ctx.reference],
         );
         return rows[0].id;
       },
       callProvider: ({ reference }) =>
-        provider.execute('aadhaar_pay', { reference, amountPaise, meta: { iin: body.bank_iin } }),
+        provider.execute('aadhaar_pay', {
+          reference,
+          amountPaise,
+          meta: {
+            iin: body.bank_iin,
+            aadhaar: body.aadhaar,
+            pid_data: body.pid_data,
+            biometric_type: body.biometric_type,
+          },
+        }),
     });
 
     res.status(idempotent ? 200 : 201).json({ transaction, idempotent });

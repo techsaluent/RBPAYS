@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>TutiPays — Admin Console</title>
+  <!-- Thin entry point for the Super Admin console. It loads the same panel
+       app in "admin portal" mode (separate from the partner/retailer login),
+       so administrators sign in from a distinct URL. For a clean address like
+       tutipays.com/admin, map that location in nginx to serve this file. -->
+  <script>window.location.replace('./?portal=admin' + location.hash);</script>
+</head>
+<body>
+  <noscript>Enable JavaScript, then open <a href="./?portal=admin">the admin console</a>.</noscript>
+</body>
+</html>

@@ -2,13 +2,18 @@ import { Request, Response } from 'express';
 import { ApiError } from '../../utils/ApiError';
 import * as authService from './auth.service';
 
+export async function requestSignupOtp(req: Request, res: Response): Promise<void> {
+  const result = await authService.requestSignupOtp(req.body.phone, req.body.email);
+  res.status(200).json(result);
+}
+
 export async function signup(req: Request, res: Response): Promise<void> {
   const result = await authService.signup(req.body);
   res.status(201).json(result);
 }
 
 export async function login(req: Request, res: Response): Promise<void> {
-  const result = await authService.login(req.body);
+  const result = await authService.login(req.body, req.ip);
   res.status(200).json(result);
 }
 

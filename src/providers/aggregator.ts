@@ -168,9 +168,12 @@ export const aggregatorAeps: AepsProvider = {
       reference: input.reference,
       txn_type: input.txnType,
       amount: input.amountPaise / 100,
-      aadhaar: input.aadhaarRef,
+      aadhaar: input.aadhaarNumber ?? input.aadhaarRef,
       iin: input.bankIin,
       mobile: input.mobile,
+      // Biometric authentication block (RD-service PID) for the switch.
+      biometric_type: input.biometricType,
+      pid_data: input.pidData,
     });
   },
 };

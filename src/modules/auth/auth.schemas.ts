@@ -7,6 +7,10 @@ export const usernameSchema = z
   .toLowerCase()
   .regex(/^[a-z][a-z0-9._-]{2,29}$/, 'Username must be 3-30 chars, start with a letter (a-z, 0-9, . _ -)');
 
+// Self-registration roles a prospect may apply for. Admin/agent are never
+// self-assignable — staff accounts are created internally.
+export const signupRoleSchema = z.enum(['retailer', 'distributor', 'master_distributor']);
+
 export const signupSchema = z.object({
   full_name: z.string().trim().min(2).max(120),
   username: usernameSchema.optional(),
@@ -19,6 +23,19 @@ export const signupSchema = z.object({
     .string()
     .min(8, 'Password must be at least 8 characters')
     .max(128),
+  // Which network post the applicant is signing up for. Defaults to retailer.
+  role: signupRoleSchema.default('retailer'),
+  // Optional upline: the sponsor's username, email or phone. When it resolves
+  // to a higher-ranked member, the new account is linked under them.
+  sponsor: z.string().trim().max(120).optional(),
+  // 6-digit mobile OTP; required only when signup OTP is enabled by the admin.
+  otp: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit OTP').optional(),
+});
+
+// Step 1 of OTP signup: request a code for a mobile (email optional).
+export const requestSignupOtpSchema = z.object({
+  phone: z.string().trim().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
+  email: z.string().trim().toLowerCase().email().optional(),
 });
 
 export const loginSchema = z.object({
