@@ -68,6 +68,21 @@
     .card { background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px 18px; }
     .card .k { font-size:12px; color:var(--muted); }
     .card .v { font-size:24px; font-weight:700; margin-top:6px; }
+
+    /* ---- Stat tiles ---- */
+    .stats { display:grid; gap:14px; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); }
+    .stat { position:relative; background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow);
+      padding:16px 16px 16px 18px; overflow:hidden; }
+    .stat::before { content:''; position:absolute; left:0; top:0; bottom:0; width:5px; background:var(--accent,var(--brand)); }
+    .stat .ico { width:38px; height:38px; border-radius:10px; display:grid; place-items:center; font-size:19px;
+      background:color-mix(in srgb, var(--accent,var(--brand)) 15%, transparent); color:var(--accent,var(--brand)); }
+    .stat .k { font-size:12px; color:var(--muted); margin-top:12px; text-transform:uppercase; letter-spacing:.4px; }
+    .stat .v { font-size:26px; font-weight:800; margin-top:3px; line-height:1.1; letter-spacing:-.5px; }
+    .stat .sub { font-size:12px; color:var(--muted); margin-top:5px; }
+    .stat .sub b { color:var(--ink); }
+    .stat.b { --accent:var(--brand); } .stat.g { --accent:#137333; } .stat.o { --accent:#b06000; }
+    .stat.p { --accent:#7c3aed; } .stat.r { --accent:#c5221f; } .stat.t { --accent:#0d9488; }
+    .sechead { font-size:13px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:22px 0 12px; }
     .panel { background:var(--card); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px 20px; }
     .panel h2 { font-size:15px; margin:0 0 14px; }
     .row { display:flex; gap:12px; flex-wrap:wrap; align-items:end; }

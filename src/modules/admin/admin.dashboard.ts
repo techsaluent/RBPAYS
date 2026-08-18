@@ -34,6 +34,32 @@ export async function dashboardStats() {
     'SELECT COALESCE(SUM(amount_paise),0) AS total FROM commission_entries',
   );
 
+  // Platform-wide transaction stats (IST day/month) from the unified ledger.
+  const txn = await query<Record<string, string>>(
+    `SELECT
+        COUNT(*) AS total_count,
+        COUNT(*) FILTER (WHERE status = 'success') AS success_count,
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending_count,
+        COALESCE(SUM(amount_paise) FILTER (WHERE status = 'success'), 0) AS success_amount,
+        COUNT(*) FILTER (
+          WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
+        ) AS today_count,
+        COALESCE(SUM(amount_paise) FILTER (
+          WHERE status = 'success'
+            AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = (now() AT TIME ZONE 'Asia/Kolkata')::date
+        ), 0) AS today_amount,
+        COALESCE(SUM(amount_paise) FILTER (
+          WHERE status = 'success'
+            AND date_trunc('month', created_at AT TIME ZONE 'Asia/Kolkata')
+                = date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata')
+        ), 0) AS month_amount
+      FROM transactions`,
+  );
+  const t = txn.rows[0];
+  const tn = (k: string) => Number(t[k] ?? 0);
+  const totalTxn = tn('total_count');
+  const successTxn = tn('success_count');
+
   // Per-service volume: successful count + amount.
   const volumes: Record<string, { success_count: number; success_amount_paise: number; total_count: number }> = {};
   for (const [code, table] of Object.entries(SERVICE_TABLES)) {
@@ -62,11 +88,22 @@ export async function dashboardStats() {
     total_count: Number(pgVolume.rows[0].success_count),
   };
 
+  const totalUsers = usersByRole.rows.reduce((s, r) => s + Number(r.n), 0);
+
   return {
     users_by_role: Object.fromEntries(usersByRole.rows.map((r) => [r.role, Number(r.n)])),
+    total_users: totalUsers,
     wallet_float_paise: Number(walletFloat.rows[0].total),
     pending_kyc: Number(pendingKyc.rows[0].n),
     commission_paid_paise: Number(commissionPaid.rows[0].total),
+    txn_total_count: totalTxn,
+    txn_success_count: successTxn,
+    txn_pending_count: tn('pending_count'),
+    txn_success_rate: totalTxn ? Math.round((successTxn / totalTxn) * 100) : 0,
+    gtv_paise: tn('success_amount'),
+    today_count: tn('today_count'),
+    today_amount_paise: tn('today_amount'),
+    month_amount_paise: tn('month_amount'),
     service_volumes: volumes,
   };
 }

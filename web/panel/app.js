@@ -180,6 +180,12 @@ const UI = {
   },
   closeModal() { $('modal-root').innerHTML = ''; },
   statusTag(s) { return `<span class="tag ${esc(s)}">${esc(s)}</span>`; },
+  // A single statistic tile: colour class, icon, label, big value, sub-line.
+  stat(cls, ico, label, value, sub) {
+    return `<div class="stat ${cls}"><div class="ico">${ico}</div>
+      <div class="k">${esc(label)}</div><div class="v">${value}</div>
+      ${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+  },
 };
 
 // ---------------- Navigation ----------------
@@ -295,13 +301,20 @@ const Screens = {
     if (State.user.role === 'admin') {
       const d = await Api.get('/admin/dashboard');
       const roles = Object.entries(d.users_by_role || {}).map(([k, n]) => `${k.replace(/_/g,' ')}: <b>${n}</b>`).join(' &nbsp; ');
-      const vol = Object.entries(d.service_volumes || {}).map(([k, v]) =>
-        `<tr><td>${k}</td><td class="right">${v.success_count}</td><td class="right">${money(v.success_amount_paise/100)}</td></tr>`).join('');
+      const vol = Object.entries(d.service_volumes || {})
+        .sort((a, b) => b[1].success_amount_paise - a[1].success_amount_paise)
+        .map(([k, v]) =>
+        `<tr><td>${esc(k.replace(/_/g,' '))}</td><td class="right">${v.success_count}</td><td class="right">${v.total_count ?? '—'}</td><td class="right">${money(v.success_amount_paise/100)}</td></tr>`).join('');
       $('view').innerHTML = `
-        <div class="grid cards">
-          <div class="card"><div class="k">Wallet float</div><div class="v">${money(d.wallet_float_paise/100)}</div></div>
-          <div class="card"><div class="k">Commission paid</div><div class="v">${money(d.commission_paid_paise/100)}</div></div>
-          <div class="card"><div class="k">Pending KYC</div><div class="v">${d.pending_kyc}</div></div>
+        <div class="stats">
+          ${UI.stat('b','💳','Today\'s volume', money((d.today_amount_paise||0)/100), `<b>${d.today_count||0}</b> transactions today`)}
+          ${UI.stat('t','📈','This month GTV', money((d.month_amount_paise||0)/100), 'Successful value, MTD')}
+          ${UI.stat('g','🏦','Wallet float', money(d.wallet_float_paise/100), 'Across all wallets')}
+          ${UI.stat('p','🎯','Success rate', (d.txn_success_rate??0)+'%', `<b>${d.txn_success_count||0}</b> of ${d.txn_total_count||0} txns`)}
+          ${UI.stat('o','👥','Total users', (d.total_users||0), roles || '—')}
+          ${UI.stat('t','💰','Commission paid', money(d.commission_paid_paise/100), 'To the network, lifetime')}
+          ${UI.stat('r','🪪','Pending KYC', d.pending_kyc, d.pending_kyc ? '<a href="#/kycreview">Review now →</a>' : 'All clear')}
+          ${UI.stat('o','⏳','Pending txns', (d.txn_pending_count||0), 'Awaiting settlement')}
         </div>
         <div class="panel mt"><h2>Command consoles</h2>
           <div class="row" style="flex-wrap:wrap;gap:8px">
@@ -320,48 +333,60 @@ const Screens = {
             <a class="btn sm ghost" href="#/opsdesk">Ops Desk</a>
             <a class="btn sm ghost" href="#/ledger">Ledger</a>
           </div></div>
-        <div class="panel mt"><h2>Users</h2><div>${roles || '—'}</div></div>
-        <div class="panel mt"><h2>Service volume (successful)</h2>
-          <div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Count</th><th class="right">Amount</th></tr></thead>
-          <tbody>${vol}</tbody></table></div></div>`;
+        <div class="panel mt"><h2>Service volume</h2>
+          <div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Success</th><th class="right">Total</th><th class="right">Amount</th></tr></thead>
+          <tbody>${vol || '<tr><td colspan=4 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>`;
     } else if (MGMT_ROLES.includes(State.user.role)) {
       // Distributor / Master distributor — network + earnings, no transactions.
-      const [p, w] = await Promise.all([Api.get('/network/panel').catch(() => null), Api.get('/wallet')]);
+      const [p, w, st] = await Promise.all([
+        Api.get('/network/panel').catch(() => null),
+        Api.get('/wallet'),
+        Api.get('/transactions/stats/summary').catch(() => null),
+      ]);
       const earn = p ? p.earnings.total_paise / 100 : 0;
+      const totalDown = p ? Object.values(p.downline_counts || {}).reduce((a, n) => a + Number(n), 0) : 0;
       const dc = p ? Object.entries(p.downline_counts || {}).map(([k, n]) => `${k.replace(/_/g,' ')}: <b>${n}</b>`).join(' &nbsp; ') : '';
       const recent = (p?.earnings.recent || []).map(e => `<tr><td>${esc(e.service_code)}</td><td>${esc(e.level)}</td><td class="right">${money(e.amount_paise/100)}</td></tr>`).join('');
       $('view').innerHTML = `
-        <div class="grid cards">
-          <div class="card"><div class="k">Wallet balance</div><div class="v">${money(w.wallet.balance)}</div></div>
-          <div class="card"><div class="k">Commission earned</div><div class="v">${money(earn)}</div></div>
+        <div class="stats">
+          ${UI.stat('b','👛','Wallet balance', money(w.wallet.balance), 'Available float')}
+          ${UI.stat('g','💰','Commission earned', money(earn), 'Net of TDS, lifetime')}
+          ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, dc || 'No members yet')}
+          ${st ? UI.stat('t','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : ''}
         </div>
         <div class="panel mt"><h2>Quick actions</h2>
+          <a class="btn sm" href="#/network">Manage network</a> &nbsp;
           <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
-          <a class="btn sm ghost" href="#/network">Manage network</a></div>
-        <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My downline</h2>
-          <a class="btn sm" href="#/network">Manage network</a></div><div>${dc || 'No members yet'}</div></div>
+          <a class="btn sm ghost" href="#/txns">Transactions</a></div>
         <div class="panel mt"><h2>Recent commission</h2><div class="tbl-wrap"><table>
           <thead><tr><th>Service</th><th>Level</th><th class="right">Amount</th></tr></thead>
           <tbody>${recent || '<tr><td colspan=3 class=muted>None yet</td></tr>'}</tbody></table></div></div>`;
     } else {
       // Retailer (and plain user) — transact, wallet, KYC prompt.
-      const [w, kyc] = await Promise.all([Api.get('/wallet'), Api.get('/kyc').catch(() => null)]);
+      const [w, kyc, st] = await Promise.all([
+        Api.get('/wallet'),
+        Api.get('/kyc').catch(() => null),
+        Api.get('/transactions/stats/summary').catch(() => null),
+      ]);
       const kstat = kyc?.kyc_status || State.user.kyc_status;
       const kycBanner = kstat !== 'verified'
         ? `<div class="msg ${kstat === 'rejected' ? 'err' : ''}" style="background:${kstat==='rejected'?'':'#fef7e0'};color:${kstat==='rejected'?'':'#b06000'}">
              Your KYC is <b>${esc(kstat)}</b>. <a href="#/kyc">Complete KYC →</a></div>` : '';
       const sw = w.sub_wallets || { settlement: '0.00', commission: '0.00' };
-      const quick = SERVICES.slice(0, 8).map(s => `<a class="btn sm ghost" href="#/new" onclick="Actions.presetSvc('${s.key}')">${esc(s.label)}</a>`).join(' ');
+      const s = st || {};
+      const quick = SERVICES.slice(0, 8).map(x => `<a class="btn sm ghost" href="#/new" onclick="Actions.presetSvc('${x.key}')">${esc(x.label)}</a>`).join(' ');
       $('view').innerHTML = `
         ${kycBanner}
-        <div class="grid cards">
-          <div class="card"><div class="k">Main wallet</div><div class="v">${money(w.wallet.balance)}</div></div>
-          <div class="card"><div class="k">AePS settlement</div><div class="v">${money(sw.settlement)}</div></div>
-          <div class="card"><div class="k">Commission (net TDS)</div><div class="v">${money(sw.commission)}</div></div>
-          <div class="card"><div class="k">KYC status</div><div class="v" style="font-size:18px">${UI.statusTag(kstat)}</div></div>
+        <div class="stats">
+          ${UI.stat('b','👛','Main wallet', money(w.wallet.balance), 'Available balance')}
+          ${UI.stat('t','🏧','AePS settlement', money(sw.settlement), 'Pending sweep')}
+          ${UI.stat('g','💰','Commission', money(sw.commission), 'Net of TDS')}
+          ${UI.stat('p','💳','Today', money((s.today_amount_paise||0)/100), `<b>${s.today_count||0}</b> transactions`)}
+          ${UI.stat('t','📈','This month', money((s.month_amount_paise||0)/100), 'Successful value')}
+          ${UI.stat('o','🎯','Success rate', (s.success_rate??0)+'%', `<b>${s.success_count||0}</b> of ${s.total_count||0}`)}
         </div>
-        <div class="panel mt"><h2>Banking counter</h2>
-          <div class="row" style="flex-wrap:wrap;gap:8px">${quick}</div></div>
+        <div class="sechead">Banking counter</div>
+        <div class="panel"><div class="row" style="flex-wrap:wrap;gap:8px">${quick}</div></div>
         <div class="panel mt"><h2>Quick actions</h2>
           <a class="btn sm" href="#/new">＋ New transaction</a> &nbsp;
           <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
