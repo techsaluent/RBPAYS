@@ -1,12 +1,11 @@
-/* RBPAYS Panel — talks to the RBPAYS API. Pure vanilla JS, no build step. */
+/* TutiPays Panel — talks to the TutiPays API. Pure vanilla JS, no build step. */
 
-// ------- Config: point this at your API. Override via ?api= or window.RBPAYS_API -------
-// Auto-selects the API by the domain the panel is served from, so the same files
-// work on tutipays.com and (during migration) rbpays.in.
+// ------- Config: point this at your API. Override via ?api= or window.TUTIPAYS_API -------
+// Auto-selects the API by the domain the panel is served from.
 function defaultApiBase() {
   const q = new URLSearchParams(location.search).get('api');
   if (q) return q;
-  if (window.RBPAYS_API) return window.RBPAYS_API;
+  if (window.TUTIPAYS_API || window.RBPAYS_API) return window.TUTIPAYS_API || window.RBPAYS_API;
   const h = location.hostname;
   if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:8080/api/v1';
   // Same-origin, path-based: the site proxies /api -> the API app.

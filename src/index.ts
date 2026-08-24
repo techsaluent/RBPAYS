@@ -16,7 +16,7 @@ async function main() {
 
   const app = createApp();
   const server = app.listen(env.PORT, () => {
-    logger.info(`RBPAYS API listening on port ${env.PORT} (${env.NODE_ENV})`);
+    logger.info(`TutiPays API listening on port ${env.PORT} (${env.NODE_ENV})`);
   });
 
   const shutdown = (signal: string) => {
