@@ -835,21 +835,25 @@ const Screens = {
     App._permCatalog = cat;
     const rows = (list.items || []).map(s => `<tr>
       <td>${esc(s.full_name)}</td><td class="muted">${esc(s.email)}</td>
+      <td>${s.kind === 'ai' ? '🤖 AI agent' + (s.active_tokens ? ' <span class="tag active">key</span>' : ' <span class="tag">no key</span>') : '👤 Human'}</td>
       <td>${UI.statusTag(s.status)}</td>
       <td>${(s.permissions||[]).length} power(s)</td>
       <td>
         <button class="btn sm" onclick='Actions.editStaff(${JSON.stringify(s).replace(/'/g,"&#39;")})'>Permissions</button>
+        ${s.kind === 'ai' ? `<button class="btn sm ghost" onclick="Actions.regenToken('${s.id}')">New key</button>
+          ${s.active_tokens ? `<button class="btn sm ghost" onclick="Actions.revokeToken('${s.id}')">Revoke key</button>` : ''}` : ''}
         ${s.status === 'active'
           ? `<button class="btn sm ghost" onclick="Actions.staffStatus('${s.id}','suspended')">Suspend</button>`
           : `<button class="btn sm" onclick="Actions.staffStatus('${s.id}','active')">Activate</button>`}
       </td></tr>`).join('');
     $('view').innerHTML = `
       <div class="panel"><div class="row" style="justify-content:space-between"><h2>Staff &amp; roles</h2>
-        <button class="btn sm" onclick="Actions.addStaff()">+ Add staff</button></div>
-        <p class="muted">Staff log in through this admin console but only see the sections you grant. The super admin holds every power.</p>
+        <div class="row" style="gap:8px"><button class="btn sm" onclick="Actions.addStaff('human')">+ Human staff</button>
+        <button class="btn sm ghost" onclick="Actions.addStaff('ai')">+ AI agent</button></div></div>
+        <p class="muted">Human staff sign in to this console; AI agents authenticate with an API key (for n8n / automation) — both obey the same permissions.</p>
         <div class="tbl-wrap"><table>
-        <thead><tr><th>Name</th><th>Email</th><th>Status</th><th>Powers</th><th></th></tr></thead>
-        <tbody>${rows || '<tr><td colspan=5 class=muted>No staff yet — add your first team member.</td></tr>'}</tbody></table></div></div>`;
+        <thead><tr><th>Name</th><th>Email</th><th>Type</th><th>Status</th><th>Powers</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=6 class=muted>No staff yet — add your first team member or AI agent.</td></tr>'}</tbody></table></div></div>`;
   },
 
   async members() {
@@ -1737,21 +1741,49 @@ const Actions = {
     document.querySelectorAll('.perm-box').forEach(b => { b.checked = set.has(b.value); });
   },
   _collectPerms() { return [...document.querySelectorAll('.perm-box:checked')].map(b => b.value); },
-  async addStaff() {
-    UI.modal(`<h3>Add staff member</h3>
-      <div class="field"><label>Full name</label><input id="st_name"></div>
+  async addStaff(kind) {
+    kind = kind || 'human';
+    Actions._newStaffKind = kind;
+    const ai = kind === 'ai';
+    UI.modal(`<h3>Add ${ai ? 'AI agent' : 'staff member'}</h3>
+      <div class="field"><label>${ai ? 'Agent name' : 'Full name'}</label><input id="st_name" placeholder="${ai?'Dispute Bot':''}"></div>
       <div class="field"><label>Email</label><input id="st_email" type="email"></div>
       <div class="field"><label>Mobile (10 digit)</label><input id="st_phone"></div>
-      <div class="field"><label>Temporary password (min 8)</label><input id="st_pw" type="password"></div>
+      ${ai
+        ? `<p class="muted" style="font-size:13px">An API key will be generated for this agent to authenticate (Bearer tpk_…). It's shown once.</p>`
+        : `<div class="field"><label>Temporary password (min 8)</label><input id="st_pw" type="password"></div>`}
       <h4 style="margin:14px 0 6px">Powers</h4>
-      <div style="max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:12px">${Actions._permBoxes([])}</div>
-      <div class="foot"><button class="btn" onclick="Actions.saveNewStaff()">Create staff</button>
+      <div style="max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:12px">${Actions._permBoxes([])}</div>
+      <div class="foot"><button class="btn" onclick="Actions.saveNewStaff()">${ai ? 'Create agent &amp; issue key' : 'Create staff'}</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
   },
   async saveNewStaff() {
+    const kind = Actions._newStaffKind || 'human';
     const body = { full_name: val('st_name'), email: val('st_email'), phone: val('st_phone'),
-      password: $('st_pw').value, permissions: Actions._collectPerms() };
-    try { await Api.post('/staff', body); UI.closeModal(); UI.toast('Staff member added'); App.route(); }
+      kind, permissions: Actions._collectPerms() };
+    if (kind !== 'ai') body.password = $('st_pw').value;
+    try {
+      const d = await Api.post('/staff', body); UI.closeModal();
+      if (d.api_key) Actions.showApiKey(d.api_key, d.staff && d.staff.full_name);
+      else UI.toast('Staff member added');
+      App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  showApiKey(key, name) {
+    UI.modal(`<h3>API key for ${esc(name||'AI agent')}</h3>
+      <p class="muted">Copy this key now — it is shown only once. Use it as <code>Authorization: Bearer &lt;key&gt;</code> in n8n / your AI agent.</p>
+      <div class="field"><input value="${esc(key)}" readonly onclick="this.select()" style="font-family:monospace"></div>
+      <div class="foot"><button class="btn" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(key)}');UI.toast('Copied')">Copy</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Done</button></div>`);
+  },
+  async regenToken(id) {
+    if (!confirm('Issue a new API key? The old key stops working immediately.')) return;
+    try { const d = await Api.post(`/staff/${id}/token`, {}); Actions.showApiKey(d.api_key); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async revokeToken(id) {
+    if (!confirm('Revoke this agent\'s API key? It will stop working immediately.')) return;
+    try { await Api.post(`/staff/${id}/token/revoke`, {}); UI.toast('Key revoked'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async editStaff(s) {
