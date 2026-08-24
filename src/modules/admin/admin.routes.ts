@@ -213,6 +213,26 @@ router.post(
   }),
 );
 
+// Incoming provider callbacks / webhooks log.
+router.get(
+  '/provider-events',
+  validate(z.object({
+    provider: z.string().trim().max(40).optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { provider?: string; limit: number };
+    const { rows } = await query(
+      `SELECT id, provider, event_type, external_id, processed, received_at
+         FROM provider_events
+        WHERE ($1::text IS NULL OR provider = $1)
+        ORDER BY received_at DESC LIMIT $2`,
+      [q.provider ?? null, q.limit],
+    );
+    res.json({ items: rows });
+  }),
+);
+
 // ---- Transaction ops: refund + pending resolution ------------------------
 const txnDecisionSchema = z.object({ remark: z.string().trim().min(1).max(200) });
 const resolveSchema = z.object({

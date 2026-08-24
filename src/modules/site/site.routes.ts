@@ -12,7 +12,7 @@ const router = Router();
 
 // Settings that must never be exposed on the public endpoint (they configure
 // security policy, not branding). Everything else is safe to render publicly.
-const PRIVATE_SETTING_KEYS = new Set(['security_admin_ip_allowlist']);
+const PRIVATE_SETTING_KEYS = new Set(['security_admin_ip_allowlist', 'aggregator_webhook_secret']);
 
 router.get(
   '/settings',

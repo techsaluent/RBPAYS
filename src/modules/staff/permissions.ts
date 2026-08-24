@@ -79,6 +79,7 @@ export function permissionForPath(path: string, method: string): string | null |
 
   if (/^\/site\b/.test(path)) return 'website.manage';
   if (/^\/integrations\b/.test(path)) return 'integrations.manage';
+  if (/^\/provider-events\b/.test(path)) return 'integrations.manage';
 
   if (/^\/tax(\b|-config)/.test(path) || /^\/tds\b/.test(path) || /^\/gst\b/.test(path)) return 'tax.manage';
 

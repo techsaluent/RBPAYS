@@ -223,6 +223,7 @@ const NAV = [
   { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
+  { key: 'webhooks', label: 'Webhook Log', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
   { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
   { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
@@ -744,6 +745,20 @@ const Screens = {
       <tbody>${rows || '<tr><td colspan=5 class=muted>No pending withdrawals.</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Incoming provider callbacks / webhooks log.
+  async webhooks() {
+    const d = await Api.get('/admin/provider-events?limit=100');
+    const rows = (d.items || []).map(e => `<tr>
+      <td class="muted" style="white-space:nowrap">${new Date(e.received_at).toLocaleString('en-IN')}</td>
+      <td>${esc(e.provider)}</td><td>${esc(e.event_type||'')}</td>
+      <td class="muted" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">${esc(e.external_id||'')}</td>
+      <td>${e.processed ? '<span class="tag active">processed</span>' : '<span class="tag">received</span>'}</td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Webhook / callback log</h2>
+      <p class="muted">Every signed callback from your providers (payout / DMT / recharge / gateway). Each is verified, de-duplicated and settled. Configure the callback URLs &amp; secret under <a href="#/website">Website</a>.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Received</th><th>Provider</th><th>Event</th><th>Ref / id</th><th>Status</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No callbacks received yet.</td></tr>'}</tbody></table></div></div>`;
+  },
+
   // Super admin: activity audit log (who did what).
   async audit() {
     const d = await Api.get('/admin/audit?limit=100');
@@ -1127,6 +1142,11 @@ const Screens = {
         <p class="muted">When on, new users must verify their mobile with an OTP before their account is created. Configure the SMS/OTP gateway in <b>Integrations</b> first.</p>
         ${field('security_admin_ip_allowlist','Admin login IP allowlist','1.2.3.4, 10.0.0.0/24 — blank = any')}
         <p class="muted">Restrict super-admin logins to these IPs/CIDRs (comma-separated). Leave blank to allow admin login from anywhere. The admin portal lives at a separate URL (<code>/admin</code>); this allowlist is the real lock behind it.</p>
+        <h2 class="mt">Webhooks &amp; callbacks</h2>
+        <p class="muted">Give these callback URLs to your payout / DMT / recharge provider. The aggregator secret below signs incoming callbacks (HMAC-SHA256).</p>
+        <div class="field"><label>Aggregator callback URL</label><input value="${esc(location.origin)}/api/v1/webhooks/aggregator" readonly onclick="this.select()"></div>
+        <div class="field"><label>Razorpay callback URL</label><input value="${esc(location.origin)}/api/v1/webhooks/razorpay" readonly onclick="this.select()"></div>
+        ${field('aggregator_webhook_secret','Aggregator webhook secret (HMAC key)')}
         <button class="btn mt" onclick="Actions.saveSite()">Save branding</button></div>
       <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Custom pages</h2>
         <button class="btn sm" onclick="Actions.editPage()">+ New page</button></div>
@@ -1710,7 +1730,7 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','aggregator_webhook_secret'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
