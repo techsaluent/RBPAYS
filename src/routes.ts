@@ -26,6 +26,7 @@ import networkRoutes from './modules/network/network.routes';
 import adminRoutes from './modules/admin/admin.routes';
 import staffRoutes from './modules/staff/staff.routes';
 import catalogRoutes from './modules/catalog/catalog.routes';
+import disputesRoutes from './modules/disputes/disputes.routes';
 import transactionRoutes from './modules/transactions/transactions.routes';
 import siteRoutes from './modules/site/site.routes';
 
@@ -59,6 +60,7 @@ router.use('/network', networkRoutes);
 router.use('/admin', adminRoutes);
 router.use('/staff', staffRoutes);
 router.use('/catalog', catalogRoutes);
+router.use('/disputes', disputesRoutes);
 router.use('/site', siteRoutes);
 
 export default router;

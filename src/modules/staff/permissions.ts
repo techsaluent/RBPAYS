@@ -25,6 +25,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'integrations.manage', label: 'Integrations (SMS / email / OTP / KYC)', group: 'Config' },
   { key: 'website.manage', label: 'Website & branding', group: 'Config' },
   { key: 'risk.manage', label: 'Risk & AML, onboarding scoring', group: 'Risk' },
+  { key: 'disputes.manage', label: 'Disputes / complaints desk', group: 'Ops' },
   { key: 'ledger.view', label: 'Ledger (read-only)', group: 'Audit' },
   { key: 'staff.manage', label: 'Manage staff & permissions', group: 'Admin' },
 ];
@@ -38,7 +39,7 @@ export const PRESETS: Record<string, { label: string; permissions: string[] }> =
     label: 'Finance / Top-up',
     permissions: ['topup.manage', 'recon.manage', 'payouts.manage', 'tax.manage', 'risk.manage', 'users.view'],
   },
-  support: { label: 'Support Agent', permissions: ['users.manage', 'ledger.view'] },
+  support: { label: 'Support Agent', permissions: ['users.manage', 'ledger.view', 'disputes.manage'] },
 };
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -76,6 +77,7 @@ export function permissionForPath(path: string, method: string): string | null |
   if (/^\/recon\b/.test(path)) return 'recon.manage';
   if (/^\/adjustments\b/.test(path)) return 'recon.manage';
   if (/^\/transactions\b/.test(path)) return 'recon.manage'; // refund / resolve / ops list
+  if (/^\/disputes\b/.test(path)) return 'disputes.manage'; // complaints desk
 
   if (/^\/site\b/.test(path)) return 'website.manage';
   if (/^\/integrations\b/.test(path)) return 'integrations.manage';
