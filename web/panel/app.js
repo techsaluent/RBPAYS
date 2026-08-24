@@ -203,6 +203,7 @@ const NAV = [
   { key: 'wallet', label: 'Wallet', roles: NETWORK_ROLES },
   { key: 'addmoney', label: 'Add Money', roles: NETWORK_ROLES },
   { key: 'txns', label: 'Transactions', roles: NETWORK_ROLES },
+  { key: 'mydisputes', label: 'My Disputes', roles: NETWORK_ROLES },
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
@@ -226,6 +227,7 @@ const NAV = [
   { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
   { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
   { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
+  { key: 'disputes', label: 'Disputes', roles: ['admin', 'staff'], perm: 'disputes.manage', section: 'Risk & Ops' },
   { key: 'audit', label: 'Audit Log', roles: ['admin'], section: 'Risk & Ops' },
   { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'staff', label: 'Staff & Roles', roles: ['admin'], section: 'Settings' },
@@ -669,7 +671,8 @@ const Screens = {
       <td>${esc(t.service)}</td><td>${t.direction}</td><td class="right">${money(t.amount)}</td>
       <td class="right">${money(t.net)}</td><td>${UI.statusTag(t.status)}</td>
       <td class="muted">${esc(t.reference)}</td><td class="muted">${new Date(t.created_at).toLocaleString('en-IN')}</td>
-      <td><button class="btn sm ghost" onclick="Actions.receipt('${t.id}')">Receipt</button></td></tr>`).join('');
+      <td><button class="btn sm ghost" onclick="Actions.receipt('${t.id}')">Receipt</button>
+        <button class="btn sm ghost" onclick="Actions.raiseDispute('${esc(t.reference)}','${esc(t.service)}')">Raise dispute</button></td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><h2>All transactions</h2><div class="tbl-wrap"><table>
       <thead><tr><th>Service</th><th>Dir</th><th class="right">Amount</th><th class="right">Net</th><th>Status</th><th>Reference</th><th>When</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=8 class=muted>No transactions</td></tr>'}</tbody></table></div></div>`;
@@ -744,6 +747,47 @@ const Screens = {
       <tbody>${rows || '<tr><td colspan=5 class=muted>No pending withdrawals.</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Member: my raised disputes.
+  async mydisputes() {
+    const d = await Api.get('/disputes');
+    const rows = (d.items || []).map(x => `<tr>
+      <td class="mono">${esc(x.ticket_no||'')}</td><td class="muted">${esc(x.reference||'')}</td>
+      <td>${esc((x.category||'').replace(/_/g,' '))}</td><td>${UI.statusTag(x.status)}</td>
+      <td class="muted">${esc(x.resolution||'')}</td>
+      <td class="muted">${new Date(x.created_at).toLocaleDateString('en-IN')}</td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between"><h2>My disputes</h2>
+      <button class="btn sm" onclick="Actions.raiseDispute()">+ Raise dispute</button></div>
+      <p class="muted">Raise a complaint on a transaction (by reference id). Our team tracks and resolves it.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Ref</th><th>Category</th><th>Status</th><th>Resolution</th><th>When</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No disputes raised.</td></tr>'}</tbody></table></div></div>`;
+  },
+  // Admin/staff: disputes desk, searchable by reference / ticket.
+  async disputes() {
+    const q = Actions._dispSearch || '';
+    const st = Actions._dispStatus || '';
+    const d = await Api.get(`/admin/disputes?limit=100${q?'&q='+encodeURIComponent(q):''}${st?'&status='+st:''}`);
+    const rows = (d.items || []).map(x => `<tr>
+      <td class="mono">${esc(x.ticket_no||'')}</td>
+      <td class="muted">${esc(x.reference||'')}<div style="font-size:11px">${esc(x.txn_service||'')} ${x.txn_amount_paise?money(x.txn_amount_paise/100):''}</div></td>
+      <td>${esc(x.raised_by_name||'')}<div class="muted" style="font-size:11px">${esc(x.raised_by_phone||'')}</div></td>
+      <td>${esc((x.category||'').replace(/_/g,' '))}<div class="muted" style="font-size:11px;max-width:220px;white-space:normal">${esc(x.description||'')}</div></td>
+      <td>${UI.statusTag(x.status)}</td>
+      <td>${['open','in_review'].includes(x.status)
+        ? `<button class="btn sm" onclick="Actions.resolveDispute('${x.id}','resolved')">Resolve</button>
+           <button class="btn sm ghost" onclick="Actions.resolveDispute('${x.id}','in_review')">In review</button>
+           <button class="btn sm ghost" onclick="Actions.resolveDispute('${x.id}','rejected')">Reject</button>`
+        : `<span class="muted">${esc(x.resolution||'')}</span>`}</td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Disputes / complaints desk</h2>
+      <div class="row" style="gap:8px;margin-bottom:12px">
+        <input id="disp_q" placeholder="Search by reference or ticket…" value="${esc(q)}" style="max-width:280px" onkeydown="if(event.key==='Enter')Actions.disputeSearch()">
+        <select id="disp_status" onchange="Actions._dispStatus=this.value;Actions.disputeSearch()">
+          <option value="">All statuses</option>
+          ${['open','in_review','resolved','rejected'].map(s=>`<option value="${s}" ${st===s?'selected':''}>${s}</option>`).join('')}</select>
+        <button class="btn sm" onclick="Actions.disputeSearch()">Search</button></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Txn / ref</th><th>Raised by</th><th>Complaint</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No disputes found.</td></tr>'}</tbody></table></div></div>`;
+  },
+
   // Incoming provider callbacks / webhooks log.
   async webhooks() {
     const d = await Api.get('/admin/provider-events?limit=100');
@@ -766,7 +810,8 @@ const Screens = {
       'staff.create':'Staff created', 'staff.permissions':'Staff permissions changed', 'staff.status':'Staff status changed',
       'provider.activate':'Provider activated', 'provider.deactivate':'Provider deactivated',
       'adjustment.approve':'Adjustment approved', 'adjustment.reject':'Adjustment rejected',
-      'txn.refund':'Transaction refunded', 'txn.resolve':'Pending resolved' };
+      'txn.refund':'Transaction refunded', 'txn.resolve':'Pending resolved',
+      'dispute.resolved':'Dispute resolved', 'dispute.rejected':'Dispute rejected', 'dispute.in_review':'Dispute in review' };
     const rows = (d.items || []).map(a => {
       const det = a.detail || {};
       const note = det.remarks || det.reason || det.note || '';
@@ -1069,6 +1114,38 @@ const Screens = {
     try { await Api.post(`/admin/transactions/${id}/resolve`, { decision, remark: remark.trim() }); UI.toast(`Marked ${decision}`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  // ----- disputes -----
+  raiseDispute(reference, service) {
+    UI.modal(`<h3>Raise a dispute</h3>
+      <div class="field"><label>Transaction reference</label><input id="dp_ref" value="${esc(reference||'')}" placeholder="15-char reference id" ${reference?'readonly':''}></div>
+      <div class="field"><label>Category</label><select id="dp_cat">
+        <option value="not_credited">Amount debited, service not delivered</option>
+        <option value="wrong_amount">Wrong amount</option>
+        <option value="double_charge">Charged twice</option>
+        <option value="service_failed">Service failed</option>
+        <option value="other">Other</option></select></div>
+      <div class="field"><label>Customer ref (optional)</label><input id="dp_cust" placeholder="customer phone / name"></div>
+      <div class="field"><label>Describe the problem</label><textarea id="dp_desc" rows="3" style="width:100%" placeholder="What went wrong?"></textarea></div>
+      <div class="foot"><button class="btn" onclick="Actions.submitDispute()">Submit to support</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async submitDispute() {
+    const body = { reference: val('dp_ref'), category: val('dp_cat'), description: $('dp_desc').value.trim() };
+    if (val('dp_cust')) body.customer_ref = val('dp_cust');
+    if (!body.reference) return UI.toast('Enter the transaction reference', 'err');
+    if (body.description.length < 5) return UI.toast('Please describe the problem', 'err');
+    try { const d = await Api.post('/disputes', body); UI.closeModal(); UI.toast('Dispute raised — ticket ' + (d.dispute.ticket_no||'')); location.hash = '#/mydisputes'; App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  disputeSearch() { Actions._dispSearch = ($('disp_q')||{}).value || ''; App.route(); },
+  async resolveDispute(id, status) {
+    const label = status === 'resolved' ? 'Resolve' : status === 'rejected' ? 'Reject' : 'Mark in-review';
+    const resolution = prompt(`${label} — enter a resolution note (required):`, '');
+    if (resolution === null) return;
+    if (!resolution.trim()) return UI.toast('A resolution note is required', 'err');
+    try { await Api.post(`/admin/disputes/${id}/resolve`, { status, resolution: resolution.trim() }); UI.toast('Dispute ' + status); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
   async refundTxn(id) {
     const remark = prompt('Refund this transaction — enter a reason (required):', '');
     if (remark === null) return;
@@ -1146,6 +1223,9 @@ const Screens = {
         <div class="field"><label>Aggregator callback URL</label><input value="${esc(location.origin)}/api/v1/webhooks/aggregator" readonly onclick="this.select()"></div>
         <div class="field"><label>Razorpay callback URL</label><input value="${esc(location.origin)}/api/v1/webhooks/razorpay" readonly onclick="this.select()"></div>
         ${field('aggregator_webhook_secret','Aggregator webhook secret (HMAC key)')}
+        <h2 class="mt">Automation (n8n / AI agent)</h2>
+        <p class="muted">Platform events (disputes, etc.) are POSTed to this URL as <code>{event, at, data}</code> — wire it to an n8n workflow or an AI-agent that acts as staff.</p>
+        ${field('automation_webhook_url','Automation / n8n webhook URL','https://n8n.yourhost/webhook/…')}
         <button class="btn mt" onclick="Actions.saveSite()">Save branding</button></div>
       <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Custom pages</h2>
         <button class="btn sm" onclick="Actions.editPage()">+ New page</button></div>
@@ -1729,7 +1809,7 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','aggregator_webhook_secret'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','aggregator_webhook_secret','automation_webhook_url'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';

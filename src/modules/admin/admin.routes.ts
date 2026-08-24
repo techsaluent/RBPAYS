@@ -4,6 +4,7 @@ import { requireAuth } from '../../middleware/auth';
 import { staffConsoleGate } from '../../middleware/permission';
 import { logAudit } from '../audit/audit.service';
 import { refundTransaction, resolvePending } from '../transactions/refund.service';
+import { emitEvent } from '../notify/events.service';
 import { approveWithdrawal, rejectWithdrawal } from '../withdrawal/withdrawal.service';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
@@ -266,23 +267,77 @@ router.post(
   }),
 );
 
-// Ops list: recent pending / failed transactions across all members.
+// Ops list / search: by status and/or platform reference id (partial match).
 router.get(
   '/transactions',
   validate(z.object({
     status: z.enum(['pending', 'failed', 'success', 'refunded']).optional(),
+    reference: z.string().trim().max(64).optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),
   }), 'query'),
   asyncHandler(async (req: Request, res: Response) => {
-    const q = req.query as unknown as { status?: string; limit: number };
+    const q = req.query as unknown as { status?: string; reference?: string; limit: number };
     const { rows } = await query(
       `SELECT t.*, u.full_name AS user_name
          FROM transactions t LEFT JOIN users u ON u.id = t.user_id
         WHERE ($1::text IS NULL OR t.status = $1)
-        ORDER BY t.created_at DESC LIMIT $2`,
-      [q.status ?? null, q.limit],
+          AND ($2::text IS NULL OR t.reference ILIKE '%' || $2 || '%')
+        ORDER BY t.created_at DESC LIMIT $3`,
+      [q.status ?? null, q.reference ?? null, q.limit],
     );
     res.json({ items: rows });
+  }),
+);
+
+// ---- Disputes / complaints desk -------------------------------------------
+router.get(
+  '/disputes',
+  validate(z.object({
+    status: z.enum(['open', 'in_review', 'resolved', 'rejected']).optional(),
+    q: z.string().trim().max(64).optional(), // search by reference or ticket no
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const p = req.query as unknown as { status?: string; q?: string; limit: number };
+    const { rows } = await query(
+      `SELECT d.*, u.full_name AS raised_by_name, u.phone AS raised_by_phone,
+              t.service AS txn_service, t.amount_paise AS txn_amount_paise, t.status AS txn_status
+         FROM disputes d
+         JOIN users u ON u.id = d.raised_by
+         LEFT JOIN transactions t ON t.id = d.transaction_id
+        WHERE ($1::text IS NULL OR d.status = $1)
+          AND ($2::text IS NULL OR d.reference ILIKE '%' || $2 || '%' OR d.ticket_no ILIKE '%' || $2 || '%')
+        ORDER BY d.created_at DESC LIMIT $3`,
+      [p.status ?? null, p.q ?? null, p.limit],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const disputeDecisionSchema = z.object({
+  status: z.enum(['in_review', 'resolved', 'rejected']),
+  resolution: z.string().trim().min(1).max(1000),
+});
+router.post(
+  '/disputes/:id/resolve',
+  validate(disputeDecisionSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof disputeDecisionSchema>;
+    const terminal = b.status === 'resolved' || b.status === 'rejected';
+    const { rows } = await query(
+      `UPDATE disputes
+          SET status = $1, resolution = $2, assigned_to = $3,
+              resolved_by = CASE WHEN $4 THEN $3 ELSE resolved_by END,
+              resolved_at = CASE WHEN $4 THEN now() ELSE resolved_at END
+        WHERE id = $5 RETURNING *`,
+      [b.status, b.resolution, req.user.id, terminal, req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Dispute not found');
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'dispute.' + b.status,
+      targetType: 'dispute', targetId: req.params.id, detail: { resolution: b.resolution, reference: rows[0].reference } });
+    emitEvent('dispute.' + b.status, { ticket_no: rows[0].ticket_no, reference: rows[0].reference, resolution: b.resolution });
+    res.json({ dispute: rows[0] });
   }),
 );
 
