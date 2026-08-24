@@ -7,6 +7,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query } from '../../../db';
 import { emitEvent } from '../notify/events.service';
+import { addMessage, disputeReceiptHtml } from './dispute.service';
 
 const router = Router();
 router.use(requireAuth);
@@ -60,6 +61,7 @@ router.post(
       [ticketNo(), t.reference, t.id, req.user.id, b.category, b.description, b.customer_ref ?? null],
     );
     const dispute = rows[0];
+    await addMessage(dispute.id, req.user.id, 'retailer', 'comment', b.description);
     emitEvent('dispute.raised', {
       ticket_no: dispute.ticket_no,
       reference: dispute.reference,
@@ -92,7 +94,38 @@ router.get(
       req.user.id,
     ]);
     if (!rows[0]) throw ApiError.notFound('Dispute not found');
-    res.json({ dispute: rows[0] });
+    const msgs = await query(
+      'SELECT * FROM dispute_messages WHERE dispute_id = $1 ORDER BY created_at',
+      [req.params.id],
+    );
+    res.json({ dispute: rows[0], messages: msgs.rows });
+  }),
+);
+
+// Member adds a reply to their dispute thread.
+router.post(
+  '/:id/messages',
+  validate(z.object({ message: z.string().trim().min(1).max(1000) })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const own = await query('SELECT id FROM disputes WHERE id = $1 AND raised_by = $2', [req.params.id, req.user.id]);
+    if (!own.rows[0]) throw ApiError.notFound('Dispute not found');
+    const msg = await addMessage(req.params.id, req.user.id, 'retailer', 'comment', req.body.message);
+    emitEvent('dispute.message', { dispute_id: req.params.id, by: 'member' });
+    res.status(201).json({ message: msg });
+  }),
+);
+
+// Printable dispute receipt (HTML).
+router.get(
+  '/:id/receipt',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { rows } = await query('SELECT * FROM disputes WHERE id = $1 AND raised_by = $2', [req.params.id, req.user.id]);
+    if (!rows[0]) throw ApiError.notFound('Dispute not found');
+    const msgs = await query('SELECT * FROM dispute_messages WHERE dispute_id = $1 ORDER BY created_at', [req.params.id]);
+    const brandRow = await query<{ value: string }>("SELECT value FROM site_settings WHERE key = 'brand_name'");
+    res.type('html').send(disputeReceiptHtml(rows[0], msgs.rows, brandRow.rows[0]?.value || 'TutiPays'));
   }),
 );
 

@@ -754,11 +754,11 @@ const Screens = {
       <td class="mono">${esc(x.ticket_no||'')}</td><td class="muted">${esc(x.reference||'')}</td>
       <td>${esc((x.category||'').replace(/_/g,' '))}</td><td>${UI.statusTag(x.status)}</td>
       <td class="muted">${esc(x.resolution||'')}</td>
-      <td class="muted">${new Date(x.created_at).toLocaleDateString('en-IN')}</td></tr>`).join('');
+      <td><button class="btn sm ghost" onclick="Actions.viewDispute('${x.id}',false)">View / reply</button></td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between"><h2>My disputes</h2>
       <button class="btn sm" onclick="Actions.raiseDispute()">+ Raise dispute</button></div>
       <p class="muted">Raise a complaint on a transaction (by reference id). Our team tracks and resolves it.</p>
-      <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Ref</th><th>Category</th><th>Status</th><th>Resolution</th><th>When</th></tr></thead>
+      <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Ref</th><th>Category</th><th>Status</th><th>Resolution</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=6 class=muted>No disputes raised.</td></tr>'}</tbody></table></div></div>`;
   },
   // Admin/staff: disputes desk, searchable by reference / ticket.
@@ -772,11 +772,7 @@ const Screens = {
       <td>${esc(x.raised_by_name||'')}<div class="muted" style="font-size:11px">${esc(x.raised_by_phone||'')}</div></td>
       <td>${esc((x.category||'').replace(/_/g,' '))}<div class="muted" style="font-size:11px;max-width:220px;white-space:normal">${esc(x.description||'')}</div></td>
       <td>${UI.statusTag(x.status)}</td>
-      <td>${['open','in_review'].includes(x.status)
-        ? `<button class="btn sm" onclick="Actions.resolveDispute('${x.id}','resolved')">Resolve</button>
-           <button class="btn sm ghost" onclick="Actions.resolveDispute('${x.id}','in_review')">In review</button>
-           <button class="btn sm ghost" onclick="Actions.resolveDispute('${x.id}','rejected')">Reject</button>`
-        : `<span class="muted">${esc(x.resolution||'')}</span>`}</td></tr>`).join('');
+      <td><button class="btn sm" onclick="Actions.viewDispute('${x.id}',true)">Open</button></td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><h2>Disputes / complaints desk</h2>
       <div class="row" style="gap:8px;margin-bottom:12px">
         <input id="disp_q" placeholder="Search by reference or ticket…" value="${esc(q)}" style="max-width:280px" onkeydown="if(event.key==='Enter')Actions.disputeSearch()">
@@ -1142,12 +1138,57 @@ const Screens = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   disputeSearch() { Actions._dispSearch = ($('disp_q')||{}).value || ''; App.route(); },
-  async resolveDispute(id, status) {
-    const label = status === 'resolved' ? 'Resolve' : status === 'rejected' ? 'Reject' : 'Mark in-review';
-    const resolution = prompt(`${label} — enter a resolution note (required):`, '');
-    if (resolution === null) return;
-    if (!resolution.trim()) return UI.toast('A resolution note is required', 'err');
-    try { await Api.post(`/admin/disputes/${id}/resolve`, { status, resolution: resolution.trim() }); UI.toast('Dispute ' + status); App.route(); }
+  // Full dispute detail: thread + reply (+ resolve/refund/print for staff).
+  async viewDispute(id, isAdmin) {
+    Actions._dispCtx = { id, isAdmin };
+    const base = isAdmin ? '/admin/disputes/' + id : '/disputes/' + id;
+    const d = await Api.get(base);
+    const dp = d.dispute; const msgs = d.messages || [];
+    const thread = msgs.map(m => {
+      const mine = m.author_role === 'retailer';
+      const tag = m.type !== 'comment' ? ` · <b>${esc(m.type.replace('_',' '))}${m.status_to?' → '+esc(m.status_to):''}</b>` : '';
+      return `<div style="margin:8px 0;padding:8px 11px;border-radius:9px;background:${mine?'var(--accent-soft,#eef1ff)':'#eef7ef'}">
+        <div class="muted" style="font-size:11px">${esc(m.author_role)} · ${new Date(m.created_at).toLocaleString('en-IN')}${tag}</div>
+        <div>${esc(m.message)}</div></div>`;
+    }).join('');
+    const open = ['open','in_review'].includes(dp.status);
+    const staffPanel = isAdmin ? `
+      <div class="field mt"><label>Resolution / status note</label><textarea id="dp_res" rows="2" style="width:100%"></textarea></div>
+      <label style="display:flex;gap:6px;align-items:center;font-size:12px"><input type="checkbox" id="dp_refund"> Resolve as refund (credit the payer's wallet)</label>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <button class="btn sm" onclick="Actions.resolveDisputeFull('resolved')">Resolve</button>
+        <button class="btn sm ghost" onclick="Actions.resolveDisputeFull('in_review')">Mark in-review</button>
+        <button class="btn sm ghost" onclick="Actions.resolveDisputeFull('rejected')">Reject</button></div>` : '';
+    UI.modal(`<h3>Dispute ${esc(dp.ticket_no)} <span class="tag ${esc(dp.status)}">${esc(dp.status)}</span></h3>
+      <div class="muted" style="font-size:12px">Ref ${esc(dp.reference||'—')} · ${esc((dp.category||'').replace(/_/g,' '))}${isAdmin&&dp.raised_by_name?' · by '+esc(dp.raised_by_name):''}</div>
+      <div style="max-height:300px;overflow:auto;margin-top:10px">${thread || '<div class="muted">No messages.</div>'}</div>
+      ${open ? `<div class="field mt"><label>Add a reply</label><div class="row" style="gap:8px">
+        <input id="dp_msg" placeholder="Type a message…" style="flex:1" onkeydown="if(event.key==='Enter')Actions.addDisputeMsg()">
+        <button class="btn sm" onclick="Actions.addDisputeMsg()">Send</button></div></div>` : ''}
+      ${open ? staffPanel : (dp.resolution?`<div class="msg ok mt">Resolution: ${esc(dp.resolution)}</div>`:'')}
+      <div class="foot"><button class="btn ghost" onclick="Actions.printDisputeReceipt()">🧾 Print receipt</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async addDisputeMsg() {
+    const { id, isAdmin } = Actions._dispCtx || {}; const m = ($('dp_msg')||{}).value || '';
+    if (!m.trim()) return;
+    const base = isAdmin ? '/admin/disputes/' + id + '/messages' : '/disputes/' + id + '/messages';
+    try { await Api.post(base, { message: m.trim() }); Actions.viewDispute(id, isAdmin); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async resolveDisputeFull(status) {
+    const { id } = Actions._dispCtx || {};
+    const resolution = ($('dp_res')||{}).value || '';
+    if (!resolution.trim()) return UI.toast('Enter a resolution note', 'err');
+    const refund = !!($('dp_refund')||{}).checked;
+    try { await Api.post(`/admin/disputes/${id}/resolve`, { status, resolution: resolution.trim(), refund });
+      UI.closeModal(); UI.toast('Dispute ' + status + (refund?' + refunded':'')); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async printDisputeReceipt() {
+    const { id, isAdmin } = Actions._dispCtx || {};
+    const base = isAdmin ? '/admin/disputes/' + id + '/receipt' : '/disputes/' + id + '/receipt';
+    try { const res = await Api.raw(base); const html = await res.text(); const w = window.open('', '_blank'); w.document.write(html); w.document.close(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async refundTxn(id) {
