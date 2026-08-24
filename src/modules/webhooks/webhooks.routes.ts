@@ -181,41 +181,89 @@ const pick = (o: Record<string, unknown>, keys: string[]): string | undefined =>
   return undefined;
 };
 
+/** Timing-safe HMAC-SHA256 check of a raw body against a hex signature. */
+function verifyHmac(raw: string, signature: string, secret: string): boolean {
+  const expected = crypto.createHmac('sha256', secret).update(raw).digest('hex');
+  const sig = signature.trim().replace(/^sha256=/i, ''); // some vendors prefix it
+  return (
+    expected.length === sig.length &&
+    crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))
+  );
+}
+
+/**
+ * Shared callback handler. Parses the many field/status variants aggregators
+ * use, finds our original `reference`, and settles whichever service that
+ * reference belongs to — so ONE callback works for every service (dmt, bbps,
+ * recharge, payout, aeps, cms, upi, matm, aadhaar_pay, pan_card, travel,
+ * insurance, card_swipe, …). `providerTag` labels the event source.
+ */
+async function handleCallback(
+  req: Request,
+  res: Response,
+  providerTag: string,
+): Promise<void> {
+  const raw = rawText(req);
+  const body = JSON.parse(raw) as Record<string, unknown>;
+  // Accept the many names aggregators use for the client reference / status.
+  const reference = pick(body, ['reference', 'client_ref', 'clientRef', 'client_reference', 'reference_id', 'referenceId', 'refid', 'ref', 'orderid', 'order_id', 'clientReferenceNo']);
+  const rawStatus = pick(body, ['status', 'txn_status', 'txnStatus', 'transaction_status', 'state', 'response_status']);
+  if (!reference) throw ApiError.badRequest('Missing transaction reference in callback');
+
+  // `service` is optional and only used to label the event — settlement finds
+  // the real service from the reference itself.
+  const service = pick(body, ['service', 'type', 'service_code']) ?? providerTag;
+  const status = normalizeStatus(rawStatus);
+  const providerRef = pick(body, ['provider_ref', 'providerRef', 'txnid', 'txn_id', 'transaction_id', 'operator_ref', 'operatorId', 'opid']);
+  const utr = pick(body, ['utr', 'bank_ref', 'bankRef', 'rrn', 'bank_utr']);
+  const message = pick(body, ['message', 'msg', 'remark', 'status_message', 'response_message']);
+
+  const externalId = `${providerTag}:${reference}:${status}`;
+  if (!(await recordEvent(providerTag, service, externalId, body))) {
+    res.json({ status: 'duplicate' });
+    return;
+  }
+
+  await settleByReference(reference, providerTag, { status, providerRef, utr, message });
+
+  await markProcessed(providerTag, externalId);
+  res.json({ status: 'ok', reference, settled: status });
+}
+
 router.post(
   '/aggregator',
   asyncHandler(async (req: Request, res: Response) => {
-    const raw = rawText(req);
-    const signature = String(req.headers['x-webhook-signature'] ?? '');
     const secret = await aggregatorWebhookSecret();
     if (!secret) throw ApiError.forbidden('Aggregator webhook secret not configured');
-    const expected = crypto.createHmac('sha256', secret).update(raw).digest('hex');
-    const ok =
-      expected.length === signature.length &&
-      crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
-    if (!ok) throw ApiError.unauthorized('Invalid webhook signature');
-
-    const body = JSON.parse(raw) as Record<string, unknown>;
-    // Accept the many names aggregators use for the client reference / status.
-    const reference = pick(body, ['reference', 'client_ref', 'clientRef', 'client_reference', 'reference_id', 'referenceId', 'refid', 'ref', 'orderid', 'order_id', 'clientReferenceNo']);
-    const rawStatus = pick(body, ['status', 'txn_status', 'txnStatus', 'transaction_status', 'state', 'response_status']);
-    if (!reference) throw ApiError.badRequest('Missing transaction reference in callback');
-
-    const service = pick(body, ['service', 'type', 'service_code']) ?? 'aggregator';
-    const status = normalizeStatus(rawStatus);
-    const providerRef = pick(body, ['provider_ref', 'providerRef', 'txnid', 'txn_id', 'transaction_id', 'operator_ref', 'operatorId', 'opid']);
-    const utr = pick(body, ['utr', 'bank_ref', 'bankRef', 'rrn', 'bank_utr']);
-    const message = pick(body, ['message', 'msg', 'remark', 'status_message', 'response_message']);
-
-    const externalId = `${service}:${reference}:${status}`;
-    if (!(await recordEvent('aggregator', service, externalId, body))) {
-      res.json({ status: 'duplicate' });
-      return;
+    if (!verifyHmac(rawText(req), String(req.headers['x-webhook-signature'] ?? ''), secret)) {
+      throw ApiError.unauthorized('Invalid webhook signature');
     }
+    await handleCallback(req, res, 'aggregator');
+  }),
+);
 
-    await settleByReference(reference, 'aggregator', { status, providerRef, utr, message });
-
-    await markProcessed('aggregator', externalId);
-    res.json({ status: 'ok' });
+// ---------------------------------------------------------------------
+// Per-provider callback: /webhooks/provider/:id
+//   Each configured provider has its OWN callback URL and its own signing
+//   secret (service_providers.webhook_secret), so multiple aggregators can
+//   post callbacks and each is verified independently. Falls back to the
+//   global aggregator secret when a provider has none set.
+// ---------------------------------------------------------------------
+router.post(
+  '/provider/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query<{ label: string; service_code: string; webhook_secret: string | null }>(
+      'SELECT label, service_code, webhook_secret FROM service_providers WHERE id = $1',
+      [req.params.id],
+    );
+    const provider = rows[0];
+    if (!provider) throw ApiError.notFound('Unknown callback endpoint');
+    const secret = (provider.webhook_secret || (await aggregatorWebhookSecret())).trim();
+    if (!secret) throw ApiError.forbidden('Provider webhook secret not configured');
+    if (!verifyHmac(rawText(req), String(req.headers['x-webhook-signature'] ?? ''), secret)) {
+      throw ApiError.unauthorized('Invalid webhook signature');
+    }
+    await handleCallback(req, res, `provider:${req.params.id}`);
   }),
 );
 

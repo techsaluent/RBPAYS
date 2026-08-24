@@ -8,6 +8,7 @@ import { emitEvent } from '../notify/events.service';
 import { addMessage, notifyMember } from '../disputes/dispute.service';
 import { approveWithdrawal, rejectWithdrawal } from '../withdrawal/withdrawal.service';
 import { validate } from '../../middleware/validate';
+import { env } from '../../config/env';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
@@ -1589,11 +1590,22 @@ router.post(
 router.get(
   '/services/:code/providers',
   asyncHandler(async (req: Request, res: Response) => {
-    const { rows } = await query(
+    const base = (env.API_BASE_URL || '').replace(/\/+$/, '');
+    const { rows } = await query<Record<string, unknown>>(
       'SELECT * FROM service_providers WHERE service_code = $1 ORDER BY priority, created_at',
       [req.params.code],
     );
-    res.json({ items: rows });
+    // Never leak raw secrets; expose a callback URL + "is a secret set?" flags.
+    const items = rows.map((p) => ({
+      ...p,
+      api_secret: undefined,
+      auth_token: undefined,
+      webhook_secret: undefined,
+      has_api_secret: Boolean(p.api_secret),
+      has_webhook_secret: Boolean(p.webhook_secret),
+      callback_url: `${base}/api/v1/webhooks/provider/${p.id}`,
+    }));
+    res.json({ items });
   }),
 );
 
@@ -1605,6 +1617,7 @@ const providerSchema = z.object({
   api_secret: z.string().trim().max(300).optional(),
   auth_token: z.string().trim().max(600).optional(),
   partner_id: z.string().trim().max(120).optional(),
+  webhook_secret: z.string().trim().max(300).optional(),
   extra: z.record(z.any()).optional(),
   is_active: z.boolean().default(false),
   priority: z.coerce.number().int().default(0),
@@ -1628,10 +1641,10 @@ router.post(
       }
       const { rows } = await client.query(
         `INSERT INTO service_providers
-           (service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, extra, is_active, priority)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+           (service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, webhook_secret, extra, is_active, priority)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
         [code, b.label, b.driver, b.base_url ?? null, b.api_key ?? null, b.api_secret ?? null,
-         b.auth_token ?? null, b.partner_id ?? null, JSON.stringify(b.extra ?? {}), b.is_active, b.priority],
+         b.auth_token ?? null, b.partner_id ?? null, b.webhook_secret ?? null, JSON.stringify(b.extra ?? {}), b.is_active, b.priority],
       );
       return rows[0];
     });
@@ -1665,12 +1678,13 @@ router.patch(
             base_url = COALESCE($3,base_url), api_key = COALESCE($4,api_key),
             api_secret = COALESCE($5,api_secret), auth_token = COALESCE($6,auth_token),
             partner_id = COALESCE($7,partner_id), extra = COALESCE($8,extra),
-            is_active = COALESCE($9,is_active), priority = COALESCE($10,priority)
+            is_active = COALESCE($9,is_active), priority = COALESCE($10,priority),
+            webhook_secret = COALESCE($12,webhook_secret)
           WHERE id = $11 RETURNING *`,
         [b.label ?? null, b.driver ?? null, b.base_url ?? null, b.api_key ?? null,
          b.api_secret ?? null, b.auth_token ?? null, b.partner_id ?? null,
          b.extra === undefined ? null : JSON.stringify(b.extra),
-         b.is_active ?? null, b.priority ?? null, req.params.id],
+         b.is_active ?? null, b.priority ?? null, req.params.id, b.webhook_secret ?? null],
       );
       return rows[0];
     });

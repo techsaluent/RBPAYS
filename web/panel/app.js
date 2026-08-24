@@ -792,8 +792,27 @@ const Screens = {
       <td>${esc(e.provider)}</td><td>${esc(e.event_type||'')}</td>
       <td class="muted" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">${esc(e.external_id||'')}</td>
       <td>${e.processed ? '<span class="tag active">processed</span>' : '<span class="tag">received</span>'}</td></tr>`).join('');
+    const origin = location.origin;
     $('view').innerHTML = `<div class="panel"><h2>Webhook / callback log</h2>
-      <p class="muted">Every signed callback from your providers (payout / DMT / recharge / gateway). Each is verified, de-duplicated and settled. Configure the callback URLs &amp; secret under <a href="#/website">Website</a>.</p>
+      <p class="muted">Every signed callback from your providers. Each is verified (HMAC-SHA256), de-duplicated and settled — one callback works for <b>every service</b> because it settles by our reference id.</p>
+      <div class="box" style="background:#f7f8fb;border:1px solid #e5e9f2;border-radius:10px;padding:14px 16px;margin:10px 0">
+        <b>Callback URLs</b>
+        <table style="margin-top:8px;font-size:13px"><tbody>
+          <tr><td style="white-space:nowrap"><b>Per provider</b> (recommended)</td><td><code>${origin}/api/v1/webhooks/provider/&lt;providerId&gt;</code> — shown on each row under <a href="#/providers">Providers</a>; uses that provider's own secret.</td></tr>
+          <tr><td style="white-space:nowrap"><b>Shared aggregator</b></td><td><code>${origin}/api/v1/webhooks/aggregator</code> — one URL for all providers, uses the global secret set under <a href="#/website">Website</a>.</td></tr>
+          <tr><td style="white-space:nowrap"><b>Razorpay</b></td><td><code>${origin}/api/v1/webhooks/razorpay</code> — payment + payout events.</td></tr>
+        </tbody></table>
+        <div style="margin-top:10px"><b>Signature header:</b> <code>X-Webhook-Signature: HMAC_SHA256(rawBody, secret)</code> (hex; a <code>sha256=</code> prefix is accepted too).</div>
+        <div style="margin-top:10px"><b>Body</b> — send any of these and we map it. Only <code>reference</code> + <code>status</code> are required:</div>
+        <pre style="background:#fff;border:1px solid #e5e9f2;border-radius:8px;padding:10px;overflow:auto;font-size:12px">{
+  "reference": "2LNYKFTLYRJ5CFF",     // our reference (aliases: client_ref, refid, order_id…)
+  "status":    "success",              // success | pending | failed (many spellings accepted)
+  "utr":       "AXISN1234567890",      // optional bank UTR / RRN (aliases: rrn, bank_ref)
+  "provider_ref": "OP987654",          // optional provider txn id
+  "message":   "Txn successful"        // optional
+}</pre>
+        <div class="muted" style="font-size:12px">success → settle &amp; pay commission · failed → auto-reverse the full wallet deduction · pending → hold, no wallet change until a final callback.</div>
+      </div>
       <div class="tbl-wrap"><table><thead><tr><th>Received</th><th>Provider</th><th>Event</th><th>Ref / id</th><th>Status</th></tr></thead>
       <tbody>${rows || '<tr><td colspan=5 class=muted>No callbacks received yet.</td></tr>'}</tbody></table></div></div>`;
   },
@@ -1308,12 +1327,20 @@ const Screens = {
       <td>${p.is_active
           ? `<button class="btn sm ghost" onclick="Actions.deactivateProvider('${p.id}')">Deactivate</button>`
           : `<button class="btn sm" onclick="Actions.activateProvider('${p.id}')">Activate</button>`}
-          <button class="btn sm ghost" onclick="Actions.deleteProvider('${p.id}')">Delete</button></td></tr>`).join('');
+          <button class="btn sm ghost" onclick="Actions.deleteProvider('${p.id}')">Delete</button></td></tr>
+      <tr class="subrow"><td colspan="6" style="background:#f7f8fb">
+        <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="muted" style="font-size:12px">Callback URL (give this to ${esc(p.label)}):</span>
+          <code style="font-size:12px;word-break:break-all">${esc(p.callback_url)}</code>
+          <button class="btn sm ghost" onclick="Actions.copyText('${esc(p.callback_url)}')">Copy</button>
+          <span class="tag ${p.has_webhook_secret?'active':''}" style="font-size:11px">${p.has_webhook_secret?'secret set':'shared secret'}</span>
+          <button class="btn sm ghost" onclick="Actions.editProviderSecret('${p.id}','${esc(p.label)}')">Set secret</button>
+        </div></td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
       <h2>Service providers</h2><button class="btn sm" onclick="Actions.addProvider('${sel}')">+ Add provider</button></div>
       <div class="field" style="max-width:360px"><label>Service</label>
         <select id="prov_svc" onchange="Actions._provService=this.value;App.route()">${opts}</select></div>
-      <p class="muted">Register one or more providers per service and activate the one to route through. Paste API keys here — going live is just adding keys and activating.</p>
+      <p class="muted">Register one or more providers per service and activate the one to route through. Paste API keys here — going live is just adding keys and activating. Each provider has its <b>own callback URL</b> below — give it to that provider so status updates (success / pending / failed) post back and settle automatically for every service.</p>
       <div class="tbl-wrap"><table>
       <thead><tr><th>Label</th><th>Driver</th><th>Base URL</th><th>Active</th><th>Key</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=6 class=muted>No providers — add one</td></tr>'}</tbody></table></div></div>`;
@@ -2026,6 +2053,7 @@ const Actions = {
       <div class="field"><label>API secret</label><input id="p_secret"></div>
       <div class="field"><label>Auth token</label><input id="p_token"></div>
       <div class="field"><label>Partner ID</label><input id="p_partner"></div>
+      <div class="field"><label>Callback secret (HMAC key for this provider's webhook)</label><input id="p_wsecret" placeholder="leave blank to use the global aggregator secret"></div>
       <div class="field"><label><input type="checkbox" id="p_active" checked> Make active (route through this)</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveProvider('${code}')">Add</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
@@ -2037,8 +2065,26 @@ const Actions = {
     if (val('p_secret')) body.api_secret = val('p_secret');
     if (val('p_token')) body.auth_token = val('p_token');
     if (val('p_partner')) body.partner_id = val('p_partner');
+    if (val('p_wsecret')) body.webhook_secret = val('p_wsecret');
     try { await Api.post(`/admin/services/${code}/providers`, body); UI.closeModal(); UI.toast('Provider added'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  editProviderSecret(id, label) {
+    UI.modal(`<h3>Callback secret — ${esc(label)}</h3>
+      <p class="muted">The provider signs each callback with <code>HMAC-SHA256(body, secret)</code> and sends it as the <code>X-Webhook-Signature</code> header. Set the same secret here and with the provider.</p>
+      <div class="field"><label>Secret</label><input id="pw_secret" placeholder="new secret"></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveProviderSecret('${id}')">Save</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveProviderSecret(id) {
+    const secret = val('pw_secret');
+    if (!secret) return UI.toast('Enter a secret', 'err');
+    try { await Api.patch(`/admin/providers/${id}`, { webhook_secret: secret }); UI.closeModal(); UI.toast('Callback secret saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  copyText(t) {
+    try { navigator.clipboard.writeText(t); UI.toast('Copied'); }
+    catch { UI.toast('Copy failed — select manually', 'err'); }
   },
   async deactivateProvider(id) {
     try { await Api.post(`/admin/providers/${id}/deactivate`, {}); UI.toast('Deactivated'); App.route(); }
