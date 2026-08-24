@@ -111,15 +111,25 @@ router.post(
       }
       case 'payout.processed':
       case 'payout.failed':
-      case 'payout.reversed': {
+      case 'payout.reversed':
+      case 'payout.pending':
+      case 'payout.queued':
+      case 'payout.initiated':
+      case 'payout.processing': {
         const payout = event.payload.payout?.entity as {
           id: string;
           reference_id: string;
           status: string;
           utr?: string;
         };
+        // processed -> success; failed/reversed -> failed; queued/pending/
+        // initiated/processing -> pending (interim, no wallet effect yet).
         const status: ProviderResult['status'] =
-          payout.status === 'processed' ? 'success' : 'failed';
+          payout.status === 'processed'
+            ? 'success'
+            : ['failed', 'reversed', 'rejected', 'cancelled'].includes(String(payout.status))
+              ? 'failed'
+              : 'pending';
         if (payout?.reference_id) {
           await settleByReference(payout.reference_id, 'razorpay', {
             status,
@@ -141,54 +151,68 @@ router.post(
 
 // ---------------------------------------------------------------------
 // Aggregator webhook: X-Webhook-Signature = HMAC_SHA256(rawBody, secret)
-// Body: { reference, service, status, provider_ref?, utr?, message? }
+// Tolerant of common field-name and status-string variants so most Indian
+// aggregators work with little/no per-vendor code. It only needs to find our
+// original `reference` and a status that maps to success | failed | pending.
 // ---------------------------------------------------------------------
-const AGGREGATOR_SERVICES = new Set(['dmt', 'bbps', 'recharge', 'payout']);
+/** Resolve the shared secret: admin-set site setting wins, else env. */
+async function aggregatorWebhookSecret(): Promise<string> {
+  const { rows } = await query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = 'aggregator_webhook_secret'",
+  );
+  return (rows[0]?.value || env.AGGREGATOR_WEBHOOK_SECRET || '').trim();
+}
+
+/** Map any provider status string to our three canonical states. */
+function normalizeStatus(raw: unknown): ProviderResult['status'] {
+  const v = String(raw ?? '').toLowerCase().trim();
+  if (['success', 'successful', 'true', '1', 'completed', 'complete', 'processed', 'paid', 'settled', 'accepted'].includes(v))
+    return 'success';
+  if (['failed', 'failure', 'fail', 'false', '0', 'rejected', 'reject', 'error', 'declined', 'reversed', 'refunded', 'bounced', 'cancelled', 'canceled'].includes(v))
+    return 'failed';
+  return 'pending'; // pending | processing | initiated | queued | inprocess | 2 | unknown
+}
+
+const pick = (o: Record<string, unknown>, keys: string[]): string | undefined => {
+  for (const k of keys) {
+    const val = o[k];
+    if (val !== undefined && val !== null && String(val) !== '') return String(val);
+  }
+  return undefined;
+};
 
 router.post(
   '/aggregator',
   asyncHandler(async (req: Request, res: Response) => {
     const raw = rawText(req);
     const signature = String(req.headers['x-webhook-signature'] ?? '');
-    if (!env.AGGREGATOR_WEBHOOK_SECRET) {
-      throw ApiError.forbidden('Aggregator webhook secret not configured');
-    }
-    const expected = crypto
-      .createHmac('sha256', env.AGGREGATOR_WEBHOOK_SECRET)
-      .update(raw)
-      .digest('hex');
+    const secret = await aggregatorWebhookSecret();
+    if (!secret) throw ApiError.forbidden('Aggregator webhook secret not configured');
+    const expected = crypto.createHmac('sha256', secret).update(raw).digest('hex');
     const ok =
       expected.length === signature.length &&
       crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
     if (!ok) throw ApiError.unauthorized('Invalid webhook signature');
 
-    const body = JSON.parse(raw) as {
-      reference: string;
-      service: string;
-      status: string;
-      provider_ref?: string;
-      utr?: string;
-      message?: string;
-    };
-    if (!AGGREGATOR_SERVICES.has(body.service)) {
-      throw ApiError.badRequest(`Unknown service: ${body.service}`);
-    }
+    const body = JSON.parse(raw) as Record<string, unknown>;
+    // Accept the many names aggregators use for the client reference / status.
+    const reference = pick(body, ['reference', 'client_ref', 'clientRef', 'client_reference', 'reference_id', 'referenceId', 'refid', 'ref', 'orderid', 'order_id', 'clientReferenceNo']);
+    const rawStatus = pick(body, ['status', 'txn_status', 'txnStatus', 'transaction_status', 'state', 'response_status']);
+    if (!reference) throw ApiError.badRequest('Missing transaction reference in callback');
 
-    const externalId = `${body.service}:${body.reference}:${body.status}`;
-    if (!(await recordEvent('aggregator', body.service, externalId, body))) {
+    const service = pick(body, ['service', 'type', 'service_code']) ?? 'aggregator';
+    const status = normalizeStatus(rawStatus);
+    const providerRef = pick(body, ['provider_ref', 'providerRef', 'txnid', 'txn_id', 'transaction_id', 'operator_ref', 'operatorId', 'opid']);
+    const utr = pick(body, ['utr', 'bank_ref', 'bankRef', 'rrn', 'bank_utr']);
+    const message = pick(body, ['message', 'msg', 'remark', 'status_message', 'response_message']);
+
+    const externalId = `${service}:${reference}:${status}`;
+    if (!(await recordEvent('aggregator', service, externalId, body))) {
       res.json({ status: 'duplicate' });
       return;
     }
 
-    const status: ProviderResult['status'] =
-      body.status === 'success' ? 'success' : body.status === 'failed' ? 'failed' : 'pending';
-
-    await settleByReference(body.reference, 'aggregator', {
-      status,
-      providerRef: body.provider_ref,
-      utr: body.utr,
-      message: body.message,
-    });
+    await settleByReference(reference, 'aggregator', { status, providerRef, utr, message });
 
     await markProcessed('aggregator', externalId);
     res.json({ status: 'ok' });
