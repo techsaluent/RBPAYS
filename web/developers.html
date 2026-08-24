@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="TutiPays integration reference — every service API and the signed success/pending/failed callback format.">
+<title>TutiPays Integration Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root{
+    --accent:#3b39e4; --accent-soft:#ecebfd; --accent-ink:#2422b0;
+    --ok:#12855a; --ok-soft:#e2f3ea;
+    --wait:#b7791f; --wait-soft:#faf1dd;
+    --bad:#c0362c; --bad-soft:#fbe7e4;
+    --ink:#14152b; --body:#3c4256; --muted:#6b7488;
+    --paper:#ffffff; --surface:#f6f7fb; --rail:#f0f1f8;
+    --line:#e4e7f1; --line-strong:#d3d8e6;
+    --code-bg:#14152b; --code-ink:#e7e9f6; --code-dim:#9aa0c4;
+    --code-str:#9ce0b4; --code-key:#a9b0ff; --code-num:#ffc98a;
+    --shadow:0 1px 2px rgba(20,21,43,.04),0 8px 30px rgba(20,21,43,.05);
+  }
+  :root:not([data-theme="light"]){
+    @media (prefers-color-scheme: dark){
+      --accent:#8785ff; --accent-soft:#20204a; --accent-ink:#c3c2ff;
+      --ok:#5fd39b; --ok-soft:#14312a; --wait:#e6b45c; --wait-soft:#332813; --bad:#f0857c; --bad-soft:#361d1c;
+      --ink:#ecefff; --body:#c2c7dc; --muted:#8b92ab;
+      --paper:#12131f; --surface:#0c0d16; --rail:#171827;
+      --line:#262838; --line-strong:#343650;
+      --code-bg:#0a0b13; --code-ink:#e7e9f6;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 34px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"]{
+    --accent:#8785ff; --accent-soft:#20204a; --accent-ink:#c3c2ff;
+    --ok:#5fd39b; --ok-soft:#14312a; --wait:#e6b45c; --wait-soft:#332813; --bad:#f0857c; --bad-soft:#361d1c;
+    --ink:#ecefff; --body:#c2c7dc; --muted:#8b92ab;
+    --paper:#12131f; --surface:#0c0d16; --rail:#171827;
+    --line:#262838; --line-strong:#343650;
+    --code-bg:#0a0b13; --code-ink:#e7e9f6;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 34px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{
+    margin:0;background:var(--surface);color:var(--body);
+    font-family:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:232px 1fr;gap:44px;align-items:start}
+  a{color:var(--accent-ink);text-decoration:none}
+  code,pre,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace}
+
+  /* ---- masthead ---- */
+  header.top{grid-column:1/-1;padding:40px 0 22px;border-bottom:1px solid var(--line)}
+  .brandline{display:flex;align-items:center;gap:11px;font-weight:600;color:var(--muted);font-size:13px;letter-spacing:.02em}
+  .brandline b{color:var(--ink)}
+  .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--accent),#6a68ff);
+    display:grid;place-items:center;color:#fff;font-weight:800;font-family:"Bricolage Grotesque";font-size:15px}
+  h1{font-family:"Bricolage Grotesque",serif;font-weight:800;color:var(--ink);
+    font-size:clamp(30px,5vw,46px);line-height:1.02;letter-spacing:-.02em;text-wrap:balance;margin:.42em 0 .2em}
+  .lede{max-width:60ch;color:var(--body);font-size:16px;margin:0 0 20px}
+  .pills{display:flex;flex-wrap:wrap;gap:9px}
+  .pill{display:inline-flex;align-items:center;gap:7px;background:var(--paper);border:1px solid var(--line);
+    border-radius:999px;padding:6px 13px;font-size:12.5px;color:var(--muted);box-shadow:var(--shadow)}
+  .pill b{color:var(--ink);font-weight:600}
+  .pill .mono{color:var(--accent-ink);font-size:12px}
+
+  /* ---- contents rail ---- */
+  nav.toc{position:sticky;top:18px;padding:14px 0 40px;font-size:13.5px}
+  nav.toc .grp{font-family:"Bricolage Grotesque";text-transform:uppercase;letter-spacing:.11em;font-size:11px;
+    font-weight:700;color:var(--muted);margin:20px 0 7px}
+  nav.toc a{display:block;color:var(--body);padding:4px 10px;border-left:2px solid var(--line);margin-left:-2px;border-radius:0 5px 5px 0}
+  nav.toc a:hover{color:var(--ink);background:var(--rail);border-left-color:var(--accent)}
+  main{padding:26px 0 90px;min-width:0}
+
+  section{scroll-margin-top:18px;margin-bottom:34px}
+  h2{font-family:"Bricolage Grotesque",serif;font-weight:700;color:var(--ink);font-size:23px;letter-spacing:-.01em;
+    margin:8px 0 4px;display:flex;align-items:center;gap:11px}
+  h2 .n{font-size:12px;font-weight:600;color:var(--accent-ink);background:var(--accent-soft);border-radius:6px;
+    padding:3px 8px;font-family:"IBM Plex Mono"}
+  h3{font-family:"Bricolage Grotesque";font-weight:700;color:var(--ink);font-size:15px;margin:22px 0 8px;
+    text-transform:uppercase;letter-spacing:.07em}
+  p{margin:.5em 0}
+  .sub{color:var(--muted);max-width:66ch}
+
+  /* ---- convention cards ---- */
+  .cards{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px}
+  .card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:15px 17px;box-shadow:var(--shadow)}
+  .card h4{margin:0 0 5px;font-family:"Bricolage Grotesque";font-size:13.5px;color:var(--ink);letter-spacing:.01em}
+  .card p{margin:0;font-size:13.5px;color:var(--body)}
+  .card .mono{font-size:12.5px}
+
+  /* ---- endpoint block ---- */
+  .ep{background:var(--paper);border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);
+    overflow:hidden;margin:16px 0}
+  .ep-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 17px;border-bottom:1px solid var(--line);
+    background:linear-gradient(0deg,var(--rail),transparent)}
+  .verb{font-family:"IBM Plex Mono";font-weight:600;font-size:11.5px;letter-spacing:.05em;color:#fff;background:var(--accent);
+    padding:3px 9px;border-radius:6px}
+  .verb.get{background:var(--ok)}
+  .path{font-family:"IBM Plex Mono";font-weight:500;font-size:14px;color:var(--ink);word-break:break-all}
+  .ep-name{margin-left:auto;font-size:12.5px;color:var(--muted);font-weight:500}
+  .ep-b{padding:15px 17px}
+  .ep-b p{margin:0 0 11px;font-size:13.5px;color:var(--body)}
+  .flds{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 13px}
+  .fld{font-family:"IBM Plex Mono";font-size:11.5px;background:var(--surface);border:1px solid var(--line);
+    border-radius:6px;padding:3px 8px;color:var(--ink)}
+  .fld .opt{color:var(--muted)}
+  .fld.req::after{content:"*";color:var(--bad);margin-left:2px}
+
+  pre{margin:0;background:var(--code-bg);color:var(--code-ink);border-radius:10px;padding:14px 16px;
+    overflow-x:auto;font-size:12.7px;line-height:1.62}
+  pre .k{color:var(--code-key)} pre .s{color:var(--code-str)} pre .n{color:var(--code-num)} pre .c{color:var(--code-dim)}
+  .lbl{font-family:"IBM Plex Mono";font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+    margin:0 0 6px;font-weight:600}
+  .twin{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:720px){.twin{grid-template-columns:1fr}}
+
+  /* ---- status trio ---- */
+  .trio{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-top:14px}
+  .st{border-radius:12px;border:1px solid var(--line);padding:15px 16px;background:var(--paper);box-shadow:var(--shadow)}
+  .st-tag{display:inline-flex;align-items:center;gap:7px;font-family:"IBM Plex Mono";font-weight:600;font-size:12px;
+    padding:3px 10px;border-radius:999px;margin-bottom:9px}
+  .st.ok .st-tag{color:var(--ok);background:var(--ok-soft)} .st.ok{border-top:3px solid var(--ok)}
+  .st.wait .st-tag{color:var(--wait);background:var(--wait-soft)} .st.wait{border-top:3px solid var(--wait)}
+  .st.bad .st-tag{color:var(--bad);background:var(--bad-soft)} .st.bad{border-top:3px solid var(--bad)}
+  .st h4{margin:0 0 5px;font-family:"Bricolage Grotesque";font-size:14px;color:var(--ink)}
+  .st p{margin:0;font-size:13px;color:var(--body)}
+  .dot{width:8px;height:8px;border-radius:50%;background:currentColor;display:inline-block}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:"IBM Plex Mono";font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+  td .mono{font-size:12.5px;color:var(--ink)}
+  td.al{color:var(--muted);font-size:12.5px}
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:11px;background:var(--paper);box-shadow:var(--shadow)}
+
+  .note{border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 10px 10px 0;
+    padding:12px 16px;margin:14px 0;font-size:13.5px;color:var(--ink)}
+  .note b{color:var(--accent-ink)}
+  .callout{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);margin-top:14px}
+
+  footer{grid-column:1/-1;border-top:1px solid var(--line);padding:26px 0 60px;color:var(--muted);font-size:12.5px;
+    display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+  .toggle{position:fixed;top:14px;right:14px;z-index:9;background:var(--paper);border:1px solid var(--line-strong);
+    color:var(--body);border-radius:9px;padding:7px 11px;font-size:12px;cursor:pointer;box-shadow:var(--shadow);font-family:inherit}
+  .toggle:hover{color:var(--ink)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+  @media(max-width:840px){.wrap{grid-template-columns:1fr;gap:0}nav.toc{position:static;display:none}.cards{grid-template-columns:1fr}.trio{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<button class="toggle" id="tg" aria-label="Toggle colour theme">◐ Theme</button>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brandline"><span class="logo">₹</span> <b>TutiPays</b> · Integration Reference</div>
+    <h1>Every service API, webhook &amp; callback in one place</h1>
+    <p class="lede">The complete request/response for each service, and the single signed callback format every provider posts back to — one contract that settles all fourteen services.</p>
+    <div class="pills">
+      <span class="pill"><b>Base</b> <span class="mono">https://tutipays.com/api/v1</span></span>
+      <span class="pill"><b>Auth</b> <span class="mono">Bearer &lt;token&gt;</span></span>
+      <span class="pill"><b>Money</b> rupees in · paise in ledger</span>
+      <span class="pill"><b>Ref</b> <span class="mono">15-char A–Z 0–9</span></span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <div class="grp">Start here</div>
+    <a href="#conventions">Conventions</a>
+    <a href="#envelope">Response envelope</a>
+    <a href="#errors">Errors &amp; duplicates</a>
+    <div class="grp">Money out</div>
+    <a href="#dmt">DMT</a><a href="#payout">Payout</a><a href="#upi">UPI payout</a>
+    <div class="grp">Recharge &amp; bills</div>
+    <a href="#recharge">Recharge</a><a href="#bbps">BBPS</a>
+    <div class="grp">Banking / cash</div>
+    <a href="#aeps">AEPS</a><a href="#matm">Micro ATM</a><a href="#aadhaar">Aadhaar Pay</a>
+    <a href="#cardswipe">Card Swipe</a><a href="#cms">CMS</a>
+    <div class="grp">Other services</div>
+    <a href="#pan">PAN Card</a><a href="#travel">Travel</a><a href="#insurance">Insurance</a><a href="#wallet">Wallet transfer</a>
+    <div class="grp">Callbacks</div>
+    <a href="#cb-urls">Callback URLs</a>
+    <a href="#cb-format">Callback format</a>
+    <a href="#cb-status">Success / pending / failed</a>
+    <a href="#cb-razorpay">Razorpay events</a>
+  </nav>
+
+  <main>
+    <!-- ============ CONVENTIONS ============ -->
+    <section id="conventions">
+      <h2>Conventions</h2>
+      <p class="sub">The rules that hold for every endpoint below. Read once, then skim the services.</p>
+      <div class="cards">
+        <div class="card"><h4>Authentication</h4><p>Send <span class="mono">Authorization: Bearer &lt;token&gt;</span>. A token is either an interactive JWT (member/staff login) or a staff API key <span class="mono">tpk_…</span> for AI-agent / n8n automation.</p></div>
+        <div class="card"><h4>Idempotency</h4><p>Optionally send <span class="mono">Idempotency-Key: &lt;your-ref&gt;</span> (or a <span class="mono">reference</span> in the body). Re-sending the same key returns the original transaction — no double charge.</p></div>
+        <div class="card"><h4>Amounts</h4><p>Send <span class="mono">amount</span> in <b>rupees</b> (e.g. <span class="mono">990</span> or <span class="mono">99.50</span>). The ledger stores integer <b>paise</b>. An optional <span class="mono">charge</span> (rupees) applies only when no commission rule matches.</p></div>
+        <div class="card"><h4>Platform reference</h4><p>Every transaction gets a unique <b>15-character</b> uppercase code (<span class="mono">A–Z 0–9</span>, no prefix), e.g. <span class="mono">2LNYKFTLYRJ5CFF</span>. The bank <b>UTR</b> arrives later on the callback.</p></div>
+      </div>
+    </section>
+
+    <!-- ============ ENVELOPE ============ -->
+    <section id="envelope">
+      <h2>Response envelope</h2>
+      <p class="sub">Every service POST returns the same shape — <span class="mono">201 Created</span> for a new transaction, <span class="mono">200 OK</span> when an idempotent replay returns the original. The <span class="mono">status</span> may be <span class="mono">pending</span> until a provider callback settles it.</p>
+      <pre><span class="c">// 201 Created</span>
+{
+  <span class="k">"transaction"</span>: {
+    <span class="k">"id"</span>: <span class="s">"a1b2c3d4-…"</span>,           <span class="c">// master txn id (use for receipts/refunds)</span>
+    <span class="k">"reference"</span>: <span class="s">"2LNYKFTLYRJ5CFF"</span>,  <span class="c">// 15-char platform reference</span>
+    <span class="k">"status"</span>: <span class="s">"success"</span>,           <span class="c">// success | pending | failed</span>
+    <span class="k">"amount_paise"</span>: <span class="n">99000</span>,         <span class="c">// ₹990.00</span>
+    <span class="k">"charge_paise"</span>: <span class="n">0</span>,
+    <span class="k">"utr"</span>: <span class="s">null</span>                    <span class="c">// filled from the provider callback</span>
+  },
+  <span class="k">"idempotent"</span>: <span class="k">false</span>
+}</pre>
+      <div class="note"><b>Pending is normal.</b> Where a provider settles asynchronously (payout, DMT, UPI…), the POST returns <span class="mono">status:"pending"</span> and the wallet is already reserved. The final <b>callback</b> flips it to <span class="mono">success</span> or reverses it on <span class="mono">failed</span> — see <a href="#cb-status">Success / pending / failed</a>.</div>
+    </section>
+
+    <!-- ============ ERRORS ============ -->
+    <section id="errors">
+      <h2>Errors &amp; duplicate guard</h2>
+      <div class="twin">
+        <div>
+          <p class="lbl">Error shape</p>
+          <pre>{
+  <span class="k">"error"</span>: {
+    <span class="k">"message"</span>: <span class="s">"Insufficient balance"</span>,
+    <span class="k">"details"</span>: <span class="s">null</span>
+  }
+}</pre>
+        </div>
+        <div>
+          <p class="lbl">Status codes</p>
+          <div class="tbl-wrap"><table>
+            <tr><td><span class="mono">200/201</span></td><td class="al">OK / created</td></tr>
+            <tr><td><span class="mono">401</span></td><td class="al">missing / invalid token</td></tr>
+            <tr><td><span class="mono">403</span></td><td class="al">not permitted (IP / role / secret)</td></tr>
+            <tr><td><span class="mono">409</span></td><td class="al">duplicate transaction blocked</td></tr>
+            <tr><td><span class="mono">422</span></td><td class="al">risk / AML block</td></tr>
+          </table></div>
+        </div>
+      </div>
+      <div class="note"><b>409 — duplicate guard.</b> The same member sending the same service, amount and details (account / VPA / consumer no.) again within the admin window (default 5 min, <span class="mono">0</span> = off) is rejected. A previous <b>failed</b> attempt never blocks a retry; changing any detail passes straight through.</div>
+    </section>
+
+    <!-- ================= SERVICES ================= -->
+    <h2 style="margin-top:46px" id="services"><span class="n">14</span> Service endpoints</h2>
+    <p class="sub">All are <span class="mono">POST</span>, authenticated, and return the <a href="#envelope">envelope</a> above. Fields marked <span style="color:var(--bad)">*</span> are required; others are optional.</p>
+
+    <!-- DMT -->
+    <section id="dmt"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/dmt</span><span class="ep-name">Domestic money transfer → bank a/c</span></div>
+      <div class="ep-b">
+        <div class="flds">
+          <span class="fld req">beneficiary_name</span><span class="fld req">account_number</span><span class="fld req">ifsc</span>
+          <span class="fld req">amount</span><span class="fld">mode <span class="opt">IMPS|NEFT</span></span><span class="fld">remitter_mobile</span><span class="fld">charge</span>
+        </div>
+        <pre>{ <span class="k">"beneficiary_name"</span>:<span class="s">"Ramesh Kumar"</span>, <span class="k">"account_number"</span>:<span class="s">"50100123456789"</span>,
+  <span class="k">"ifsc"</span>:<span class="s">"HDFC0000123"</span>, <span class="k">"amount"</span>:<span class="n">990</span>, <span class="k">"mode"</span>:<span class="s">"IMPS"</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- PAYOUT -->
+    <section id="payout"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/payout</span><span class="ep-name">Payout to any bank account</span></div>
+      <div class="ep-b">
+        <div class="flds">
+          <span class="fld req">beneficiary_name</span><span class="fld req">account_number</span><span class="fld req">ifsc</span>
+          <span class="fld req">amount</span><span class="fld">mode <span class="opt">IMPS|NEFT|RTGS</span></span><span class="fld">charge</span>
+        </div>
+        <pre>{ <span class="k">"beneficiary_name"</span>:<span class="s">"Acme Traders"</span>, <span class="k">"account_number"</span>:<span class="s">"000201548796"</span>,
+  <span class="k">"ifsc"</span>:<span class="s">"ICIC0000002"</span>, <span class="k">"amount"</span>:<span class="n">2500</span>, <span class="k">"mode"</span>:<span class="s">"IMPS"</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- UPI -->
+    <section id="upi"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/upi/pay</span><span class="ep-name">UPI payout to a VPA</span></div>
+      <div class="ep-b">
+        <div class="flds"><span class="fld req">vpa</span><span class="fld req">amount</span><span class="fld">charge</span></div>
+        <pre>{ <span class="k">"vpa"</span>:<span class="s">"ramesh@okhdfcbank"</span>, <span class="k">"amount"</span>:<span class="n">750</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- RECHARGE -->
+    <section id="recharge"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/recharge</span><span class="ep-name">Prepaid · postpaid · DTH</span></div>
+      <div class="ep-b">
+        <div class="flds">
+          <span class="fld req">operator</span><span class="fld req">number</span><span class="fld">recharge_type <span class="opt">prepaid|postpaid|dth</span></span>
+          <span class="fld req">amount</span><span class="fld">circle</span><span class="fld">charge</span>
+        </div>
+        <pre>{ <span class="k">"operator"</span>:<span class="s">"Jio"</span>, <span class="k">"number"</span>:<span class="s">"9812345678"</span>,
+  <span class="k">"recharge_type"</span>:<span class="s">"prepaid"</span>, <span class="k">"amount"</span>:<span class="n">239</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- BBPS -->
+    <section id="bbps"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/bbps/pay</span><span class="ep-name">Bill payment (BBPS)</span></div>
+      <div class="ep-b">
+        <div class="flds">
+          <span class="fld req">biller_id</span><span class="fld req">consumer_number</span><span class="fld req">amount</span>
+          <span class="fld">category</span><span class="fld">biller_name</span><span class="fld">charge</span>
+        </div>
+        <pre>{ <span class="k">"biller_id"</span>:<span class="s">"MSEB00000MAH01"</span>, <span class="k">"consumer_number"</span>:<span class="s">"180012345678"</span>,
+  <span class="k">"category"</span>:<span class="s">"electricity"</span>, <span class="k">"amount"</span>:<span class="n">1340</span> }</pre>
+        <p style="margin-top:11px"><span class="verb get">GET</span> <span class="mono">/bbps/billers</span> — list available billers to populate <span class="mono">biller_id</span>.</p>
+      </div>
+    </div></section>
+
+    <!-- AEPS -->
+    <section id="aeps"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/aeps/cash-withdrawal</span><span class="ep-name">AEPS — biometric</span></div>
+      <div class="ep-b">
+        <div class="flds">
+          <span class="fld req">aadhaar</span><span class="fld req">bank_iin</span><span class="fld req">amount</span><span class="fld req">biometric <span class="opt">PID block</span></span>
+        </div>
+        <pre>{ <span class="k">"aadhaar"</span>:<span class="s">"XXXXXXXX1234"</span>, <span class="k">"bank_iin"</span>:<span class="s">"607152"</span>,
+  <span class="k">"amount"</span>:<span class="n">2000</span>, <span class="k">"biometric"</span>:{ <span class="k">"pid"</span>:<span class="s">"&lt;captured PID block&gt;"</span> } }</pre>
+        <p style="margin-top:11px" class="sub">Sibling endpoints share the same body (minus <span class="mono">amount</span>):
+          <span class="mono">/aeps/balance-enquiry</span> · <span class="mono">/aeps/mini-statement</span>. AEPS is a <b>credit</b> flow — the retailer's wallet is settled the withdrawn amount on success (194N TDS applies past the cash-out ceiling).</p>
+      </div>
+    </div></section>
+
+    <!-- mATM -->
+    <section id="matm"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/matm/withdrawal</span><span class="ep-name">Micro ATM — card + PIN via device</span></div>
+      <div class="ep-b">
+        <div class="flds"><span class="fld req">amount</span><span class="fld req">card_data <span class="opt">from device</span></span></div>
+        <pre>{ <span class="k">"amount"</span>:<span class="n">1500</span>, <span class="k">"card_data"</span>:<span class="s">"&lt;encrypted track from mATM device&gt;"</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- AADHAAR PAY -->
+    <section id="aadhaar"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/aadhaar-pay</span><span class="ep-name">Aadhaar Pay — biometric merchant debit</span></div>
+      <div class="ep-b">
+        <div class="flds"><span class="fld req">aadhaar</span><span class="fld req">bank_iin</span><span class="fld req">amount</span><span class="fld req">biometric</span></div>
+        <pre>{ <span class="k">"aadhaar"</span>:<span class="s">"XXXXXXXX1234"</span>, <span class="k">"bank_iin"</span>:<span class="s">"607152"</span>,
+  <span class="k">"amount"</span>:<span class="n">499</span>, <span class="k">"biometric"</span>:{ <span class="k">"pid"</span>:<span class="s">"&lt;PID block&gt;"</span> } }</pre>
+      </div>
+    </div></section>
+
+    <!-- CARD SWIPE -->
+    <section id="cardswipe"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/card-swipe</span><span class="ep-name">Card swipe / mPOS (MDR charged)</span></div>
+      <div class="ep-b">
+        <div class="flds"><span class="fld req">amount</span><span class="fld">card_type <span class="opt">debit|credit</span></span></div>
+        <pre>{ <span class="k">"amount"</span>:<span class="n">3200</span>, <span class="k">"card_type"</span>:<span class="s">"debit"</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- CMS -->
+    <section id="cms"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/cms/pay</span><span class="ep-name">Cash management — loan / EMI collection</span></div>
+      <div class="ep-b">
+        <div class="flds"><span class="fld req">agent_id</span><span class="fld req">account_number</span><span class="fld req">amount</span><span class="fld">biller_name</span></div>
+        <pre>{ <span class="k">"agent_id"</span>:<span class="s">"BFL"</span>, <span class="k">"account_number"</span>:<span class="s">"L991827"</span>, <span class="k">"amount"</span>:<span class="n">1200</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- PAN -->
+    <section id="pan"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/pan-card/apply</span><span class="ep-name">PAN card application</span></div>
+      <div class="ep-b">
+        <div class="flds"><span class="fld req">applicant_name</span><span class="fld req">amount <span class="opt">fee</span></span></div>
+        <pre>{ <span class="k">"applicant_name"</span>:<span class="s">"Sunita Devi"</span>, <span class="k">"amount"</span>:<span class="n">107</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- TRAVEL -->
+    <section id="travel"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/travel/book</span><span class="ep-name">Flight · bus · train · hotel</span></div>
+      <div class="ep-b">
+        <div class="flds">
+          <span class="fld req">booking_type</span><span class="fld req">operator</span><span class="fld">from_location</span>
+          <span class="fld">to_location</span><span class="fld req">passenger_name</span><span class="fld req">amount</span>
+        </div>
+        <pre>{ <span class="k">"booking_type"</span>:<span class="s">"flight"</span>, <span class="k">"operator"</span>:<span class="s">"IndiGo"</span>, <span class="k">"from_location"</span>:<span class="s">"DEL"</span>,
+  <span class="k">"to_location"</span>:<span class="s">"BOM"</span>, <span class="k">"passenger_name"</span>:<span class="s">"A. Khan"</span>, <span class="k">"amount"</span>:<span class="n">4850</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- INSURANCE -->
+    <section id="insurance"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/insurance/buy</span><span class="ep-name">Motor · health · life · travel</span></div>
+      <div class="ep-b">
+        <div class="flds"><span class="fld req">category</span><span class="fld req">insurer</span><span class="fld req">customer_name</span><span class="fld req">amount <span class="opt">premium</span></span></div>
+        <pre>{ <span class="k">"category"</span>:<span class="s">"health"</span>, <span class="k">"insurer"</span>:<span class="s">"Star Health"</span>,
+  <span class="k">"customer_name"</span>:<span class="s">"R. Patel"</span>, <span class="k">"amount"</span>:<span class="n">6499</span> }</pre>
+      </div>
+    </div></section>
+
+    <!-- WALLET TRANSFER -->
+    <section id="wallet"><div class="ep">
+      <div class="ep-h"><span class="verb">POST</span><span class="path">/wallet-transfer</span><span class="ep-name">Move balance to another member</span></div>
+      <div class="ep-b">
+        <div class="flds"><span class="fld req">to <span class="opt">phone / email / username</span></span><span class="fld req">amount</span></div>
+        <pre>{ <span class="k">"to"</span>:<span class="s">"9876543210"</span>, <span class="k">"amount"</span>:<span class="n">500</span> }</pre>
+        <p style="margin-top:11px" class="sub">Internal ledger move — settles instantly, no provider callback.</p>
+      </div>
+    </div></section>
+
+    <!-- ================= CALLBACKS ================= -->
+    <section id="cb-urls" style="margin-top:52px">
+      <h2><span class="n">↩</span> Callback URLs</h2>
+      <p class="sub">Providers post the final status back to one of these. A single callback settles <b>whichever service the reference belongs to</b> — the endpoint looks the service up from the reference, so one URL covers all fourteen.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Use</th><th>URL</th><th>Secret</th></tr></thead>
+        <tbody>
+          <tr><td><b>Per provider</b><div class="al">recommended</div></td>
+            <td><span class="mono">POST /api/v1/webhooks/provider/&lt;providerId&gt;</span><div class="al">shown &amp; copyable on each Providers row in the admin panel</div></td>
+            <td class="al">that provider's own secret</td></tr>
+          <tr><td><b>Shared</b></td>
+            <td><span class="mono">POST /api/v1/webhooks/aggregator</span><div class="al">one URL for every provider</div></td>
+            <td class="al">global aggregator secret</td></tr>
+          <tr><td><b>Razorpay</b></td>
+            <td><span class="mono">POST /api/v1/webhooks/razorpay</span><div class="al">payments + payouts</div></td>
+            <td class="al">Razorpay webhook secret</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="cb-format">
+      <h2>Callback format</h2>
+      <p class="sub">Sign the raw body and send the hex digest as a header. Only <span class="mono">reference</span> and <span class="mono">status</span> are required — the many field-name and status spellings Indian aggregators use are all accepted.</p>
+
+      <h3>Signature</h3>
+      <pre><span class="k">X-Webhook-Signature</span>: HMAC_SHA256(rawBody, secret)   <span class="c">// hex; a "sha256=" prefix is also accepted</span></pre>
+
+      <div class="twin" style="margin-top:16px">
+        <div>
+          <p class="lbl">Request body</p>
+          <pre>{
+  <span class="k">"reference"</span>:    <span class="s">"2LNYKFTLYRJ5CFF"</span>,   <span class="c">// our 15-char ref, echoed back</span>
+  <span class="k">"service"</span>:      <span class="s">"payout"</span>,            <span class="c">// optional — derived from reference</span>
+  <span class="k">"status"</span>:       <span class="s">"success"</span>,
+  <span class="k">"provider_ref"</span>: <span class="s">"PSP123456789"</span>,
+  <span class="k">"utr"</span>:          <span class="s">"SBIN0XXXXXXXX"</span>,
+  <span class="k">"message"</span>:      <span class="s">"Payout credited to beneficiary"</span>
+}</pre>
+        </div>
+        <div>
+          <p class="lbl">Response</p>
+          <pre>{ <span class="k">"status"</span>:<span class="s">"ok"</span>, <span class="k">"reference"</span>:<span class="s">"2LNYKFTLYRJ5CFF"</span>,
+  <span class="k">"settled"</span>:<span class="s">"success"</span> }
+
+<span class="c">// replayed callback (idempotent):</span>
+{ <span class="k">"status"</span>:<span class="s">"duplicate"</span> }</pre>
+        </div>
+      </div>
+
+      <h3>Accepted field aliases</h3>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Canonical</th><th>Also accepted</th></tr></thead>
+        <tbody>
+          <tr><td><span class="mono">reference</span></td><td class="al">client_ref, clientRef, client_reference, reference_id, referenceId, refid, ref, orderid, order_id, clientReferenceNo</td></tr>
+          <tr><td><span class="mono">status</span></td><td class="al">txn_status, txnStatus, transaction_status, state, response_status</td></tr>
+          <tr><td><span class="mono">utr</span></td><td class="al">bank_ref, bankRef, rrn, bank_utr</td></tr>
+          <tr><td><span class="mono">provider_ref</span></td><td class="al">providerRef, txnid, txn_id, transaction_id, operator_ref, operatorId, opid</td></tr>
+          <tr><td><span class="mono">message</span></td><td class="al">msg, remark, status_message, response_message</td></tr>
+          <tr><td><span class="mono">service</span> <span class="al">(optional)</span></td><td class="al">type, service_code — labels the event only; the service is derived from the reference</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout">
+        <p class="lbl" style="margin-bottom:9px">Signed callback — cURL</p>
+        <pre><span class="c"># body is the exact bytes you sign</span>
+BODY='{"reference":"2LNYKFTLYRJ5CFF","status":"success","utr":"AXISN1234567890"}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
+
+curl -X POST https://tutipays.com/api/v1/webhooks/provider/&lt;providerId&gt; \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Signature: $SIG" \
+  -d "$BODY"</pre>
+      </div>
+    </section>
+
+    <section id="cb-status">
+      <h2>Success · pending · failed</h2>
+      <p class="sub">The <span class="mono">status</span> you send is normalised to one of three outcomes, each with a defined effect on the member's wallet.</p>
+      <div class="trio">
+        <div class="st ok">
+          <span class="st-tag"><span class="dot"></span>success</span>
+          <h4>Settle &amp; pay commission</h4>
+          <p>Marks the transaction successful, records the <span class="mono">utr</span>, and pays the retailer / distributor / MD commission up the chain.</p>
+        </div>
+        <div class="st wait">
+          <span class="st-tag"><span class="dot"></span>pending</span>
+          <h4>Hold, no wallet change</h4>
+          <p>Recorded as interim. The reserved amount stays held; nothing moves until a final <span class="mono">success</span> or <span class="mono">failed</span> callback arrives.</p>
+        </div>
+        <div class="st bad">
+          <span class="st-tag"><span class="dot"></span>failed</span>
+          <h4>Auto-reverse in full</h4>
+          <p>Reverses the <b>entire</b> wallet deduction back to the payer (₹990 out → ₹990 back) and marks it failed. No partial reversals.</p>
+        </div>
+      </div>
+      <h3 style="margin-top:26px">Exact payload for each status</h3>
+      <p class="sub">Same URL, same signature header — only <span class="mono">status</span> changes. Request on the left (what the provider POSTs), response on the right (what TutiPays returns).</p>
+
+      <div style="margin-top:14px">
+        <div class="st-tag" style="color:var(--ok);background:var(--ok-soft)"><span class="dot"></span>SUCCESS &nbsp;— settle &amp; pay commission</div>
+        <div class="twin" style="margin-top:8px">
+          <div><p class="lbl">Provider → TutiPays</p><pre>POST /api/v1/webhooks/provider/&lt;id&gt;
+<span class="k">X-Webhook-Signature</span>: 5f2b…&lt;hmac&gt;
+
+{
+  <span class="k">"reference"</span>:    <span class="s">"2LNYKFTLYRJ5CFF"</span>,
+  <span class="k">"service"</span>:      <span class="s">"payout"</span>,
+  <span class="k">"status"</span>:       <span class="s">"success"</span>,
+  <span class="k">"provider_ref"</span>: <span class="s">"PSP123456789"</span>,
+  <span class="k">"utr"</span>:          <span class="s">"SBIN0XXXXXXXX"</span>,
+  <span class="k">"message"</span>:      <span class="s">"Payout credited to beneficiary"</span>
+}</pre></div>
+          <div><p class="lbl">TutiPays → Provider · 200</p><pre>{
+  <span class="k">"status"</span>:    <span class="s">"ok"</span>,
+  <span class="k">"reference"</span>: <span class="s">"2LNYKFTLYRJ5CFF"</span>,
+  <span class="k">"settled"</span>:  <span class="s">"success"</span>
+}
+
+<span class="c">// wallet: no change (already reserved)</span>
+<span class="c">// commission paid up the chain, UTR saved</span></pre></div>
+        </div>
+      </div>
+
+      <div style="margin-top:20px">
+        <div class="st-tag" style="color:var(--wait);background:var(--wait-soft)"><span class="dot"></span>PENDING &nbsp;— hold, no wallet change</div>
+        <div class="twin" style="margin-top:8px">
+          <div><p class="lbl">Provider → TutiPays</p><pre>POST /api/v1/webhooks/provider/&lt;id&gt;
+<span class="k">X-Webhook-Signature</span>: 9a04…&lt;hmac&gt;
+
+{
+  <span class="k">"reference"</span>:    <span class="s">"2LNYKFTLYRJ5CFF"</span>,
+  <span class="k">"service"</span>:      <span class="s">"payout"</span>,
+  <span class="k">"status"</span>:       <span class="s">"pending"</span>,
+  <span class="k">"provider_ref"</span>: <span class="s">"PSP123456789"</span>,
+  <span class="k">"message"</span>:      <span class="s">"Awaiting bank confirmation"</span>
+}</pre></div>
+          <div><p class="lbl">TutiPays → Provider · 200</p><pre>{
+  <span class="k">"status"</span>:    <span class="s">"ok"</span>,
+  <span class="k">"reference"</span>: <span class="s">"2LNYKFTLYRJ5CFF"</span>,
+  <span class="k">"settled"</span>:  <span class="s">"pending"</span>
+}
+
+<span class="c">// wallet: stays reserved, nothing moves</span>
+<span class="c">// send a final success/failed callback later</span></pre></div>
+        </div>
+      </div>
+
+      <div style="margin-top:20px">
+        <div class="st-tag" style="color:var(--bad);background:var(--bad-soft)"><span class="dot"></span>FAILED &nbsp;— auto-reverse the full deduction</div>
+        <div class="twin" style="margin-top:8px">
+          <div><p class="lbl">Provider → TutiPays</p><pre>POST /api/v1/webhooks/provider/&lt;id&gt;
+<span class="k">X-Webhook-Signature</span>: c1e7…&lt;hmac&gt;
+
+{
+  <span class="k">"reference"</span>:    <span class="s">"2LNYKFTLYRJ5CFF"</span>,
+  <span class="k">"service"</span>:      <span class="s">"payout"</span>,
+  <span class="k">"status"</span>:       <span class="s">"failed"</span>,
+  <span class="k">"provider_ref"</span>: <span class="s">"PSP123456789"</span>,
+  <span class="k">"message"</span>:      <span class="s">"Beneficiary bank declined"</span>
+}</pre></div>
+          <div><p class="lbl">TutiPays → Provider · 200</p><pre>{
+  <span class="k">"status"</span>:    <span class="s">"ok"</span>,
+  <span class="k">"reference"</span>: <span class="s">"2LNYKFTLYRJ5CFF"</span>,
+  <span class="k">"settled"</span>:  <span class="s">"failed"</span>
+}
+
+<span class="c">// wallet: FULL deduction reversed to payer</span>
+<span class="c">// e.g. ₹990 out → ₹990 credited back</span></pre></div>
+        </div>
+      </div>
+
+      <h3 style="margin-top:26px">Status spellings accepted</h3>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>You send (any of)</th><th>Normalises to</th></tr></thead>
+        <tbody>
+          <tr><td class="al">success, successful, true, 1, completed, complete, processed, paid, settled, accepted</td><td><span class="st-tag" style="color:var(--ok);background:var(--ok-soft)">success</span></td></tr>
+          <tr><td class="al">pending, processing, initiated, queued, inprocess, 2, <span style="opacity:.7">(anything unrecognised)</span></td><td><span class="st-tag" style="color:var(--wait);background:var(--wait-soft)">pending</span></td></tr>
+          <tr><td class="al">failed, failure, fail, false, 0, rejected, error, declined, reversed, refunded, bounced, cancelled</td><td><span class="st-tag" style="color:var(--bad);background:var(--bad-soft)">failed</span></td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><b>Terminal is terminal.</b> Once a transaction is <span class="mono">success</span> or <span class="mono">failed</span>, a later callback is a safe no-op (returns <span class="mono">ok</span> without moving money again). To reverse a settled transaction, use the admin refund flow.</div>
+    </section>
+
+    <section id="cb-razorpay">
+      <h2>Razorpay events</h2>
+      <p class="sub">The Razorpay endpoint verifies <span class="mono">X-Razorpay-Signature</span> and maps native events onto the same three outcomes.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Event</th><th>Outcome</th></tr></thead>
+        <tbody>
+          <tr><td><span class="mono">payment.captured</span> · <span class="mono">order.paid</span></td><td class="al">credits the wallet top-up order</td></tr>
+          <tr><td><span class="mono">payout.processed</span></td><td><span class="st-tag" style="color:var(--ok);background:var(--ok-soft)">success</span></td></tr>
+          <tr><td><span class="mono">payout.queued · pending · initiated · processing</span></td><td><span class="st-tag" style="color:var(--wait);background:var(--wait-soft)">pending</span></td></tr>
+          <tr><td><span class="mono">payout.failed · reversed</span></td><td><span class="st-tag" style="color:var(--bad);background:var(--bad-soft)">failed</span></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>TutiPays · REAL BROTHERS TECHNOLOGY SERVICES LLP — integration reference</span>
+    <span>Amounts in rupees · ledger in paise · reference = 15-char A–Z 0–9</span>
+  </footer>
+</div>
+
+<script>
+  (function(){
+    var btn=document.getElementById('tg'),root=document.documentElement;
+    function cur(){var t=root.getAttribute('data-theme');if(t)return t;
+      return matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}
+    try{var s=localStorage.getItem('tp-theme');if(s)root.setAttribute('data-theme',s);}catch(e){}
+    btn.addEventListener('click',function(){
+      var next=cur()==='dark'?'light':'dark';
+      root.setAttribute('data-theme',next);
+      try{localStorage.setItem('tp-theme',next);}catch(e){}
+    });
+  })();
+</script>
+</body>
+</html>
