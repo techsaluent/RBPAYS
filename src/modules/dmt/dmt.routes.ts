@@ -83,6 +83,7 @@ router.post(
       amountPaise,
       providerId,
       clientChargePaise: rupeesToPaise(body.charge),
+      dedupeKey: `${body.account_number}|${body.ifsc}|${body.mode}`,
       description: `DMT to ${body.beneficiary_name}`,
       providerName: provider.name,
       insertServiceRow: async (client, ctx) => {

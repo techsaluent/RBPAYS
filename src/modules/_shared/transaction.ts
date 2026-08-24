@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { PoolClient } from 'pg';
 import { query, withTransaction } from '../../../db';
 import { debit, WalletSource } from '../wallet/wallet.service';
@@ -5,6 +6,7 @@ import { computeDistribution } from '../commission/commission.service';
 import { assessTransaction } from '../risk/risk.service';
 import { settleByReference } from './settle';
 import { makeReference } from '../../utils/reference';
+import { ApiError } from '../../utils/ApiError';
 import { ProviderResult } from '../../providers/types';
 
 export interface RunOptions {
@@ -30,6 +32,12 @@ export interface RunOptions {
    * commission-farming detected). The transaction still executes.
    */
   suppressCommission?: boolean;
+  /**
+   * Details that make this transaction unique (account no, VPA, consumer no…).
+   * Used to block an accidental duplicate submit of the SAME transaction within
+   * the admin-configured window. Falls back to `description` when not given.
+   */
+  dedupeKey?: string;
   /** Insert the service detail row (pending). Return its id. */
   insertServiceRow: (client: PoolClient, ctx: { reference: string; chargePaise: number }) => Promise<string>;
   /** Call the external provider (runs after the debit commits). */
@@ -40,6 +48,42 @@ export interface RunResult {
   transaction: Record<string, unknown>; // service detail row
   master: Record<string, unknown>; // transactions ledger row
   idempotent: boolean;
+}
+
+/** Admin-configured duplicate window in minutes (0 = disabled). Default 5. */
+async function duplicateWindowMinutes(): Promise<number> {
+  const { rows } = await query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = 'duplicate_txn_window_minutes'",
+  );
+  const n = Number(rows[0]?.value);
+  return Number.isFinite(n) && n >= 0 ? n : 5;
+}
+
+/**
+ * Reject an identical transaction (same member + service + amount + details)
+ * that was submitted within the admin window and is still pending or already
+ * succeeded. A previous *failed* attempt does not block a retry.
+ */
+async function guardDuplicate(
+  userId: string,
+  serviceCode: string,
+  dedupeHash: string,
+): Promise<void> {
+  const minutes = await duplicateWindowMinutes();
+  if (minutes <= 0) return;
+  const { rows } = await query<{ reference: string }>(
+    `SELECT reference FROM transactions
+      WHERE user_id = $1 AND dedupe_hash = $2
+        AND status IN ('pending', 'success')
+        AND created_at > now() - ($3 || ' minutes')::interval
+      ORDER BY created_at DESC LIMIT 1`,
+    [userId, dedupeHash, String(minutes)],
+  );
+  if (rows[0]) {
+    throw ApiError.conflict(
+      `Duplicate transaction blocked — an identical ${serviceCode} was submitted in the last ${minutes} minute(s) (ref ${rows[0].reference}). Please wait before retrying.`,
+    );
+  }
 }
 
 async function loadExisting(reference: string, table: string): Promise<RunResult | null> {
@@ -63,6 +107,21 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
   // 1) Idempotency: a used reference returns the original transaction.
   const existing = await loadExisting(reference, opts.table);
   if (existing) return existing;
+
+  // 1a) Duplicate-details guard: same member + service + amount + flow +
+  //     details (account/VPA/consumer no…). Blocks an accidental re-submit
+  //     within the admin-configured window; a fresh reference each time means
+  //     idempotency alone can't catch this.
+  const flowForHash = opts.flow ?? 'debit';
+  const dedupeHash = crypto
+    .createHash('sha256')
+    .update(
+      [opts.userId, opts.serviceCode, flowForHash, opts.amountPaise, opts.dedupeKey ?? opts.description]
+        .join('|')
+        .toLowerCase(),
+    )
+    .digest('hex');
+  await guardDuplicate(opts.userId, opts.serviceCode, dedupeHash);
 
   // 1b) Risk / AML pre-check (throws 422 when the action is 'block').
   await assessTransaction({
@@ -90,8 +149,8 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
       const master = await client.query<{ id: string }>(
         `INSERT INTO transactions
            (user_id, service, direction, service_txn_id, reference,
-            amount_paise, charge_paise, commission_paise, net_paise, status, commission_breakdown, provider_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,$11)
+            amount_paise, charge_paise, commission_paise, net_paise, status, commission_breakdown, provider_id, dedupe_hash)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,$11,$12)
          RETURNING id`,
         [
           opts.userId,
@@ -105,6 +164,7 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
           netPaise,
           JSON.stringify(dist.entries),
           opts.providerId ?? null,
+          dedupeHash,
         ],
       );
       // Debit flow reserves funds now; credit flow settles the wallet on success.
