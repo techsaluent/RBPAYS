@@ -5,6 +5,7 @@ import { staffConsoleGate } from '../../middleware/permission';
 import { logAudit } from '../audit/audit.service';
 import { refundTransaction, resolvePending } from '../transactions/refund.service';
 import { emitEvent } from '../notify/events.service';
+import { addMessage, notifyMember } from '../disputes/dispute.service';
 import { approveWithdrawal, rejectWithdrawal } from '../withdrawal/withdrawal.service';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
@@ -314,9 +315,54 @@ router.get(
   }),
 );
 
+// Full dispute view + thread (staff).
+router.get(
+  '/disputes/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query(
+      `SELECT d.*, u.full_name AS raised_by_name, u.phone AS raised_by_phone
+         FROM disputes d JOIN users u ON u.id = d.raised_by WHERE d.id = $1`,
+      [req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Dispute not found');
+    const msgs = await query('SELECT * FROM dispute_messages WHERE dispute_id = $1 ORDER BY created_at', [req.params.id]);
+    res.json({ dispute: rows[0], messages: msgs.rows });
+  }),
+);
+
+// Printable dispute receipt (HTML) for staff.
+router.get(
+  '/disputes/:id/receipt',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { disputeReceiptHtml } = await import('../disputes/dispute.service');
+    const { rows } = await query('SELECT * FROM disputes WHERE id = $1', [req.params.id]);
+    if (!rows[0]) throw ApiError.notFound('Dispute not found');
+    const msgs = await query('SELECT * FROM dispute_messages WHERE dispute_id = $1 ORDER BY created_at', [req.params.id]);
+    const brand = await query<{ value: string }>("SELECT value FROM site_settings WHERE key = 'brand_name'");
+    res.type('html').send(disputeReceiptHtml(rows[0], msgs.rows, brand.rows[0]?.value || 'TutiPays'));
+  }),
+);
+
+// Staff reply on a dispute thread (notifies the member by SMS).
+router.post(
+  '/disputes/:id/messages',
+  validate(z.object({ message: z.string().trim().min(1).max(1000) })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const d = await query<{ ticket_no: string }>('SELECT ticket_no FROM disputes WHERE id = $1', [req.params.id]);
+    if (!d.rows[0]) throw ApiError.notFound('Dispute not found');
+    const role = req.user.role === 'admin' ? 'admin' : 'staff';
+    const msg = await addMessage(req.params.id, req.user.id, role, 'comment', req.body.message);
+    await notifyMember(req.params.id, `Update on your dispute ${d.rows[0].ticket_no}: ${req.body.message}`);
+    emitEvent('dispute.message', { dispute_id: req.params.id, by: role });
+    res.status(201).json({ message: msg });
+  }),
+);
+
 const disputeDecisionSchema = z.object({
   status: z.enum(['in_review', 'resolved', 'rejected']),
   resolution: z.string().trim().min(1).max(1000),
+  refund: z.boolean().default(false), // resolve as a refund -> credit the payer
 });
 router.post(
   '/disputes/:id/resolve',
@@ -325,6 +371,22 @@ router.post(
     if (!req.user) throw ApiError.unauthorized();
     const b = req.body as z.infer<typeof disputeDecisionSchema>;
     const terminal = b.status === 'resolved' || b.status === 'rejected';
+
+    const cur = await query<{ id: string; transaction_id: string | null; ticket_no: string }>(
+      'SELECT id, transaction_id, ticket_no FROM disputes WHERE id = $1',
+      [req.params.id],
+    );
+    if (!cur.rows[0]) throw ApiError.notFound('Dispute not found');
+
+    // Resolve-as-refund: move the money first (must succeed to mark resolved).
+    let refundNote = '';
+    if (b.refund && b.status === 'resolved') {
+      if (!cur.rows[0].transaction_id) throw ApiError.badRequest('This dispute has no linked transaction to refund');
+      await refundTransaction(cur.rows[0].transaction_id, `Dispute ${cur.rows[0].ticket_no}: ${b.resolution}`);
+      refundNote = ' Amount refunded to wallet.';
+      await addMessage(req.params.id, req.user.id, req.user.role === 'admin' ? 'admin' : 'staff', 'refund', 'Refund issued — wallet credited.');
+    }
+
     const { rows } = await query(
       `UPDATE disputes
           SET status = $1, resolution = $2, assigned_to = $3,
@@ -333,10 +395,12 @@ router.post(
         WHERE id = $5 RETURNING *`,
       [b.status, b.resolution, req.user.id, terminal, req.params.id],
     );
-    if (!rows[0]) throw ApiError.notFound('Dispute not found');
+    const role = req.user.role === 'admin' ? 'admin' : 'staff';
+    await addMessage(req.params.id, req.user.id, role, 'status_change', b.resolution, b.status);
+    await notifyMember(req.params.id, `Your dispute ${rows[0].ticket_no} is now ${b.status}. ${b.resolution}${refundNote}`);
     await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'dispute.' + b.status,
-      targetType: 'dispute', targetId: req.params.id, detail: { resolution: b.resolution, reference: rows[0].reference } });
-    emitEvent('dispute.' + b.status, { ticket_no: rows[0].ticket_no, reference: rows[0].reference, resolution: b.resolution });
+      targetType: 'dispute', targetId: req.params.id, detail: { resolution: b.resolution, refund: b.refund, reference: rows[0].reference } });
+    emitEvent('dispute.' + b.status, { ticket_no: rows[0].ticket_no, reference: rows[0].reference, resolution: b.resolution, refund: b.refund });
     res.json({ dispute: rows[0] });
   }),
 );
