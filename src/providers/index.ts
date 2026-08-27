@@ -31,6 +31,8 @@ import {
   aggregatorGeneric,
   aggregatorRecharge,
 } from './aggregator';
+import { aeronpayBbps, aeronpayDmt, aeronpayPayout, aeronpayRecharge } from './aeronpay';
+import { ekoAeps, ekoBbps, ekoDmt, ekoGeneric, ekoRecharge } from './eko';
 import { activeDriver } from './registry';
 
 /**
@@ -48,6 +50,10 @@ export function getDmtProvider(providerId?: string): DmtProvider {
   switch (driverFor('dmt', env.PROVIDER_DMT, providerId)) {
     case 'aggregator':
       return aggregatorDmt;
+    case 'aeronpay':
+      return aeronpayDmt;
+    case 'eko':
+      return ekoDmt;
     default:
       return sandboxDmt;
   }
@@ -57,6 +63,10 @@ export function getBbpsProvider(providerId?: string): BbpsProvider {
   switch (driverFor('bbps', env.PROVIDER_BBPS, providerId)) {
     case 'aggregator':
       return aggregatorBbps;
+    case 'aeronpay':
+      return aeronpayBbps;
+    case 'eko':
+      return ekoBbps;
     default:
       return sandboxBbps;
   }
@@ -66,6 +76,10 @@ export function getRechargeProvider(providerId?: string): RechargeProvider {
   switch (driverFor('recharge', env.PROVIDER_RECHARGE, providerId)) {
     case 'aggregator':
       return aggregatorRecharge;
+    case 'aeronpay':
+      return aeronpayRecharge;
+    case 'eko':
+      return ekoRecharge;
     default:
       return sandboxRecharge;
   }
@@ -75,13 +89,22 @@ export function getPayoutProvider(providerId?: string): PayoutProvider {
   switch (driverFor('payout', env.PROVIDER_PAYOUT, providerId)) {
     case 'razorpay':
       return razorpayPayout;
+    case 'aeronpay':
+      return aeronpayPayout;
     default:
       return sandboxPayout;
   }
 }
 
 export function getAepsProvider(providerId?: string): AepsProvider {
-  return driverFor('aeps', env.PROVIDER_AEPS, providerId) === 'aggregator' ? aggregatorAeps : sandboxAeps;
+  switch (driverFor('aeps', env.PROVIDER_AEPS, providerId)) {
+    case 'aggregator':
+      return aggregatorAeps;
+    case 'eko':
+      return ekoAeps;
+    default:
+      return sandboxAeps;
+  }
 }
 
 export function getCmsProvider(providerId?: string): CmsProvider {
@@ -105,9 +128,14 @@ const GENERIC_ENV: Record<string, string> = {
 };
 
 export function getGenericProvider(service: string, providerId?: string): GenericServiceProvider {
-  return driverFor(service, GENERIC_ENV[service] ?? 'sandbox', providerId) === 'aggregator'
-    ? aggregatorGeneric
-    : sandboxGeneric;
+  switch (driverFor(service, GENERIC_ENV[service] ?? 'sandbox', providerId)) {
+    case 'aggregator':
+      return aggregatorGeneric;
+    case 'eko':
+      return ekoGeneric;
+    default:
+      return sandboxGeneric;
+  }
 }
 
 export function getGatewayProvider(): GatewayProvider {

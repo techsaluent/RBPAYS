@@ -1611,7 +1611,7 @@ router.get(
 
 const providerSchema = z.object({
   label: z.string().trim().min(2).max(120),
-  driver: z.enum(['sandbox', 'aggregator', 'razorpay', 'generic']).default('sandbox'),
+  driver: z.enum(['sandbox', 'aggregator', 'razorpay', 'generic', 'aeronpay', 'eko']).default('sandbox'),
   base_url: z.string().trim().max(300).optional(),
   api_key: z.string().trim().max(300).optional(),
   api_secret: z.string().trim().max(300).optional(),

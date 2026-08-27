@@ -2048,14 +2048,19 @@ const Actions = {
   addProvider(code) {
     UI.modal(`<h3>Add provider — ${esc(code)}</h3>
       <div class="field"><label>Label</label><input id="p_label" placeholder="Paysprint / RazorpayX"></div>
-      <div class="field"><label>Driver</label><select id="p_driver">
-        <option value="sandbox">sandbox (test)</option><option value="aggregator">aggregator (DMT/BBPS/recharge switch)</option>
+      <div class="field"><label>Driver</label><select id="p_driver" onchange="Actions.providerDriverHint()">
+        <option value="sandbox">sandbox (test)</option><option value="aggregator">aggregator (generic DMT/BBPS/recharge switch)</option>
+        <option value="aeronpay">AeronPay (payout, recharge, BBPS, DMT)</option>
+        <option value="eko">Eko (DMT, AEPS, BBPS, recharge)</option>
         <option value="razorpay">razorpay (payout/gateway)</option><option value="generic">generic</option></select></div>
-      <div class="field"><label>Base URL</label><input id="p_url" placeholder="https://api.provider.com"></div>
-      <div class="field"><label>API key</label><input id="p_key"></div>
-      <div class="field"><label>API secret</label><input id="p_secret"></div>
+      <p class="muted" id="p_hint" style="font-size:12px;margin:2px 0 0"></p>
+      <div class="field"><label>Base URL <span class="muted">(blank = provider default)</span></label><input id="p_url" placeholder="https://api.provider.com"></div>
+      <div class="field"><label id="p_key_l">API key</label><input id="p_key"></div>
+      <div class="field"><label id="p_secret_l">API secret</label><input id="p_secret"></div>
       <div class="field"><label>Auth token</label><input id="p_token"></div>
-      <div class="field"><label>Partner ID</label><input id="p_partner"></div>
+      <div class="field"><label id="p_partner_l">Partner ID</label><input id="p_partner"></div>
+      <div class="field"><label>Advanced config (JSON) <span class="muted">— e.g. Eko {"user_code":"..."} or path overrides</span></label>
+        <input id="p_extra" placeholder='{"user_code":"20810200","payout_path":"/payout/transfer"}'></div>
       <div class="field"><label>Callback secret (HMAC key for this provider's webhook)</label><input id="p_wsecret" placeholder="leave blank to use the global aggregator secret"></div>
       <div class="field"><label><input type="checkbox" id="p_active" checked> Make active (route through this)</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveProvider('${code}')">Add</button>
@@ -2069,8 +2074,22 @@ const Actions = {
     if (val('p_token')) body.auth_token = val('p_token');
     if (val('p_partner')) body.partner_id = val('p_partner');
     if (val('p_wsecret')) body.webhook_secret = val('p_wsecret');
+    const ex = val('p_extra');
+    if (ex) { try { body.extra = JSON.parse(ex); } catch { return UI.toast('Advanced config must be valid JSON', 'err'); } }
     try { await Api.post(`/admin/services/${code}/providers`, body); UI.closeModal(); UI.toast('Provider added'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  providerDriverHint() {
+    const d = val('p_driver');
+    const hints = {
+      aeronpay: ['AeronPay — headers client-id / client-secret.', 'API key = client-id', 'API secret = client-secret'],
+      eko: ['Eko — dynamic signed headers. Partner ID = initiator_id; put user_code in Advanced config.', 'API key = developer_key', 'API secret = access_key (used to sign each request)'],
+    };
+    const h = hints[d];
+    $('p_hint').textContent = h ? h[0] : '';
+    $('p_key_l').textContent = h ? h[1] : 'API key';
+    $('p_secret_l').textContent = h ? h[2] : 'API secret';
+    $('p_partner_l').textContent = d === 'eko' ? 'Partner ID (initiator_id)' : 'Partner ID';
   },
   editProviderSecret(id, label) {
     UI.modal(`<h3>Callback secret — ${esc(label)}</h3>
