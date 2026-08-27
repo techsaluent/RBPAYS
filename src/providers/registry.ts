@@ -18,7 +18,7 @@ export interface ActiveProvider {
   id: string;
   label: string;
   priority: number;
-  driver: 'sandbox' | 'aggregator' | 'razorpay' | 'generic';
+  driver: 'sandbox' | 'aggregator' | 'razorpay' | 'generic' | 'aeronpay' | 'eko';
   baseUrl: string;
   apiKey: string;
   apiSecret: string;

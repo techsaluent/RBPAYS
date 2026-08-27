@@ -400,67 +400,127 @@ const Screens = {
           <div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Success</th><th class="right">Total</th><th class="right">Amount</th></tr></thead>
           <tbody>${vol || '<tr><td colspan=4 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>`;
     } else if (MGMT_ROLES.includes(State.user.role)) {
-      // Distributor / Master distributor — network + earnings, no transactions.
-      const [p, w, st] = await Promise.all([
+      // Distributor / Master distributor — network, earnings & downline.
+      const isMD = State.user.role === 'master_distributor';
+      const [p, w, st, dl] = await Promise.all([
         Api.get('/network/panel').catch(() => null),
         Api.get('/wallet'),
         Api.get('/transactions/stats/summary').catch(() => null),
+        Api.get('/network/downline').catch(() => ({ items: [] })),
       ]);
       const earn = p ? p.earnings.total_paise / 100 : 0;
-      const totalDown = p ? Object.values(p.downline_counts || {}).reduce((a, n) => a + Number(n), 0) : 0;
-      const dc = p ? Object.entries(p.downline_counts || {}).map(([k, n]) => `${k.replace(/_/g,' ')}: <b>${n}</b>`).join(' &nbsp; ') : '';
-      const recent = (p?.earnings.recent || []).map(e => `<tr><td>${esc(e.service_code)}</td><td>${esc(e.level)}</td><td class="right">${money(e.amount_paise/100)}</td></tr>`).join('');
+      const counts = p ? (p.downline_counts || {}) : {};
+      const totalDown = Object.values(counts).reduce((a, n) => a + Number(n), 0);
+      const wl = w.wallet;
+      const avail = (wl.available_paise != null ? wl.available_paise : wl.balance_paise) / 100;
+      const roleCard = (k, ico) => `<div class="mini"><span class="mi">${ico}</span>
+        <div class="mm"><b>${(k).replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}</b><span>${Number(counts[k]||0)} member${Number(counts[k]||0)===1?'':'s'}</span></div>
+        <div class="ma">${Number(counts[k]||0)}</div></div>`;
+      const recent = (p?.earnings.recent || []).map(e => `<div class="mini"><span class="mi">${svcIcon(e.service_code)}</span>
+        <div class="mm"><b>${esc(svcLabel(e.service_code))}</b><span>${esc(e.level)} commission</span></div>
+        <div class="ma comm-pos">${money(e.amount_paise/100)}</div></div>`).join('');
+      const members = (dl.items || []).slice(0, 6).map(m => `<div class="mini"><span class="mi">${(m.role||'r')[0].toUpperCase()}</span>
+        <div class="mm"><b>${esc(m.full_name || m.username || m.phone || 'Member')}</b><span>${esc((m.role||'').replace(/_/g,' '))} · ${esc(m.phone||m.email||'')}</span></div>
+        <div class="ma"><small>${UI.statusTag(m.status||'active')}</small></div>`+`</div>`).join('');
       $('view').innerHTML = `
         <div class="stats">
-          ${UI.stat('b','👛','Wallet balance', money(w.wallet.balance), 'Available float')}
+          ${UI.stat('b','👛','Wallet balance', money(wl.balance), `Available <b>${money(avail)}</b>`)}
           ${UI.stat('g','💰','Commission earned', money(earn), 'Net of TDS, lifetime')}
-          ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, dc || 'No members yet')}
-          ${st ? UI.stat('t','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : ''}
+          ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, isMD ? 'Distributors & retailers' : 'Retailers')}
+          ${st ? UI.stat('p','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : ''}
         </div>
-        ${st && st.daily ? `<div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Network volume — last 7 days</h2>
-          <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
-          ${Charts.area(st.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
-        <div class="panel mt"><h2>Quick actions</h2>
-          <a class="btn sm" href="#/network">Manage network</a> &nbsp;
-          <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
-          <a class="btn sm ghost" href="#/txns">Transactions</a></div>
-        <div class="panel mt"><h2>Recent commission</h2><div class="tbl-wrap"><table>
-          <thead><tr><th>Service</th><th>Level</th><th class="right">Amount</th></tr></thead>
-          <tbody>${recent || '<tr><td colspan=3 class=muted>None yet</td></tr>'}</tbody></table></div></div>`;
+        <div class="dash-cols mt">
+          <div>
+            ${st && st.daily ? `<div class="panel"><div class="row" style="justify-content:space-between"><h2>Network volume — last 7 days</h2>
+              <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
+              ${Charts.area(st.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
+            <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My members</h2>
+              <a class="btn sm" onclick="Actions.addMember(false)">＋ Add member</a></div>
+              ${members || '<div class="muted" style="padding:10px 0">No members yet. Add your first '+(isMD?'distributor or retailer':'retailer')+'.</div>'}
+              <a class="btn sm ghost" style="margin-top:10px" href="#/network">Manage full network →</a></div>
+          </div>
+          <div>
+            <div class="rail-card">
+              <div class="row" style="justify-content:space-between;align-items:baseline">
+                <span class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.4px">Available to withdraw</span>
+                <b style="font-size:20px">${money(avail)}</b></div>
+              <button class="btn sm" style="width:100%;justify-content:center;margin-top:12px" onclick="Actions.withdraw()">💸 Withdraw to bank</button>
+              <a class="btn sm ghost" style="width:100%;justify-content:center;margin-top:8px;box-sizing:border-box" href="#/addmoney">＋ Add money</a>
+            </div>
+            <div class="rail-card">
+              <h2 style="margin:0 0 4px;font-size:15px">Network breakdown</h2>
+              ${isMD ? roleCard('distributor','🧑‍💼') : ''}
+              ${roleCard('retailer','🏪')}
+              ${counts.user ? roleCard('user','👤') : ''}
+            </div>
+            <div class="rail-card">
+              <div class="row" style="justify-content:space-between"><h2 style="margin:0 0 4px;font-size:15px">Recent commission</h2>
+                <a class="muted" style="font-size:12px" href="#/network">More →</a></div>
+              ${recent || '<div class="muted" style="padding:10px 0">No commission yet.</div>'}
+            </div>
+          </div>
+        </div>`;
     } else {
-      // Retailer (and plain user) — transact, wallet, KYC prompt.
-      const [w, kyc, st] = await Promise.all([
+      // Retailer (and plain user) — full operating dashboard.
+      const [w, kyc, st, tx, dp] = await Promise.all([
         Api.get('/wallet'),
         Api.get('/kyc').catch(() => null),
         Api.get('/transactions/stats/summary').catch(() => null),
+        Api.get('/transactions?limit=6').catch(() => ({ items: [] })),
+        Api.get('/disputes').catch(() => ({ items: [] })),
       ]);
       const kstat = kyc?.kyc_status || State.user.kyc_status;
       const kycBanner = kstat !== 'verified'
         ? `<div class="msg ${kstat === 'rejected' ? 'err' : ''}" style="background:${kstat==='rejected'?'':'#fef7e0'};color:${kstat==='rejected'?'':'#b06000'}">
-             Your KYC is <b>${esc(kstat)}</b>. <a href="#/kyc">Complete KYC →</a></div>` : '';
+             🪪 Your KYC is <b>${esc(kstat)}</b> — verify PAN &amp; Aadhaar to lift your limit and unlock AEPS. <a href="#/kyc">Complete KYC →</a></div>` : '';
       const sw = w.sub_wallets || { settlement: '0.00', commission: '0.00' };
       const s = st || {};
-      const quick = SERVICES.slice(0, 8).map(x => `<a class="btn sm ghost" href="#/new" onclick="Actions.presetSvc('${x.key}')">${esc(x.label)}</a>`).join(' ');
+      const wl = w.wallet;
+      const avail = (wl.available_paise != null ? wl.available_paise : wl.balance_paise) / 100;
+      const held = (wl.held_paise || 0) / 100;
+      const openDisputes = (dp.items || []).filter(d => ['open','in_review'].includes(d.status)).slice(0, 4);
       $('view').innerHTML = `
         ${kycBanner}
         <div class="stats">
-          ${UI.stat('b','👛','Main wallet', money(w.wallet.balance), 'Available balance')}
-          ${UI.stat('t','🏧','AePS settlement', money(sw.settlement), 'Pending sweep')}
-          ${UI.stat('g','💰','Commission', money(sw.commission), 'Net of TDS')}
-          ${UI.stat('p','💳','Today', money((s.today_amount_paise||0)/100), `<b>${s.today_count||0}</b> transactions`)}
-          ${UI.stat('t','📈','This month', money((s.month_amount_paise||0)/100), 'Successful value')}
-          ${UI.stat('o','🎯','Success rate', (s.success_rate??0)+'%', `<b>${s.success_count||0}</b> of ${s.total_count||0}`)}
+          ${UI.stat('b','👛','Wallet balance', money(wl.balance), `Available <b>${money(avail)}</b> · Held ${money(held)}`)}
+          ${UI.stat('p','💳','Today\'s business', money((s.today_amount_paise||0)/100), `<b>${s.today_count||0}</b> transactions`)}
+          ${UI.stat('g','💰','Commission', money(sw.commission), 'Sub-wallet · net of TDS')}
+          ${UI.stat('o','🎯','Success rate', (s.success_rate??0)+'%', `<b>${s.success_count||0}</b> of ${s.total_count||0} today`)}
         </div>
-        ${s.daily ? `<div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My volume — last 7 days</h2>
-          <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
-          ${Charts.area(s.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
-        <div class="sechead">Banking counter</div>
-        <div class="panel"><div class="row" style="flex-wrap:wrap;gap:8px">${quick}</div></div>
-        <div class="panel mt"><h2>Quick actions</h2>
-          <a class="btn sm" href="#/new">＋ New transaction</a> &nbsp;
-          <a class="btn sm ghost" href="#/addmoney">Add money</a> &nbsp;
-          <a class="btn sm ghost" href="#/wallet">Wallets &amp; sweep</a> &nbsp;
-          <a class="btn sm ghost" href="#/txns">View transactions</a></div>`;
+        <div class="dash-cols mt">
+          <div>
+            <div class="panel"><div class="row" style="justify-content:space-between"><h2>Services</h2>
+              <a class="btn sm" href="#/new">＋ New transaction</a></div>
+              ${svcTiles(SERVICES.map(x => x.key))}</div>
+            ${s.daily ? `<div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My volume — last 7 days</h2>
+              <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
+              ${Charts.area(s.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
+            <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Recent transactions</h2>
+              <a class="muted" style="font-size:12px" href="#/txns">View all →</a></div>
+              ${txnMiniRows(tx.items || [])}</div>
+          </div>
+          <div>
+            <div class="rail-card">
+              <div class="row" style="justify-content:space-between;align-items:baseline">
+                <span class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.4px">Available to withdraw</span>
+                <b style="font-size:20px">${money(avail)}</b></div>
+              <button class="btn sm" style="width:100%;justify-content:center;margin-top:12px" onclick="Actions.withdraw()">💸 Withdraw to bank</button>
+              <a class="btn sm ghost" style="width:100%;justify-content:center;margin-top:8px;box-sizing:border-box" href="#/addmoney">＋ Add money</a>
+            </div>
+            <div class="rail-card">
+              <div class="row" style="justify-content:space-between"><h2 style="margin:0;font-size:15px">Commission &amp; sweep</h2></div>
+              <div class="mini"><span class="mi">💰</span><div class="mm"><b>Commission wallet</b><span>Net of TDS</span></div><div class="ma comm-pos">${money(sw.commission)}</div></div>
+              <div class="mini"><span class="mi">🏧</span><div class="mm"><b>AePS settlement</b><span>Pending sweep</span></div><div class="ma">${money(sw.settlement)}</div></div>
+              <a class="btn sm ghost" style="width:100%;justify-content:center;margin-top:10px;box-sizing:border-box" href="#/wallet">Sweep to main wallet →</a>
+            </div>
+            <div class="rail-card">
+              <div class="row" style="justify-content:space-between"><h2 style="margin:0 0 6px;font-size:15px">Open disputes</h2>
+                <a class="muted" style="font-size:12px" href="#/mydisputes">All →</a></div>
+              ${disputeMiniRows(openDisputes)}
+              <button class="btn sm ghost" style="width:100%;justify-content:center;margin-top:10px;box-sizing:border-box" onclick="Actions.raiseDispute()">🎫 Raise a dispute by reference</button>
+            </div>
+          </div>
+        </div>`;
     }
   },
 
@@ -1402,6 +1462,37 @@ const SERVICES = [
     build: v => ({ category: v.category || 'health', insurer: v.insurer, customer_name: v.customer_name, amount: +v.amount }) },
 ];
 
+// ---------------- Dashboard helpers ----------------
+const SVC_ICON = {
+  recharge:'📱', dmt:'🏦', payout:'💸', upi:'🔷', bbps:'🧾', aeps:'👆', matm:'🏧',
+  aadhaar_pay:'🪪', card_swipe:'💳', cms:'💵', pan_card:'🆔', travel:'✈️', insurance:'🛡️',
+  wallet_transfer:'🔁', payment_gateway:'💳',
+};
+const svcIcon = (k) => SVC_ICON[k] || '💠';
+const svcLabel = (k) => (SERVICES.find(s => s.key === k)?.label) || String(k || '').replace(/_/g,' ');
+const timeAgo = (iso) => {
+  const s = Math.max(1, Math.floor((Date.now() - new Date(iso).getTime())/1000));
+  if (s < 60) return s+'s ago'; if (s < 3600) return Math.floor(s/60)+'m ago';
+  if (s < 86400) return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago';
+};
+// A row of service tiles linking into the New-transaction form.
+const svcTiles = (keys) => `<div class="svc-grid">${keys.map(k => {
+  const s = SERVICES.find(x => x.key === k); if (!s) return '';
+  return `<a class="svc-tile" href="#/new" onclick="Actions.presetSvc('${k}')"><span class="si">${svcIcon(k)}</span><b>${esc(s.label)}</b></a>`;
+}).join('')}</div>`;
+// Recent transactions as compact rows (from /transactions items).
+const txnMiniRows = (items) => items.length ? items.map(t => `<div class="mini">
+  <span class="mi">${svcIcon(t.service)}</span>
+  <div class="mm"><b>${esc(svcLabel(t.service))}</b><span class="mono">${esc(t.reference || '')}</span> · <span>${timeAgo(t.created_at)}</span></div>
+  <div class="ma">${money((t.amount_paise||0)/100)}<small>${UI.statusTag(t.status)}</small></div>
+</div>`).join('') : '<div class="muted" style="padding:10px 0">No transactions yet.</div>';
+// Open disputes as compact rows (from /disputes items).
+const disputeMiniRows = (items) => items.length ? items.map(d => `<div class="mini">
+  <span class="mi">🎫</span>
+  <div class="mm"><b>${esc(d.category ? String(d.category).replace(/_/g,' ') : 'Dispute')}</b><span>${esc(d.ticket_no||'')} · ${esc(d.reference||'')}</span></div>
+  <div class="ma"><small>${UI.statusTag(d.status)}</small></div>
+</div>`).join('') : '<div class="muted" style="padding:10px 0">No open disputes. 🎉</div>';
+
 // ---------------- Actions (buttons/forms) ----------------
 const Actions = {
   _bio: null,
@@ -2048,14 +2139,19 @@ const Actions = {
   addProvider(code) {
     UI.modal(`<h3>Add provider — ${esc(code)}</h3>
       <div class="field"><label>Label</label><input id="p_label" placeholder="Paysprint / RazorpayX"></div>
-      <div class="field"><label>Driver</label><select id="p_driver">
-        <option value="sandbox">sandbox (test)</option><option value="aggregator">aggregator (DMT/BBPS/recharge switch)</option>
+      <div class="field"><label>Driver</label><select id="p_driver" onchange="Actions.providerDriverHint()">
+        <option value="sandbox">sandbox (test)</option><option value="aggregator">aggregator (generic DMT/BBPS/recharge switch)</option>
+        <option value="aeronpay">AeronPay (payout, recharge, BBPS, DMT)</option>
+        <option value="eko">Eko (DMT, AEPS, BBPS, recharge)</option>
         <option value="razorpay">razorpay (payout/gateway)</option><option value="generic">generic</option></select></div>
-      <div class="field"><label>Base URL</label><input id="p_url" placeholder="https://api.provider.com"></div>
-      <div class="field"><label>API key</label><input id="p_key"></div>
-      <div class="field"><label>API secret</label><input id="p_secret"></div>
+      <p class="muted" id="p_hint" style="font-size:12px;margin:2px 0 0"></p>
+      <div class="field"><label>Base URL <span class="muted">(blank = provider default)</span></label><input id="p_url" placeholder="https://api.provider.com"></div>
+      <div class="field"><label id="p_key_l">API key</label><input id="p_key"></div>
+      <div class="field"><label id="p_secret_l">API secret</label><input id="p_secret"></div>
       <div class="field"><label>Auth token</label><input id="p_token"></div>
-      <div class="field"><label>Partner ID</label><input id="p_partner"></div>
+      <div class="field"><label id="p_partner_l">Partner ID</label><input id="p_partner"></div>
+      <div class="field"><label>Advanced config (JSON) <span class="muted">— e.g. Eko {"user_code":"..."} or path overrides</span></label>
+        <input id="p_extra" placeholder='{"user_code":"20810200","payout_path":"/payout/transfer"}'></div>
       <div class="field"><label>Callback secret (HMAC key for this provider's webhook)</label><input id="p_wsecret" placeholder="leave blank to use the global aggregator secret"></div>
       <div class="field"><label><input type="checkbox" id="p_active" checked> Make active (route through this)</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveProvider('${code}')">Add</button>
@@ -2069,8 +2165,22 @@ const Actions = {
     if (val('p_token')) body.auth_token = val('p_token');
     if (val('p_partner')) body.partner_id = val('p_partner');
     if (val('p_wsecret')) body.webhook_secret = val('p_wsecret');
+    const ex = val('p_extra');
+    if (ex) { try { body.extra = JSON.parse(ex); } catch { return UI.toast('Advanced config must be valid JSON', 'err'); } }
     try { await Api.post(`/admin/services/${code}/providers`, body); UI.closeModal(); UI.toast('Provider added'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  providerDriverHint() {
+    const d = val('p_driver');
+    const hints = {
+      aeronpay: ['AeronPay — headers client-id / client-secret.', 'API key = client-id', 'API secret = client-secret'],
+      eko: ['Eko — dynamic signed headers. Partner ID = initiator_id; put user_code in Advanced config.', 'API key = developer_key', 'API secret = access_key (used to sign each request)'],
+    };
+    const h = hints[d];
+    $('p_hint').textContent = h ? h[0] : '';
+    $('p_key_l').textContent = h ? h[1] : 'API key';
+    $('p_secret_l').textContent = h ? h[2] : 'API secret';
+    $('p_partner_l').textContent = d === 'eko' ? 'Partner ID (initiator_id)' : 'Partner ID';
   },
   editProviderSecret(id, label) {
     UI.modal(`<h3>Callback secret — ${esc(label)}</h3>

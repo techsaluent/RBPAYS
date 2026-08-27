@@ -166,11 +166,12 @@ async function aggregatorWebhookSecret(): Promise<string> {
 /** Map any provider status string to our three canonical states. */
 function normalizeStatus(raw: unknown): ProviderResult['status'] {
   const v = String(raw ?? '').toLowerCase().trim();
-  if (['success', 'successful', 'true', '1', 'completed', 'complete', 'processed', 'paid', 'settled', 'accepted'].includes(v))
+  if (['success', 'successful', 'true', '1', 'completed', 'complete', 'processed', 'paid', 'settled'].includes(v))
     return 'success';
   if (['failed', 'failure', 'fail', 'false', '0', 'rejected', 'reject', 'error', 'declined', 'reversed', 'refunded', 'bounced', 'cancelled', 'canceled'].includes(v))
     return 'failed';
-  return 'pending'; // pending | processing | initiated | queued | inprocess | 2 | unknown
+  // 'accepted' / 'queued' / 'initiated' / 'processing' are interim -> pending
+  return 'pending';
 }
 
 const pick = (o: Record<string, unknown>, keys: string[]): string | undefined => {
@@ -206,7 +207,7 @@ async function handleCallback(
   const raw = rawText(req);
   const body = JSON.parse(raw) as Record<string, unknown>;
   // Accept the many names aggregators use for the client reference / status.
-  const reference = pick(body, ['reference', 'client_ref', 'clientRef', 'client_reference', 'reference_id', 'referenceId', 'refid', 'ref', 'orderid', 'order_id', 'clientReferenceNo']);
+  const reference = pick(body, ['reference', 'client_ref', 'clientRef', 'client_reference', 'client_referenceId', 'client_reference_id', 'client_ref_id', 'reference_id', 'referenceId', 'refid', 'ref', 'orderid', 'order_id', 'clientReferenceNo']);
   const rawStatus = pick(body, ['status', 'txn_status', 'txnStatus', 'transaction_status', 'state', 'response_status']);
   if (!reference) throw ApiError.badRequest('Missing transaction reference in callback');
 
@@ -214,9 +215,9 @@ async function handleCallback(
   // the real service from the reference itself.
   const service = pick(body, ['service', 'type', 'service_code']) ?? providerTag;
   const status = normalizeStatus(rawStatus);
-  const providerRef = pick(body, ['provider_ref', 'providerRef', 'txnid', 'txn_id', 'transaction_id', 'operator_ref', 'operatorId', 'opid']);
-  const utr = pick(body, ['utr', 'bank_ref', 'bankRef', 'rrn', 'bank_utr']);
-  const message = pick(body, ['message', 'msg', 'remark', 'status_message', 'response_message']);
+  const providerRef = pick(body, ['provider_ref', 'providerRef', 'txnid', 'txn_id', 'transaction_id', 'transactionId', 'tid', 'opr_referenceId', 'operator_ref', 'operatorId', 'opid']);
+  const utr = pick(body, ['utr', 'bank_ref', 'bankRef', 'bank_ref_num', 'rrn', 'bank_utr']);
+  const message = pick(body, ['message', 'msg', 'remark', 'status_message', 'response_message', 'txstatus_desc', 'description']);
 
   const externalId = `${providerTag}:${reference}:${status}`;
   if (!(await recordEvent(providerTag, service, externalId, body))) {
