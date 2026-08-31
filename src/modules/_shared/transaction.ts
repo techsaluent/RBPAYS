@@ -7,6 +7,7 @@ import { assessTransaction } from '../risk/risk.service';
 import { settleByReference } from './settle';
 import { makeReference } from '../../utils/reference';
 import { ApiError } from '../../utils/ApiError';
+import { notifyLowBalance } from '../notify/alerts';
 import { ProviderResult } from '../../providers/types';
 
 export interface RunOptions {
@@ -163,6 +164,7 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
       : Math.max(0, opts.amountPaise + chargePaise - dist.retailerPaise); // debited now
 
   let ids: { serviceTxnId: string; masterId: string };
+  let debitedBalance: number | null = null;
   try {
     ids = await withTransaction(async (client) => {
       const serviceTxnId = await opts.insertServiceRow(client, { reference, chargePaise });
@@ -189,7 +191,7 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
       );
       // Debit flow reserves funds now; credit flow settles the wallet on success.
       if (flow === 'debit') {
-        await debit(client, {
+        debitedBalance = await debit(client, {
           userId: opts.userId,
           amountPaise: netPaise,
           source: opts.serviceCode as WalletSource,
@@ -207,6 +209,9 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
     }
     throw err;
   }
+
+  // Low-balance alert (best-effort) if this debit crossed the admin threshold.
+  if (debitedBalance != null) void notifyLowBalance(opts.userId, debitedBalance + netPaise, debitedBalance);
 
   // 3) Provider call + settle (outside the reserve transaction).
   const result = await opts.callProvider({ reference });

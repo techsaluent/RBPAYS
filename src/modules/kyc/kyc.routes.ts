@@ -7,6 +7,7 @@ import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
+import { notifyKyc } from '../notify/alerts';
 
 const router = Router();
 router.use(requireAuth);
@@ -70,7 +71,7 @@ router.get(
 );
 
 /** Recompute a user's overall KYC status from their documents. */
-async function recomputeUserKyc(client: import('pg').PoolClient, userId: string): Promise<void> {
+async function recomputeUserKyc(client: import('pg').PoolClient, userId: string): Promise<string> {
   const { rows } = await client.query<{ status: string; n: string }>(
     'SELECT status, COUNT(*) AS n FROM kyc_documents WHERE user_id = $1 GROUP BY status',
     [userId],
@@ -78,6 +79,7 @@ async function recomputeUserKyc(client: import('pg').PoolClient, userId: string)
   const byStatus = Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
   const next = byStatus.rejected ? 'rejected' : byStatus.verified ? 'verified' : 'pending';
   await client.query('UPDATE users SET kyc_status = $1 WHERE id = $2', [next, userId]);
+  return next;
 }
 
 // Approve / reject a KYC document (admin).
@@ -90,6 +92,7 @@ router.post(
     const b = req.body as z.infer<typeof reviewSchema>;
     const reviewerId = req.user.id;
 
+    let outcome = '';
     const document = await withTransaction(async (client) => {
       const { rows } = await client.query(
         'SELECT * FROM kyc_documents WHERE id = $1 FOR UPDATE',
@@ -104,9 +107,12 @@ router.post(
           WHERE id = $4 RETURNING *`,
         [b.status, b.remarks ?? null, reviewerId, doc.id],
       );
-      await recomputeUserKyc(client, doc.user_id);
+      outcome = await recomputeUserKyc(client, doc.user_id);
       return updated[0];
     });
+
+    // Notify the member when their overall KYC becomes verified / rejected.
+    if (outcome === 'verified' || outcome === 'rejected') void notifyKyc(document.user_id as string, outcome);
 
     await logAudit({ actorId: reviewerId, actorRole: req.user.role, action: 'kyc.review',
       targetType: 'kyc', targetId: document.id, detail: { status: b.status, remarks: b.remarks ?? null, user_id: document.user_id } });
