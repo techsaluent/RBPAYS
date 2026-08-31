@@ -18,7 +18,7 @@ import { createMember } from '../members/members.service';
 import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
 import { refreshProviderRegistry } from '../../providers/registry';
-import { dryRunDynamic } from '../../providers/dynamic';
+import { dryRunDynamic, liveTestDynamic } from '../../providers/dynamic';
 import { draftProviderConfig } from '../ai/ai.service';
 import { postJournal } from '../_shared/ledger';
 import { runReconciliation, MisRow } from '../recon/recon.service';
@@ -1619,6 +1619,7 @@ const providerTestSchema = z.object({
     })
     .optional(),
   sample: z.record(z.string()).optional(),
+  live: z.boolean().optional(), // true = actually call the provider (test data)
 });
 router.post(
   '/integrations/provider-test',
@@ -1631,19 +1632,24 @@ router.post(
       mode: 'IMPS', operator: 'Jio', number: '9812345678', recharge_type: 'prepaid',
       biller_id: 'MSEB00000MAH01', consumer_number: '180012345678', category: 'electricity', vpa: 'test@okhdfcbank',
     };
-    const result = dryRunDynamic(
-      {
-        baseUrl: b.creds?.base_url ?? '',
-        apiKey: b.creds?.api_key ?? '',
-        apiSecret: b.creds?.api_secret ?? '',
-        authToken: b.creds?.auth_token ?? '',
-        partnerId: b.creds?.partner_id ?? '',
-        extra: b.config,
-      },
-      b.service,
-      { ...defaults, ...(b.sample ?? {}) },
-    );
-    res.json(result);
+    const cred = {
+      baseUrl: b.creds?.base_url ?? '',
+      apiKey: b.creds?.api_key ?? '',
+      apiSecret: b.creds?.api_secret ?? '',
+      authToken: b.creds?.auth_token ?? '',
+      partnerId: b.creds?.partner_id ?? '',
+      extra: b.config,
+    };
+    const sample = { ...defaults, ...(b.sample ?? {}) };
+    // A live test sends a REAL request to the provider — validate the mapping
+    // (dry run) first so we never fire a call that obviously can't work.
+    const dry = dryRunDynamic(cred, b.service, sample);
+    if (!b.live || !dry.ok) {
+      res.json({ live: false, ...dry });
+      return;
+    }
+    const result = await liveTestDynamic(cred, b.service, sample);
+    res.json({ live: true, request: { url: dry.url, method: dry.method }, result });
   }),
 );
 

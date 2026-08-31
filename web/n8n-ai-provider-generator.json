@@ -1,0 +1,75 @@
+{
+  "name": "TutiPays — AI Provider Config Generator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tutipays-ai-provider",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-in",
+      "name": "TutiPays Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300],
+      "webhookId": "tutipays-ai-provider"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'llama-3.3-70b-versatile', temperature: 0, messages: [ { role: 'system', content: $json.body.schema_prompt }, { role: 'user', content: 'Services to map: ' + ($json.body.services || []).join(', ') + '\\n\\nProvider API documentation:\\n' + ($json.body.docs || '') } ] }) }}",
+        "options": {}
+      },
+      "id": "llm-call",
+      "name": "Free AI (OpenAI-compatible)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300],
+      "notes": "Set the URL + model to any free OpenAI-compatible endpoint (Groq, OpenRouter free tier, a self-hosted Ollama, etc.). Add an httpHeaderAuth credential 'Authorization: Bearer <key>'. The model is just a string — update it when your free model changes."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pull the JSON object out of the model's reply and return it as { config }.\nconst text = $json.choices?.[0]?.message?.content || '';\nconst fenced = text.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\nconst body = fenced ? fenced[1] : text;\nconst s = body.indexOf('{');\nconst e = body.lastIndexOf('}');\nlet config = null;\nif (s >= 0 && e > s) { try { config = JSON.parse(body.slice(s, e + 1)); } catch (err) {} }\nreturn [{ json: { config } }];"
+      },
+      "id": "extract-json",
+      "name": "Extract config JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ config: $json.config }) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Return to TutiPays",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1040, 300]
+    }
+  ],
+  "connections": {
+    "TutiPays Webhook": { "main": [[{ "node": "Free AI (OpenAI-compatible)", "type": "main", "index": 0 }]] },
+    "Free AI (OpenAI-compatible)": { "main": [[{ "node": "Extract config JSON", "type": "main", "index": 0 }]] },
+    "Extract config JSON": { "main": [[{ "node": "Return to TutiPays", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "meta": {
+    "description": "Receives {task, services, schema_prompt, docs} from the TutiPays AI Integration Studio (n8n mode), asks a free OpenAI-compatible model to draft a dynamic-driver config, and returns { config }. Import into n8n, set the HTTP Request node's URL/model + Authorization credential, activate, then paste this webhook's Production URL into TutiPays → AI Integration Studio (mode: n8n webhook)."
+  }
+}

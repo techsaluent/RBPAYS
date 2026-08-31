@@ -1401,6 +1401,10 @@ const Screens = {
         </div>
         <button class="btn" onclick="Actions.aiSaveModel()">Save AI settings</button>
         <span class="muted" style="margin-left:10px;font-size:12px">${ai?.is_active?'✅ AI is configured':'Not configured — the studio will still give you a fillable template.'}</span>
+        <div class="msg" style="margin-top:12px;background:#eef2ff">
+          🧩 <b>Using n8n with a free model?</b> Import our ready-made workflow, set its model + key, activate it, and paste its Production webhook URL above (mode: n8n).
+          <a href="/n8n-ai-provider-generator.json" download style="margin-left:6px">Download n8n workflow →</a>
+        </div>
       </div>
 
       <div class="panel mt"><h2>Build a provider from its API docs</h2>
@@ -2205,8 +2209,10 @@ const Actions = {
         <div class="row" style="gap:8px">
           <select id="ai_testsvc" style="max-width:160px">${services.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
           <button class="btn sm ghost" onclick="Actions.aiTest()">🧪 Test mapping</button>
+          <button class="btn sm ghost" onclick="Actions.aiLiveTest()">🔴 Live call</button>
           <button class="btn" onclick="Actions.aiSaveProvider()">💾 Save &amp; activate provider</button>
         </div>
+        <p class="muted" style="font-size:11.5px;margin:6px 0 0">🔴 <b>Live call</b> sends a real request to the provider with test data — use sandbox / UAT credentials.</p>
         <div id="ai_test"></div>`;
     } catch (err) { UI.toast(err.message, 'err'); }
   },
@@ -2223,6 +2229,30 @@ const Actions = {
         ${r.url?`<div class="mono" style="font-size:12px;margin-top:8px"><b>${esc(r.method)}</b> ${esc(r.url)}</div>
         <div class="muted" style="font-size:12px;margin-top:6px">Headers: <span class="mono">${esc(JSON.stringify(r.headers))}</span></div>
         <pre style="background:#111;color:#eee;border-radius:8px;padding:10px;overflow:auto;font-size:12px;margin-top:8px">${esc(JSON.stringify(r.body, null, 2))}</pre>`:''}</div>`;
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async aiLiveTest() {
+    const config = this._parseAiJson(); if (!config) return;
+    const body = { service: val('ai_testsvc'), live: true, config, creds: {
+      base_url: '', api_key: val('ai_ckey'), api_secret: val('ai_csecret'), auth_token: val('ai_ctoken'), partner_id: val('ai_cpartner') } };
+    UI.toast('Calling provider…');
+    try {
+      const r = await Api.post('/admin/integrations/provider-test', body);
+      if (!r.live) { // mapping failed validation — show the same problems view
+        $('ai_test').innerHTML = `<div class="panel mt" style="background:#fef7e0"><b>⚠️ Fix the mapping first</b>
+          <ul>${(r.problems||[]).map(p=>`<li>${esc(p)}</li>`).join('')}</ul></div>`;
+        return;
+      }
+      const st = r.result?.status || 'pending';
+      $('ai_test').innerHTML = `<div class="panel mt" style="background:${st==='success'?'#f0fbf4':st==='failed'?'#fdecea':'#fef7e0'}">
+        <b>🔴 Live provider response</b> &nbsp; ${UI.statusTag(st)}
+        <div class="mono" style="font-size:12px;margin-top:8px">${esc(r.request?.method||'POST')} ${esc(r.request?.url||'')}</div>
+        <div style="font-size:12.5px;margin-top:8px">
+          ${r.result?.providerRef?`Provider ref: <b class="mono">${esc(r.result.providerRef)}</b><br>`:''}
+          ${r.result?.utr?`UTR: <b class="mono">${esc(r.result.utr)}</b><br>`:''}
+          ${r.result?.message?`Message: ${esc(r.result.message)}`:''}
+        </div>
+        <pre style="background:#111;color:#eee;border-radius:8px;padding:10px;overflow:auto;font-size:12px;margin-top:8px">${esc(JSON.stringify(r.result?.raw ?? {}, null, 2))}</pre></div>`;
     } catch (err) { UI.toast(err.message, 'err'); }
   },
   async aiSaveProvider() {

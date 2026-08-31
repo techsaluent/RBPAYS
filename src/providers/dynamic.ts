@@ -88,8 +88,18 @@ function resolve(tpl: unknown, vars: Record<string, string>): unknown {
   return tpl;
 }
 
+/** The credential subset a dynamic call needs (ActiveProvider satisfies it). */
+export interface DynCred {
+  baseUrl: string;
+  apiKey: string;
+  apiSecret: string;
+  authToken: string;
+  partnerId: string;
+  extra: Record<string, unknown>;
+}
+
 /** Credential + extra placeholders available to every template. */
-function credVars(c: ActiveProvider): Record<string, string> {
+function credVars(c: DynCred): Record<string, string> {
   const v: Record<string, string> = {
     api_key: c.apiKey, api_secret: c.apiSecret, auth_token: c.authToken, partner_id: c.partnerId,
   };
@@ -99,7 +109,7 @@ function credVars(c: ActiveProvider): Record<string, string> {
   return v;
 }
 
-function buildHeaders(cfg: DynamicCfg, c: ActiveProvider, vars: Record<string, string>): Record<string, string> {
+function buildHeaders(cfg: DynamicCfg, c: DynCred, vars: Record<string, string>): Record<string, string> {
   const auth = cfg.auth || {};
   if (auth.type === 'bearer') return { Authorization: `Bearer ${c.authToken || c.apiKey}` };
   const h: Record<string, string> = {};
@@ -115,9 +125,8 @@ function mapStatus(cfg: DynamicServiceCfg, raw: unknown): ProviderResult['status
   return 'pending';
 }
 
-async function run(service: string, extraVars: Record<string, string>, providerId?: string): Promise<ProviderResult> {
-  const c = activeConfig(service, providerId);
-  if (!c) return { status: 'pending', message: 'dynamic provider not active' };
+/** Core: execute one dynamic call against a provider (used live and in tests). */
+async function execDynamic(c: DynCred, service: string, extraVars: Record<string, string>): Promise<ProviderResult> {
   const cfg = (c.extra || {}) as DynamicCfg;
   const svc = cfg.services?.[service];
   if (!svc || !svc.path) return { status: 'failed', message: `dynamic config missing for ${service}` };
@@ -149,6 +158,21 @@ async function run(service: string, extraVars: Record<string, string>, providerI
     }
     return { status: 'pending', message: (err as Error).message };
   }
+}
+
+async function run(service: string, extraVars: Record<string, string>, providerId?: string): Promise<ProviderResult> {
+  const c = activeConfig(service, providerId);
+  if (!c) return { status: 'pending', message: 'dynamic provider not active' };
+  return execDynamic(c, service, extraVars);
+}
+
+/**
+ * Live self-test: run the config against the provider for real (test data) and
+ * return the mapped result — so an admin can confirm a new integration works
+ * before activating it, without creating a wallet transaction.
+ */
+export function liveTestDynamic(c: DynCred, service: string, sample: Record<string, string>): Promise<ProviderResult> {
+  return execDynamic(c, service, sample);
 }
 
 /** Amount string per the provider's `amount` unit (default rupees). */
@@ -209,7 +233,7 @@ export const dynamicGeneric: GenericServiceProvider = {
  * URL, headers and body, plus any config problems.
  */
 export function dryRunDynamic(
-  c: { baseUrl: string; apiKey: string; apiSecret: string; authToken: string; partnerId: string; extra: Record<string, unknown> },
+  c: DynCred,
   service: string,
   sample: Record<string, string>,
 ): { ok: boolean; problems: string[]; url?: string; method?: string; headers?: Record<string, string>; body?: unknown } {
@@ -221,8 +245,7 @@ export function dryRunDynamic(
   if (!svc.request) problems.push('Missing "request" field map.');
   if (!svc.status_field) problems.push('Missing "status_field" (where to read the provider status).');
   if (!svc.success?.length) problems.push('Missing "success" status values.');
-  const ac = { ...(c as unknown as ActiveProvider) };
-  const vars = { ...credVars(ac), ...sample };
+  const vars = { ...credVars(c), ...sample };
   const base = (cfg.base_url || c.baseUrl || '').replace(/\/+$/, '');
   const mask = (h: Record<string, string>) => Object.fromEntries(Object.entries(h).map(([k, v]) => [k, v && v.length > 6 ? v.slice(0, 3) + '••••' : '••••']));
   return {
@@ -230,7 +253,7 @@ export function dryRunDynamic(
     problems,
     url: base + fill(svc.path || '', vars),
     method: svc.method || 'POST',
-    headers: mask(buildHeaders(cfg, ac, vars)),
+    headers: mask(buildHeaders(cfg, c, vars)),
     body: resolve(svc.request ?? {}, vars),
   };
 }
