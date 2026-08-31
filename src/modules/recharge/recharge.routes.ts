@@ -31,6 +31,31 @@ const listSchema = z.object({
   status: z.enum(['pending', 'success', 'failed', 'refunded']).optional(),
 });
 
+// Operator catalog — feeds the recharge form's operator dropdown.
+router.get(
+  '/operators',
+  validate(z.object({ type: z.enum(['prepaid', 'postpaid', 'dth']).optional() }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { type?: string };
+    const { rows } = await query(
+      `SELECT code, name, type FROM operators
+        WHERE enabled = true AND ($1::text IS NULL OR type = $1)
+        ORDER BY type, sort_order, name`,
+      [q.type ?? null],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+// Telecom circles — feeds the circle dropdown for prepaid/postpaid.
+router.get(
+  '/circles',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT code, name FROM telecom_circles WHERE enabled = true ORDER BY name');
+    res.json({ items: rows });
+  }),
+);
+
 // Do a recharge: debit wallet (amount + charge), record it.
 router.post(
   '/',

@@ -258,6 +258,7 @@ const NAV = [
   { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'catalog', label: 'Operator & Biller Catalog', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'webhooks', label: 'Webhook Log', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'aistudio', label: '🤖 AI Integration Studio', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
@@ -1692,6 +1693,35 @@ const Screens = {
       <thead><tr><th>Label</th><th>Driver</th><th>Base URL</th><th>Active</th><th>Key</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=6 class=muted>No providers — add one</td></tr>'}</tbody></table></div></div>`;
   },
+
+  // Admin: recharge operator + BBPS biller catalog. Members' dropdowns read
+  // the enabled rows here — manage the lists without a deploy.
+  async catalog() {
+    const [ops, bills] = await Promise.all([Api.get('/admin/operators'), Api.get('/admin/billers')]);
+    const orow = (ops.items || []).map(o => `<tr>
+      <td class="mono">${esc(o.code)}</td><td>${esc(o.name)}</td><td>${esc(o.type)}</td>
+      <td>${o.enabled ? '<span class="tag active">on</span>' : '<span class="tag">off</span>'}</td>
+      <td class="right">
+        <button class="btn sm ghost" onclick="Actions.toggleOperator('${esc(o.code)}',${!o.enabled})">${o.enabled?'Disable':'Enable'}</button>
+        <button class="btn sm ghost" onclick="Actions.delOperator('${esc(o.code)}')">Delete</button></td></tr>`).join('');
+    const brow = (bills.items || []).map(b => `<tr>
+      <td class="mono">${esc(b.biller_id)}</td><td>${esc(b.name)}</td><td>${esc(b.category)}</td><td>${esc(b.coverage||'')}</td>
+      <td>${b.enabled ? '<span class="tag active">on</span>' : '<span class="tag">off</span>'}</td>
+      <td class="right">
+        <button class="btn sm ghost" onclick="Actions.toggleBiller('${esc(b.biller_id)}',${!b.enabled})">${b.enabled?'Disable':'Enable'}</button>
+        <button class="btn sm ghost" onclick="Actions.delBiller('${esc(b.biller_id)}')">Delete</button></td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Recharge operators</h2>
+        <button class="btn sm" onclick="Actions.addOperator()">+ Add operator</button></div>
+        <p class="muted">Prepaid / postpaid / DTH operators shown to members on the Recharge form.</p>
+        <div class="tbl-wrap"><table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Status</th><th></th></tr></thead>
+        <tbody>${orow || '<tr><td colspan=5 class=muted>No operators</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between"><h2 style="margin:0">BBPS billers</h2>
+        <button class="btn sm" onclick="Actions.addBiller()">+ Add biller</button></div>
+        <p class="muted">Biller directory shown on the BBPS form, grouped by category.</p>
+        <div class="tbl-wrap"><table><thead><tr><th>Biller ID</th><th>Name</th><th>Category</th><th>Coverage</th><th>Status</th><th></th></tr></thead>
+        <tbody>${brow || '<tr><td colspan=6 class=muted>No billers</td></tr>'}</tbody></table></div></div>`;
+  },
 };
 
 // ---------------- Service definitions for the "New transaction" form ----------------
@@ -1700,7 +1730,7 @@ const SERVICES = [
     ['recharge_type', 'Type', 'select', ['prepaid', 'postpaid', 'dth']],
     ['operator', 'Operator', 'select', ['Jio', 'Airtel', 'Vi', 'BSNL', 'Tata Play (DTH)', 'Dish TV (DTH)', 'Airtel Digital TV (DTH)', 'd2h (DTH)', 'Sun Direct (DTH)']],
     ['number', 'Mobile / DTH number', 'text'], ['amount', 'Amount', 'number'] ],
-    build: v => ({ operator: v.operator, number: v.number, amount: +v.amount, recharge_type: v.recharge_type || 'prepaid' }) },
+    build: v => ({ operator: v.operator, number: v.number, amount: +v.amount, recharge_type: v.recharge_type || 'prepaid', ...(v.circle ? { circle: v.circle } : {}) }) },
   { key: 'dmt', label: 'DMT (bank transfer)', path: '/dmt', provider: true, fields: [
     ['beneficiary_name', 'Beneficiary name', 'text'], ['account_number', 'Account number', 'text'],
     ['ifsc', 'IFSC', 'text'], ['amount', 'Amount', 'number'] ],
@@ -1839,7 +1869,39 @@ const Actions = {
           <div class="field" id="bbps_biller_wrap" style="display:none"><label>Biller</label>
           <select id="bbps_biller" onchange="document.querySelector('#svc-fields [name=biller_id]').value=this.value"></select></div>`;
       } catch { box.innerHTML = ''; }
+    } else if (key === 'recharge') {
+      // Feed the operator + circle dropdowns from the live catalog, and keep
+      // the operator list in sync with the prepaid/postpaid/dth type.
+      await Actions.loadOperators();
+      const typeSel = document.querySelector('#svc-fields [name=recharge_type]');
+      if (typeSel) typeSel.addEventListener('change', () => Actions.loadOperators());
+      box.innerHTML = '';
     } else { box.innerHTML = ''; }
+  },
+  // Replace the recharge operator <select> with catalog options for the chosen
+  // type, and add a Circle dropdown from the catalog.
+  async loadOperators() {
+    const opSel = document.querySelector('#svc-fields [name=operator]');
+    if (!opSel) return;
+    const type = (document.querySelector('#svc-fields [name=recharge_type]') || {}).value || 'prepaid';
+    try {
+      const d = await Api.get('/recharge/operators?type=' + encodeURIComponent(type));
+      opSel.innerHTML = (d.items || []).map(o => `<option value="${esc(o.name)}">${esc(o.name)}</option>`).join('')
+        || '<option value="">No operators</option>';
+    } catch { /* leave the static options */ }
+    // Circle only applies to prepaid/postpaid; render/remove a Circle select.
+    const opField = opSel.closest('.field');
+    let circleField = document.getElementById('rch_circle_field');
+    if (type === 'dth') { if (circleField) circleField.remove(); return; }
+    if (!circleField && opField) {
+      try {
+        const c = await Api.get('/recharge/circles');
+        const opts = ['<option value="">— circle (optional) —</option>']
+          .concat((c.items || []).map(x => `<option value="${esc(x.name)}">${esc(x.name)}</option>`)).join('');
+        opField.insertAdjacentHTML('afterend',
+          `<div class="field" id="rch_circle_field"><label>Circle</label><select name="circle">${opts}</select></div>`);
+      } catch { /* no circle field */ }
+    }
   },
   fillBeneficiary(sel) {
     const o = sel.selectedOptions[0]; if (!o || !o.value) return;
@@ -2760,6 +2822,64 @@ const Actions = {
   },
   async deactivateProvider(id) {
     try { await Api.post(`/admin/providers/${id}/deactivate`, {}); UI.toast('Deactivated'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- catalog: operators -----
+  addOperator() {
+    UI.modal(`<h3>Add / update operator</h3>
+      <div class="field"><label>Code (A-Z, 0-9, _)</label><input id="op_code" placeholder="JIO"></div>
+      <div class="field"><label>Name</label><input id="op_name" placeholder="Jio"></div>
+      <div class="field"><label>Type</label><select id="op_type"><option value="prepaid">prepaid</option><option value="postpaid">postpaid</option><option value="dth">dth</option></select></div>
+      <div class="row mt" style="justify-content:flex-end;gap:8px"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+        <button class="btn" onclick="Actions.saveOperator()">Save</button></div>`);
+  },
+  async saveOperator() {
+    const body = { code: val('op_code').toUpperCase(), name: val('op_name'), type: val('op_type') };
+    if (!/^[A-Z0-9_]+$/.test(body.code) || !body.name) return UI.toast('Enter a code and name', 'err');
+    try { await Api.post('/admin/operators', body); UI.closeModal(); UI.toast('Operator saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async toggleOperator(code, enabled) {
+    // Re-send the row with the flipped enabled flag (upsert).
+    try {
+      const d = await Api.get('/admin/operators');
+      const o = (d.items || []).find(x => x.code === code); if (!o) return;
+      await Api.post('/admin/operators', { code: o.code, name: o.name, type: o.type, enabled, sort_order: o.sort_order });
+      UI.toast(enabled ? 'Enabled' : 'Disabled'); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async delOperator(code) {
+    if (!confirm('Delete operator ' + code + '?')) return;
+    try { await Api.del('/admin/operators/' + encodeURIComponent(code)); UI.toast('Deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- catalog: billers -----
+  addBiller() {
+    UI.modal(`<h3>Add / update biller</h3>
+      <div class="field"><label>Biller ID</label><input id="bl_id" placeholder="ELEC-UPPCL"></div>
+      <div class="field"><label>Name</label><input id="bl_name" placeholder="UPPCL Uttar Pradesh"></div>
+      <div class="field"><label>Category</label><input id="bl_cat" placeholder="electricity"></div>
+      <div class="field"><label>Coverage</label><select id="bl_cov"><option value="national">national</option><option value="state">state</option></select></div>
+      <div class="row mt" style="justify-content:flex-end;gap:8px"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+        <button class="btn" onclick="Actions.saveBiller()">Save</button></div>`);
+  },
+  async saveBiller() {
+    const body = { biller_id: val('bl_id'), name: val('bl_name'), category: val('bl_cat'), coverage: val('bl_cov') };
+    if (!body.biller_id || !body.name || !body.category) return UI.toast('Fill ID, name and category', 'err');
+    try { await Api.post('/admin/billers', body); UI.closeModal(); UI.toast('Biller saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async toggleBiller(id, enabled) {
+    try {
+      const d = await Api.get('/admin/billers');
+      const b = (d.items || []).find(x => x.biller_id === id); if (!b) return;
+      await Api.post('/admin/billers', { biller_id: b.biller_id, name: b.name, category: b.category, coverage: b.coverage || 'national', enabled });
+      UI.toast(enabled ? 'Enabled' : 'Disabled'); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async delBiller(id) {
+    if (!confirm('Delete biller ' + id + '?')) return;
+    try { await Api.del('/admin/billers/' + encodeURIComponent(id)); UI.toast('Deleted'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async activateProvider(id) {

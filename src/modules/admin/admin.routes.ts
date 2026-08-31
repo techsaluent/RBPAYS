@@ -2079,6 +2079,83 @@ router.delete(
   }),
 );
 
+// ---- Catalog: recharge operators + BBPS billers ---------------------------
+// Admin manages the recharge operator list and the biller directory without a
+// deploy; members' dropdowns read the enabled rows.
+router.get(
+  '/operators',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT code, name, type, enabled, sort_order FROM operators ORDER BY type, sort_order, name');
+    res.json({ items: rows });
+  }),
+);
+const operatorSchema = z.object({
+  code: z.string().trim().min(1).max(40).regex(/^[A-Z0-9_]+$/, 'Code: A-Z, 0-9, _'),
+  name: z.string().trim().min(1).max(80),
+  type: z.enum(['prepaid', 'postpaid', 'dth']),
+  enabled: z.boolean().default(true),
+  sort_order: z.coerce.number().int().min(0).max(999).default(0),
+});
+router.post(
+  '/operators',
+  validate(operatorSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof operatorSchema>;
+    const { rows } = await query(
+      `INSERT INTO operators (code, name, type, enabled, sort_order) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type,
+         enabled = EXCLUDED.enabled, sort_order = EXCLUDED.sort_order RETURNING *`,
+      [b.code, b.name, b.type, b.enabled, b.sort_order],
+    );
+    res.json({ operator: rows[0] });
+  }),
+);
+router.delete(
+  '/operators/:code',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('DELETE FROM operators WHERE code = $1', [req.params.code]);
+    if (!rowCount) throw ApiError.notFound('Operator not found');
+    res.status(204).send();
+  }),
+);
+
+router.get(
+  '/billers',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT biller_id, name, category, coverage, enabled FROM billers ORDER BY category, name');
+    res.json({ items: rows });
+  }),
+);
+const billerSchema = z.object({
+  biller_id: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(120),
+  category: z.string().trim().min(1).max(40),
+  coverage: z.enum(['national', 'state']).default('national'),
+  enabled: z.boolean().default(true),
+});
+router.post(
+  '/billers',
+  validate(billerSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof billerSchema>;
+    const { rows } = await query(
+      `INSERT INTO billers (biller_id, name, category, coverage, enabled) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (biller_id) DO UPDATE SET name = EXCLUDED.name, category = EXCLUDED.category,
+         coverage = EXCLUDED.coverage, enabled = EXCLUDED.enabled RETURNING *`,
+      [b.biller_id, b.name, b.category, b.coverage, b.enabled],
+    );
+    res.json({ biller: rows[0] });
+  }),
+);
+router.delete(
+  '/billers/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('DELETE FROM billers WHERE biller_id = $1', [req.params.id]);
+    if (!rowCount) throw ApiError.notFound('Biller not found');
+    res.status(204).send();
+  }),
+);
+
 // Go-live pre-flight: verify a saved provider's config + endpoint reachability
 // WITHOUT running a real transaction. Safe to run before activating live keys.
 router.post(
