@@ -33,6 +33,7 @@ import {
 } from './aggregator';
 import { aeronpayBbps, aeronpayDmt, aeronpayPayout, aeronpayRecharge } from './aeronpay';
 import { ekoAeps, ekoBbps, ekoDmt, ekoGeneric, ekoRecharge } from './eko';
+import { dynamicBbps, dynamicDmt, dynamicGeneric, dynamicPayout, dynamicRecharge } from './dynamic';
 import { activeDriver } from './registry';
 
 /**
@@ -54,6 +55,8 @@ export function getDmtProvider(providerId?: string): DmtProvider {
       return aeronpayDmt;
     case 'eko':
       return ekoDmt;
+    case 'dynamic':
+      return dynamicDmt;
     default:
       return sandboxDmt;
   }
@@ -67,6 +70,8 @@ export function getBbpsProvider(providerId?: string): BbpsProvider {
       return aeronpayBbps;
     case 'eko':
       return ekoBbps;
+    case 'dynamic':
+      return dynamicBbps;
     default:
       return sandboxBbps;
   }
@@ -80,6 +85,8 @@ export function getRechargeProvider(providerId?: string): RechargeProvider {
       return aeronpayRecharge;
     case 'eko':
       return ekoRecharge;
+    case 'dynamic':
+      return dynamicRecharge;
     default:
       return sandboxRecharge;
   }
@@ -91,6 +98,8 @@ export function getPayoutProvider(providerId?: string): PayoutProvider {
       return razorpayPayout;
     case 'aeronpay':
       return aeronpayPayout;
+    case 'dynamic':
+      return dynamicPayout;
     default:
       return sandboxPayout;
   }
@@ -133,6 +142,8 @@ export function getGenericProvider(service: string, providerId?: string): Generi
       return aggregatorGeneric;
     case 'eko':
       return ekoGeneric;
+    case 'dynamic':
+      return dynamicGeneric;
     default:
       return sandboxGeneric;
   }

@@ -224,6 +224,7 @@ const NAV = [
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'webhooks', label: 'Webhook Log', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
+  { key: 'aistudio', label: '🤖 AI Integration Studio', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
   { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
   { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
@@ -1376,6 +1377,42 @@ const Screens = {
       <tbody>${rows}</tbody></table></div></div>`;
   },
 
+  // Admin: AI Integration Studio — draft a config-driven provider from docs,
+  // self-test the mapping, then save & activate. No developer, no code deploy.
+  async aistudio() {
+    const svcs = await Api.get('/admin/services').catch(() => ({ items: [] }));
+    const ints = await Api.get('/admin/integrations').catch(() => ({ items: [] }));
+    const ai = (ints.items || []).find(i => i.key === 'ai_coder');
+    const codes = (svcs.items || []).map(s => s.code);
+    const svcChecks = codes.map(c => `<label style="display:inline-flex;align-items:center;gap:5px;margin:2px 8px 2px 0;font-size:13px">
+      <input type="checkbox" class="ai_svc" value="${esc(c)}" ${['payout','recharge','bbps','dmt'].includes(c)?'checked':''}> ${esc(c)}</label>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><h2>🤖 AI model</h2>
+        <p class="muted">Point this at any OpenAI-compatible endpoint <b>or</b> an n8n webhook that runs a free model. The model name is just text — when your free model updates, change it here. In n8n mode the model lives in your workflow.</p>
+        <div class="row">
+          <div class="field"><label>Mode</label><select id="ai_mode">
+            <option value="openai" ${ai&&ai.provider==='n8n'?'':'selected'}>OpenAI-compatible</option>
+            <option value="n8n" ${ai&&ai.provider==='n8n'?'selected':''}>n8n webhook (free AI)</option></select></div>
+          <div class="field" style="flex:2;min-width:260px"><label>Base URL / n8n webhook</label><input id="ai_url" value="${esc(ai?.base_url||'')}" placeholder="https://api.groq.com/openai/v1  or  https://n8n.you/webhook/ai"></div>
+        </div>
+        <div class="row">
+          <div class="field" style="flex:2"><label>API key ${ai?.has_key?'<span class="tag active">set</span>':''}</label><input id="ai_key" type="password" placeholder="${ai?.has_key?'•••••• (leave blank to keep)':'Bearer key (optional for open n8n)'}"></div>
+          <div class="field"><label>Model</label><input id="ai_model" value="${esc(ai?.provider && ai.provider!=='n8n' ? ai.provider : '')}" placeholder="llama-3.3-70b-versatile"></div>
+        </div>
+        <button class="btn" onclick="Actions.aiSaveModel()">Save AI settings</button>
+        <span class="muted" style="margin-left:10px;font-size:12px">${ai?.is_active?'✅ AI is configured':'Not configured — the studio will still give you a fillable template.'}</span>
+      </div>
+
+      <div class="panel mt"><h2>Build a provider from its API docs</h2>
+        <p class="muted">Paste the provider's API documentation, choose the services, and generate a ready-to-test integration config — no code.</p>
+        <div class="field"><label>Services to map</label><div>${svcChecks || '<span class="muted">No services</span>'}</div></div>
+        <div class="field"><label>Paste API docs / sample request &amp; response</label>
+          <textarea id="ai_docs" rows="8" style="width:100%;font-family:ui-monospace,monospace;font-size:12px" placeholder="Base URL, auth headers, endpoint paths, request fields, response fields, status values…"></textarea></div>
+        <button class="btn" onclick="Actions.aiDraft()">✨ Generate config</button>
+        <div id="ai_out"></div>
+      </div>`;
+  },
+
   // Admin: manage upstream providers per service (multiple, one active).
   async providers() {
     const svcs = await Api.get('/admin/services');
@@ -2135,6 +2172,76 @@ const Actions = {
   },
 
   // ----- service providers (admin) -----
+  // ----- AI Integration Studio -----
+  async aiSaveModel() {
+    const mode = val('ai_mode'), url = val('ai_url'), key = val('ai_key'), model = val('ai_model') || 'gpt-4o-mini';
+    if (!url) return UI.toast('Enter the endpoint / n8n URL', 'err');
+    const body = { category: 'other', label: 'AI coder', base_url: url, provider: mode === 'n8n' ? 'n8n' : model,
+      extra: { mode, model }, is_active: true };
+    if (key) body.api_key = key;
+    try { await Api.put('/admin/integrations/ai_coder', body); UI.toast('AI settings saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async aiDraft() {
+    const services = [...document.querySelectorAll('.ai_svc:checked')].map(x => x.value);
+    if (!services.length) return UI.toast('Pick at least one service', 'err');
+    const docs = val('ai_docs');
+    UI.toast('Generating…');
+    try {
+      const d = await Api.post('/admin/integrations/ai-draft', { docs, services });
+      Actions._aiCfg = d.config;
+      const src = d.source === 'ai' ? `✨ Generated by AI (${esc(d.model||'model')})` : '📝 Fillable template (configure AI above for auto-generation)';
+      $('ai_out').innerHTML = `
+        <div class="msg" style="margin-top:12px">${src}. Review &amp; edit the config, test the mapping, then save.</div>
+        <div class="field"><label>Provider label</label><input id="ai_plabel" placeholder="e.g. MyAggregator" style="max-width:320px"></div>
+        <div class="row">
+          <div class="field"><label>API key (client-id / developer_key)</label><input id="ai_ckey"></div>
+          <div class="field"><label>API secret</label><input id="ai_csecret"></div>
+          <div class="field"><label>Auth token</label><input id="ai_ctoken"></div>
+          <div class="field"><label>Partner ID</label><input id="ai_cpartner"></div>
+        </div>
+        <div class="field"><label>Config (JSON) — the whole integration, editable</label>
+          <textarea id="ai_json" rows="16" style="width:100%;font-family:ui-monospace,monospace;font-size:12px">${esc(JSON.stringify(d.config, null, 2))}</textarea></div>
+        <div class="row" style="gap:8px">
+          <select id="ai_testsvc" style="max-width:160px">${services.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
+          <button class="btn sm ghost" onclick="Actions.aiTest()">🧪 Test mapping</button>
+          <button class="btn" onclick="Actions.aiSaveProvider()">💾 Save &amp; activate provider</button>
+        </div>
+        <div id="ai_test"></div>`;
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  _parseAiJson() { try { return JSON.parse(val('ai_json')); } catch { UI.toast('Config is not valid JSON', 'err'); return null; } },
+  async aiTest() {
+    const config = this._parseAiJson(); if (!config) return;
+    const body = { service: val('ai_testsvc'), config, creds: {
+      base_url: '', api_key: val('ai_ckey'), api_secret: val('ai_csecret'), auth_token: val('ai_ctoken'), partner_id: val('ai_cpartner') } };
+    try {
+      const r = await Api.post('/admin/integrations/provider-test', body);
+      $('ai_test').innerHTML = `<div class="panel mt" style="background:${r.ok?'#f0fbf4':'#fef7e0'}">
+        <b>${r.ok?'✅ Mapping resolves':'⚠️ Fix these first'}</b>
+        ${(r.problems||[]).length?`<ul>${r.problems.map(p=>`<li>${esc(p)}</li>`).join('')}</ul>`:''}
+        ${r.url?`<div class="mono" style="font-size:12px;margin-top:8px"><b>${esc(r.method)}</b> ${esc(r.url)}</div>
+        <div class="muted" style="font-size:12px;margin-top:6px">Headers: <span class="mono">${esc(JSON.stringify(r.headers))}</span></div>
+        <pre style="background:#111;color:#eee;border-radius:8px;padding:10px;overflow:auto;font-size:12px;margin-top:8px">${esc(JSON.stringify(r.body, null, 2))}</pre>`:''}</div>`;
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async aiSaveProvider() {
+    const config = this._parseAiJson(); if (!config) return;
+    const label = val('ai_plabel'); if (!label) return UI.toast('Enter a provider label', 'err');
+    const services = Object.keys(config.services || {});
+    if (!services.length) return UI.toast('Config has no services', 'err');
+    const creds = { api_key: val('ai_ckey'), api_secret: val('ai_csecret'), auth_token: val('ai_ctoken'), partner_id: val('ai_cpartner') };
+    let made = 0;
+    for (const code of services) {
+      const body = { label: `${label} (${code})`, driver: 'dynamic', is_active: true, extra: config };
+      if (config.base_url) body.base_url = config.base_url;
+      for (const [k,v] of Object.entries(creds)) if (v) body[k] = v;
+      try { await Api.post(`/admin/services/${code}/providers`, body); made++; }
+      catch (err) { UI.toast(`${code}: ${err.message}`, 'err'); }
+    }
+    if (made) { UI.toast(`Saved & activated for ${made} service(s)`); location.hash = '#/providers'; }
+  },
+
   _provService: null,
   addProvider(code) {
     UI.modal(`<h3>Add provider — ${esc(code)}</h3>
