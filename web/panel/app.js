@@ -580,6 +580,26 @@ const Screens = {
       <div class="panel mt"><h2>Required for your role (${esc(reqs.role||State.user.role)})</h2>
         <div class="tbl-wrap"><table><thead><tr><th></th><th>Document</th><th></th></tr></thead>
         <tbody>${reqRows || '<tr><td colspan=3 class=muted>—</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt" style="max-width:560px"><h2>⚡ Instant verification</h2>
+        <p class="muted">Verify PAN and Aadhaar digitally — your KYC is approved automatically on a match.</p>
+        <div class="sechead" style="margin-top:6px">PAN</div>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0"><label>PAN</label><input id="vp_pan" placeholder="ABCDE1234F" maxlength="10" style="text-transform:uppercase"></div>
+          <div class="field" style="margin:0;flex:1"><label>Name as on PAN</label><input id="vp_name"></div>
+          <button class="btn sm" onclick="Actions.verifyPanNow()">Verify PAN</button>
+        </div>
+        <div id="vp_out" class="muted" style="font-size:12px;margin-top:6px"></div>
+        <div class="sechead" style="margin-top:14px">Aadhaar (OTP)</div>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0"><label>Aadhaar (12 digit)</label><input id="va_num" inputmode="numeric" maxlength="12"></div>
+          <button class="btn sm ghost" onclick="Actions.aadhaarSendOtpNow()">Send OTP</button>
+        </div>
+        <div id="va_otpbox" class="row hidden" style="gap:8px;align-items:end;margin-top:8px">
+          <div class="field" style="margin:0"><label>Enter OTP</label><input id="va_otp" inputmode="numeric" maxlength="8" placeholder="6-digit"></div>
+          <button class="btn sm" onclick="Actions.aadhaarVerifyOtpNow()">Verify OTP</button>
+        </div>
+        <div id="va_out" class="muted" style="font-size:12px;margin-top:6px"></div>
+      </div>
       <div class="panel mt" style="max-width:520px"><h2>Submit a document</h2>
         <div class="field"><label>Document type</label>
           <select id="k_type"><option value="aadhaar">Aadhaar</option><option value="pan">PAN</option>
@@ -957,6 +977,7 @@ const Screens = {
         <button class="btn sm ghost" onclick="Actions.resetUserPw('${u.id}','${esc(u.full_name)}')">Reset PW</button>
         ${u.role !== 'admin' ? `<button class="btn sm ghost" onclick="Actions.holds('${u.id}','${esc(u.full_name)}')">Lien</button>
         <button class="btn sm ghost" onclick="Actions.assessOnb('${u.id}')">Score</button>
+        <button class="btn sm ghost" onclick="Actions.setUserPlan('${u.id}','${esc(u.full_name)}','${u.commission_plan_id||''}')">Plan</button>
         <button class="btn sm ghost" onclick="Actions.promote('${u.id}')">Promote</button>` : ''}
       </td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
@@ -979,17 +1000,37 @@ const Screens = {
 
   async plans() {
     const d = await Api.get('/admin/commission-plans');
-    const plan = d.items[0];
-    if (!plan) { $('view').innerHTML = '<div class="panel muted">No commission plan found.</div>'; return; }
-    const full = await Api.get('/admin/commission-plans/' + plan.id);
-    const rows = full.rules.map(r => `<tr><td>${esc(r.service_code)}</td>
+    const list = d.items || [];
+    if (!list.length) {
+      $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between"><h2>Commission plans</h2>
+        <button class="btn sm" onclick="Actions.createPlan()">+ New plan</button></div>
+        <p class="muted">No commission plan yet. Create one to define per-service, per-tier commission.</p></div>`;
+      return;
+    }
+    const sel = Actions._planId && list.some(p => p.id === Actions._planId) ? Actions._planId
+      : (list.find(p => p.is_default) || list[0]).id;
+    const plan = list.find(p => p.id === sel);
+    const opts = list.map(p => `<option value="${p.id}" ${p.id===sel?'selected':''}>${esc(p.name)}${p.is_default?' (default)':''}</option>`).join('');
+    const full = await Api.get('/admin/commission-plans/' + sel);
+    const rows = full.rules.map(r => `<tr><td>${esc(r.service_code.replace(/_/g,' '))}</td>
       <td>${money(r.min_amount_paise/100)}–${r.max_amount_paise > 1e15 ? '∞' : money(r.max_amount_paise/100)}</td>
       <td>${esc(r.charge_type)} ${r.charge_value}</td>
-      <td>R:${r.retailer_value} D:${r.distributor_value} MD:${r.master_distributor_value} A:${r.admin_value}</td></tr>`).join('');
-    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
-      <h2>Plan: ${esc(plan.name)}</h2><button class="btn sm" onclick="Actions.addRule('${plan.id}')">+ Add rule</button></div>
-      <div class="tbl-wrap"><table><thead><tr><th>Service</th><th>Slab</th><th>Charge</th><th>Commission (%/flat)</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan=4 class=muted>No rules — add one so commissions apply</td></tr>'}</tbody></table></div></div>`;
+      <td class="comm-pos">R:${r.retailer_value} D:${r.distributor_value} MD:${r.master_distributor_value} A:${r.admin_value}</td>
+      <td><button class="btn sm ghost" onclick="Actions.deleteRule('${sel}','${r.id}')">✕</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:end">
+        <div class="field" style="margin:0;max-width:320px"><label>Commission plan</label>
+          <select id="pl_sel" onchange="Actions._planId=this.value;App.route()">${opts}</select></div>
+        <div class="row" style="gap:8px">
+          <button class="btn sm ghost" onclick="Actions.createPlan()">+ New plan</button>
+          ${plan.is_default ? '<span class="tag active" style="align-self:center">default</span>' : `<button class="btn sm ghost" onclick="Actions.setDefaultPlan('${sel}')">Make default</button>`}
+          ${plan.is_default ? '' : `<button class="btn sm ghost" onclick="Actions.deletePlan('${sel}')">Delete plan</button>`}
+        </div></div>
+      <p class="muted" style="margin:10px 0 0">Rules define the per-service commission split (retailer / distributor / master-distributor / admin) and any charge. Assign this plan to a member from <a href="#/members">Users</a> → <b>Plan</b>. Members with no plan use the default.</p>
+      <div class="row" style="justify-content:space-between;margin-top:12px"><h2 style="margin:0">Rules — ${esc(plan.name)}</h2>
+        <button class="btn sm" onclick="Actions.addRule('${sel}')">+ Add rule</button></div>
+      <div class="tbl-wrap mt"><table><thead><tr><th>Service</th><th>Slab</th><th>Charge</th><th>Commission (R/D/MD/A)</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No rules — add one so commissions apply</td></tr>'}</tbody></table></div></div>`;
   },
 
   async adminservices() {
@@ -2211,6 +2252,33 @@ const Actions = {
     try { await Api.post('/kyc', body); UI.toast('Document submitted for review'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  async verifyPanNow() {
+    const pan = (val('vp_pan')||'').toUpperCase(), name = val('vp_name');
+    if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan)) return UI.toast('Enter a valid PAN', 'err');
+    $('vp_out').textContent = 'Verifying…';
+    try {
+      const r = await Api.post('/kyc/verify/pan', { pan, name });
+      $('vp_out').innerHTML = r.verified ? `<span style="color:#12a35a">✅ ${esc(r.message)}${r.sandbox?' (sandbox)':''}</span>` : `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
+      if (r.verified) { UI.toast('PAN verified'); setTimeout(() => App.route(), 900); }
+    } catch (err) { $('vp_out').textContent = ''; UI.toast(err.message, 'err'); }
+  },
+  async aadhaarSendOtpNow() {
+    const aadhaar = val('va_num');
+    if (!/^\d{12}$/.test(aadhaar)) return UI.toast('Enter a 12-digit Aadhaar', 'err');
+    try {
+      const r = await Api.post('/kyc/verify/aadhaar/send-otp', { aadhaar });
+      Actions._aadhaarRef = r.ref; $('va_otpbox').classList.remove('hidden');
+      $('va_out').textContent = r.message + (r.sandbox ? '' : '');
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async aadhaarVerifyOtpNow() {
+    const aadhaar = val('va_num'), otp = val('va_otp');
+    try {
+      const r = await Api.post('/kyc/verify/aadhaar/verify-otp', { aadhaar, ref: Actions._aadhaarRef || '', otp });
+      $('va_out').innerHTML = r.verified ? `<span style="color:#12a35a">✅ ${esc(r.message)}</span>` : `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
+      if (r.verified) { UI.toast('Aadhaar verified'); setTimeout(() => App.route(), 900); }
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
   async toggleService(code, enabled) {
     try { await Api.patch(`/admin/services/${code}`, { enabled }); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
@@ -2544,6 +2612,51 @@ const Actions = {
       <div class="field"><label>Commission type</label><select id="r_lt"><option>percent</option><option>flat</option></select></div>
       <div class="foot"><button class="btn" onclick="Actions.saveRule('${planId}')">Add</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  _planId: null,
+  createPlan() {
+    UI.modal(`<h3>New commission plan</h3>
+      <div class="field"><label>Plan name</label><input id="pl_name" placeholder="e.g. Premium Retailers"></div>
+      <div class="field"><label>Description (optional)</label><input id="pl_desc"></div>
+      <div class="field"><label><input type="checkbox" id="pl_def"> Make this the default plan</label></div>
+      <div class="foot"><button class="btn" onclick="Actions.savePlan()">Create</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async savePlan() {
+    const name = val('pl_name'); if (!name || name.length < 2) return UI.toast('Enter a plan name', 'err');
+    try { const r = await Api.post('/admin/commission-plans', { name, description: val('pl_desc'), is_default: $('pl_def').checked });
+      Actions._planId = r.plan.id; UI.closeModal(); UI.toast('Plan created'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async setDefaultPlan(id) {
+    try { await Api.patch('/admin/commission-plans/' + id, { is_default: true }); UI.toast('Default plan set'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async deletePlan(id) {
+    if (!confirm('Delete this plan? Members on it fall back to the default.')) return;
+    try { await Api.del('/admin/commission-plans/' + id); Actions._planId = null; UI.toast('Plan deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async deleteRule(planId, ruleId) {
+    if (!confirm('Delete this rule?')) return;
+    try { await Api.del(`/admin/commission-plans/${planId}/rules/${ruleId}`); UI.toast('Rule deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async setUserPlan(id, name, current) {
+    const d = await Api.get('/admin/commission-plans').catch(() => ({ items: [] }));
+    const opts = ['<option value="">Default plan</option>']
+      .concat((d.items || []).map(p => `<option value="${p.id}" ${p.id===current?'selected':''}>${esc(p.name)}${p.is_default?' (default)':''}</option>`))
+      .join('');
+    UI.modal(`<h3>Commission plan — ${esc(name)}</h3>
+      <p class="muted" style="font-size:13px">Assign a commission plan to this member. "Default plan" means they use whichever plan is marked default.</p>
+      <div class="field"><label>Plan</label><select id="up_plan">${opts}</select></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveUserPlan('${id}')">Save</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveUserPlan(id) {
+    const v = val('up_plan');
+    try { await Api.patch(`/admin/users/${id}/plan`, { commission_plan_id: v || null }); UI.closeModal(); UI.toast('Plan assigned'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
   async loadRuleProviders() {
     const code = val('r_svc'); const sel = $('r_prov'); if (!code || !sel) return;

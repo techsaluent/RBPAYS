@@ -8,6 +8,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
 import { notifyKyc } from '../notify/alerts';
+import { verifyPan, aadhaarSendOtp, aadhaarVerifyOtp } from './verify.service';
 
 const router = Router();
 router.use(requireAuth);
@@ -31,6 +32,67 @@ router.post(
       [req.user.id, b.doc_type, b.doc_number ?? null, b.file_url ?? null],
     );
     res.status(201).json({ document: rows[0] });
+  }),
+);
+
+// ---- Digital KYC: instant PAN + Aadhaar-OTP verification (self-service) ----
+/** Record a digitally-verified document and recompute the member's KYC. */
+async function recordVerified(userId: string, docType: string, docNumber: string): Promise<string> {
+  return withTransaction(async (client) => {
+    await client.query(
+      `INSERT INTO kyc_documents (user_id, doc_type, doc_number, status, remarks, reviewed_at)
+       VALUES ($1,$2,$3,'verified','Digitally verified', now())`,
+      [userId, docType, docNumber],
+    );
+    return recomputeUserKyc(client, userId);
+  });
+}
+
+const panSchema = z.object({ pan: z.string().trim().min(10).max(10), name: z.string().trim().max(120).optional() });
+router.post(
+  '/verify/pan',
+  validate(panSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof panSchema>;
+    const result = await verifyPan(b.pan, b.name);
+    if (result.verified) {
+      const status = await recordVerified(req.user.id, 'pan', b.pan.toUpperCase());
+      if (status === 'verified') void notifyKyc(req.user.id, 'verified');
+    }
+    res.json(result);
+  }),
+);
+
+const aadhaarSchema = z.object({ aadhaar: z.string().trim().regex(/^\d{12}$/, 'Aadhaar must be 12 digits') });
+router.post(
+  '/verify/aadhaar/send-otp',
+  validate(aadhaarSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof aadhaarSchema>;
+    const r = await aadhaarSendOtp(b.aadhaar);
+    res.json(r);
+  }),
+);
+
+const otpSchema = z.object({
+  aadhaar: z.string().trim().regex(/^\d{12}$/),
+  ref: z.string().trim().max(120),
+  otp: z.string().trim().min(4).max(8),
+});
+router.post(
+  '/verify/aadhaar/verify-otp',
+  validate(otpSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof otpSchema>;
+    const result = await aadhaarVerifyOtp(b.aadhaar, b.ref, b.otp);
+    if (result.verified) {
+      const status = await recordVerified(req.user.id, 'aadhaar', b.aadhaar.slice(0, 4) + 'XXXX' + b.aadhaar.slice(-4));
+      if (status === 'verified') void notifyKyc(req.user.id, 'verified');
+    }
+    res.json(result);
   }),
 );
 
