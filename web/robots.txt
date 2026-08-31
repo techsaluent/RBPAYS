@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+Disallow: /panel/
+Sitemap: https://tutipays.com/sitemap.xml
