@@ -3,132 +3,214 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TutiPays — One platform for recharge, AEPS, money transfer & bill payments</title>
-  <meta name="description" content="TutiPays is a B2B fintech platform for retailers and distributors — mobile & DTH recharge, AEPS, DMT money transfer, BBPS bill payments, Micro ATM, payouts and more, with instant settlement and the best commissions." />
+  <title>TutiPays — Banking &amp; payments for the new भारत</title>
+  <meta name="description" content="TutiPays is a B2B fintech platform for retailers and distributors — recharge, AEPS, DMT money transfer, BBPS bills, Micro ATM, payouts, travel &amp; insurance — one wallet, instant settlement and the best commissions." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Baloo+2:wght@600;700;800&display=swap">
   <style>
     :root{
-      --ink:#101828; --muted:#5a6472; --line:#e6e9f2; --bg:#ffffff; --soft:#f5f7fd;
-      --brand:#3b39e4; --brand2:#7b5cff; --accent:#00c48c; --warn:#ff8a00;
-      --radius:16px; --shadow:0 10px 30px rgba(30,34,90,.10);
+      --ink:#14162e; --muted:#5b6379; --line:#e7e9f4; --bg:#ffffff; --soft:#f4f6fd;
+      --brand:#3d43e0; --brand2:#6a52ff; --brand-soft:#eeecfe;
+      --accent:#ff7a1a; --accent-soft:#fff0e4; --green:#12a35a; --green-soft:#e4f5ec;
+      --radius:18px; --radius-sm:12px;
+      --shadow:0 10px 34px rgba(30,34,90,.10); --shadow-sm:0 4px 16px rgba(30,34,90,.08);
+      --disp:'Baloo 2', 'Plus Jakarta Sans', sans-serif;
+      --font:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
     }
     *{box-sizing:border-box} html{scroll-behavior:smooth}
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.55}
+    body{margin:0;font-family:var(--font);color:var(--ink);background:var(--bg);line-height:1.55;-webkit-font-smoothing:antialiased}
     a{color:inherit;text-decoration:none}
-    .wrap{max-width:1140px;margin:0 auto;padding:0 20px}
-    .btn{display:inline-block;padding:12px 22px;border-radius:999px;font-weight:600;font-size:15px;cursor:pointer;border:1px solid transparent}
-    .btn.primary{background:var(--brand);color:#fff}
-    .btn.primary:hover{background:#2d2bc9}
-    .btn.ghost{background:#fff;color:var(--brand);border-color:#d9dcf3}
-    .btn.light{background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.35)}
+    img{max-width:100%}
+    .wrap{max-width:1160px;margin:0 auto;padding:0 20px}
+    .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:999px;font-weight:700;font-size:15px;cursor:pointer;border:1px solid transparent;transition:transform .1s, box-shadow .15s, filter .15s}
+    .btn:active{transform:translateY(1px)}
+    .btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;box-shadow:0 8px 22px rgba(61,67,224,.34)}
+    .btn.primary:hover{filter:brightness(1.06);box-shadow:0 12px 30px rgba(61,67,224,.42)}
+    .btn.accent{background:linear-gradient(135deg,#ff8a2b,var(--accent));color:#fff;box-shadow:0 8px 22px rgba(255,122,26,.34)}
+    .btn.ghost{background:#fff;color:var(--brand);border-color:#dcdef4}
+    .btn.ghost:hover{border-color:var(--brand);background:var(--brand-soft)}
+    .btn.light{background:rgba(255,255,255,.14);color:#fff;border-color:rgba(255,255,255,.4)}
+    .btn.light:hover{background:rgba(255,255,255,.24)}
     .btn.big{padding:15px 30px;font-size:16px}
+    h1,h2,h3{letter-spacing:-.02em}
+    .hi{color:var(--brand)}
+    .deva{font-family:var(--disp)}
+
+    /* Company strip */
+    .strip{background:#0e1030;color:#c7cbe8;font-size:12.5px}
+    .strip .inner{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;justify-content:center;padding:7px 20px;text-align:center;max-width:1160px;margin:0 auto}
+    .strip b{color:#fff} .strip a{color:#c7cbe8}
 
     /* Header */
-    header{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-    .nav{display:flex;align-items:center;justify-content:space-between;height:68px}
-    .logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:22px;letter-spacing:-.5px}
-    .logo .dot{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand),var(--brand2));display:grid;place-items:center;color:#fff;font-size:16px}
+    header{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.82);backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid transparent;transition:border-color .2s, box-shadow .2s}
+    header.stuck{border-color:var(--line);box-shadow:0 6px 24px rgba(20,22,46,.06)}
+    .nav{display:flex;align-items:center;justify-content:space-between;height:70px}
+    .logo{display:flex;align-items:center;gap:11px;font-weight:800;font-size:22px}
+    .logo .dot{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));display:grid;place-items:center;color:#fff;font-size:18px;box-shadow:0 6px 16px rgba(61,67,224,.4)}
     .logo b{color:var(--brand)}
-    nav.links{display:flex;gap:26px;align-items:center;font-size:15px;color:var(--muted)}
-    nav.links a:hover{color:var(--ink)}
+    nav.links{display:flex;gap:28px;align-items:center;font-size:15px;color:var(--muted);font-weight:500}
+    nav.links a{position:relative}
+    nav.links a::after{content:'';position:absolute;left:0;right:100%;bottom:-6px;height:2px;background:var(--brand);border-radius:2px;transition:right .2s}
+    nav.links a:hover{color:var(--ink)} nav.links a:hover::after{right:0}
     .nav .cta{display:flex;gap:10px;align-items:center}
-    .menu-btn{display:none;font-size:24px;background:none;border:none}
-    @media(max-width:860px){ nav.links{display:none} .menu-btn{display:block} }
+    .menu-btn{display:none;font-size:24px;background:none;border:none;cursor:pointer}
+    @media(max-width:920px){ nav.links{display:none} .menu-btn{display:block} .nav .cta .btn.ghost{display:none} }
 
     /* Hero */
-    .hero{background:radial-gradient(1200px 500px at 80% -10%,rgba(123,92,255,.25),transparent),linear-gradient(160deg,#1b1a4b,#3b39e4);color:#fff;padding:70px 0 90px;overflow:hidden}
-    .hero .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center}
-    .hero h1{font-size:46px;line-height:1.1;margin:0 0 18px;letter-spacing:-1px}
-    .hero p.sub{font-size:18px;color:#d7d9f6;margin:0 0 26px;max-width:520px}
+    .hero{position:relative;overflow:hidden;color:#fff;
+      background:radial-gradient(1100px 520px at 82% -12%,rgba(122,92,255,.5),transparent),
+                 radial-gradient(900px 500px at 0% 120%,rgba(255,122,26,.28),transparent),
+                 linear-gradient(150deg,#191746,#3d43e0 62%,#5a45e6);
+      background-size:160% 160%,160% 160%,200% 200%; animation:heroPan 18s ease-in-out infinite}
+    @keyframes heroPan{0%,100%{background-position:82% -12%,0% 120%,0% 50%}50%{background-position:70% 0%,10% 100%,100% 50%}}
+    .hero::before{content:'';position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.09) 1px,transparent 1px);background-size:26px 26px;opacity:.5;mask-image:linear-gradient(180deg,#000,transparent)}
+    .hero .grid{position:relative;display:grid;grid-template-columns:1.08fr .92fr;gap:44px;align-items:center;padding:64px 0 96px}
+    .badge{display:inline-flex;gap:8px;align-items:center;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.28);padding:8px 15px;border-radius:999px;font-size:13px;font-weight:600;margin-bottom:20px}
+    .hero h1{font-family:var(--disp);font-weight:800;font-size:clamp(34px,5.4vw,58px);line-height:1.04;margin:0 0 18px}
+    .hero h1 .k{background:linear-gradient(120deg,#ffd58a,#ff8a2b);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .hero p.sub{font-size:18px;color:#dfe0fa;margin:0 0 26px;max-width:520px}
     .hero .ctas{display:flex;gap:14px;flex-wrap:wrap}
-    .badge{display:inline-flex;gap:8px;align-items:center;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);padding:7px 14px;border-radius:999px;font-size:13px;margin-bottom:20px}
-    .hero-card{background:#fff;color:var(--ink);border-radius:20px;box-shadow:var(--shadow);padding:22px}
-    .hero-card h4{margin:0 0 14px;font-size:15px;color:var(--muted);font-weight:600}
-    .mini{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .mini .m{background:var(--soft);border-radius:12px;padding:14px}
-    .mini .m .i{font-size:22px} .mini .m .t{font-weight:600;margin-top:6px;font-size:14px}
-    @media(max-width:860px){ .hero .grid{grid-template-columns:1fr} .hero h1{font-size:34px} }
+    .trust{display:flex;gap:18px;flex-wrap:wrap;margin-top:26px;color:#cfd2f4;font-size:13.5px;font-weight:500}
+    .trust span{display:inline-flex;align-items:center;gap:7px}
+    /* floating hero card */
+    .hcard{position:relative;background:rgba(255,255,255,.96);color:var(--ink);border-radius:22px;box-shadow:0 30px 70px rgba(10,10,40,.4);padding:22px}
+    .hcard h4{margin:0 0 14px;font-size:14px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+    .mini{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+    .mini .m{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:14px 10px;text-align:center;transition:transform .15s,box-shadow .15s}
+    .mini .m:hover{transform:translateY(-3px);box-shadow:var(--shadow-sm)}
+    .mini .m .i{font-size:22px}.mini .m .t{font-weight:600;margin-top:6px;font-size:12px}
+    .float{position:absolute;background:#fff;color:var(--ink);border-radius:14px;box-shadow:0 16px 40px rgba(10,10,40,.28);padding:10px 14px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;animation:floaty 5s ease-in-out infinite}
+    .float .em{font-size:18px}
+    .float.f1{top:-18px;right:22px;animation-delay:.2s}
+    .float.f2{bottom:34px;left:-26px;animation-delay:1.4s}
+    .float .up{color:var(--green);font-weight:800}
+    @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+    @media(max-width:920px){ .hero .grid{grid-template-columns:1fr;gap:30px;padding:48px 0 70px} .float.f2{left:auto;right:10px;bottom:-16px} }
 
-    /* Stats strip */
-    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin:-46px auto 0;position:relative;z-index:5}
-    .stat{background:#fff;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;text-align:center}
-    .stat .n{font-size:28px;font-weight:800;color:var(--brand)}
-    .stat .l{color:var(--muted);font-size:14px}
-    @media(max-width:860px){ .stats{grid-template-columns:1fr 1fr} }
+    /* Marquee */
+    .marq{background:#0e1030;overflow:hidden;white-space:nowrap;border-top:1px solid #23264d;border-bottom:1px solid #23264d}
+    .marq .track{display:inline-flex;gap:44px;padding:13px 0;animation:scrollx 26s linear infinite;color:#aab0d8;font-weight:600;font-size:14px}
+    .marq .track span{display:inline-flex;gap:9px;align-items:center}
+    @keyframes scrollx{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 
-    section{padding:64px 0}
-    .h2{font-size:32px;text-align:center;margin:0 0 8px;letter-spacing:-.5px}
-    .lead{text-align:center;color:var(--muted);max-width:620px;margin:0 auto 40px}
+    /* Stats */
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin:34px auto 0;position:relative;z-index:6}
+    .stat{background:#fff;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;text-align:center}
+    .stat .n{font-family:var(--disp);font-size:32px;font-weight:800;background:linear-gradient(120deg,var(--brand),var(--brand2));-webkit-background-clip:text;background-clip:text;color:transparent}
+    .stat .l{color:var(--muted);font-size:14px;font-weight:600;margin-top:2px}
+    @media(max-width:720px){ .stats{grid-template-columns:1fr 1fr} }
 
-    /* Services */
-    .services{display:grid;grid-template-columns:repeat(4,1fr);gap:18px}
-    .svc{border:1px solid var(--line);border-radius:var(--radius);padding:22px;transition:.15s;background:#fff}
-    .svc:hover{transform:translateY(-4px);box-shadow:var(--shadow);border-color:transparent}
-    .svc .ic{width:46px;height:46px;border-radius:12px;background:var(--soft);display:grid;place-items:center;font-size:24px;margin-bottom:12px}
-    .svc h3{margin:0 0 6px;font-size:16px}
+    section{padding:70px 0}
+    .eyebrow{text-align:center;color:var(--brand);font-weight:800;font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:8px}
+    .h2{font-family:var(--disp);font-size:clamp(26px,3.6vw,38px);font-weight:800;text-align:center;margin:0 0 8px}
+    .lead{text-align:center;color:var(--muted);max-width:640px;margin:0 auto 34px;font-size:16px}
+
+    /* Service tabs + grid */
+    .tabs{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:28px}
+    .tabs button{border:1px solid var(--line);background:#fff;color:var(--muted);padding:9px 16px;border-radius:999px;font-weight:700;font-size:13.5px;cursor:pointer;transition:.15s}
+    .tabs button.on{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-color:transparent;box-shadow:0 8px 20px rgba(61,67,224,.3)}
+    .services{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+    .svc{border:1px solid var(--line);border-radius:var(--radius);padding:22px;background:#fff;transition:transform .15s,box-shadow .15s,border-color .15s}
+    .svc:hover{transform:translateY(-5px);box-shadow:var(--shadow);border-color:transparent}
+    .svc .ic{width:52px;height:52px;border-radius:14px;display:grid;place-items:center;font-size:25px;margin-bottom:13px;background:var(--brand-soft)}
+    .svc.a .ic{background:var(--accent-soft)} .svc.g .ic{background:var(--green-soft)}
+    .svc h3{margin:0 0 6px;font-size:16px;font-weight:700}
     .svc p{margin:0;color:var(--muted);font-size:14px}
     @media(max-width:860px){ .services{grid-template-columns:1fr 1fr} }
     @media(max-width:520px){ .services{grid-template-columns:1fr} }
 
-    /* Features */
-    .features{background:var(--soft)}
-    .feat{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
-    .fcard{background:#fff;border-radius:var(--radius);padding:24px;border:1px solid var(--line)}
-    .fcard .ic{font-size:26px} .fcard h3{margin:12px 0 6px;font-size:17px} .fcard p{margin:0;color:var(--muted);font-size:14px}
+    /* Why */
+    .why{background:var(--soft)}
+    .feat{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+    .fcard{background:#fff;border-radius:var(--radius);padding:24px;border:1px solid var(--line);transition:transform .15s,box-shadow .15s}
+    .fcard:hover{transform:translateY(-4px);box-shadow:var(--shadow)}
+    .fcard .ic{width:48px;height:48px;border-radius:13px;display:grid;place-items:center;font-size:24px;background:linear-gradient(135deg,var(--brand-soft),#fff)}
+    .fcard h3{margin:14px 0 6px;font-size:17px;font-weight:700} .fcard p{margin:0;color:var(--muted);font-size:14px}
     @media(max-width:860px){ .feat{grid-template-columns:1fr} }
+
+    /* Tiers */
+    .tiers{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;align-items:stretch}
+    .tier{border:1px solid var(--line);border-radius:20px;padding:26px;background:#fff;position:relative;overflow:hidden;transition:transform .15s,box-shadow .15s}
+    .tier:hover{transform:translateY(-5px);box-shadow:var(--shadow)}
+    .tier.feat-t{border-color:transparent;color:#fff;background:linear-gradient(150deg,var(--brand),var(--brand2))}
+    .tier.feat-t .t-sub,.tier.feat-t li{color:#e7e8ff}
+    .t-top{display:flex;align-items:center;gap:11px}
+    .t-ic{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;font-size:22px;background:var(--brand-soft)}
+    .tier.feat-t .t-ic{background:rgba(255,255,255,.18)}
+    .t-name{font-size:19px;font-weight:800}
+    .t-sub{color:var(--muted);font-size:13.5px}
+    .tier ul{list-style:none;padding:0;margin:16px 0 0;display:grid;gap:9px}
+    .tier li{font-size:14px;display:flex;gap:9px;align-items:flex-start}
+    .tier li::before{content:'✓';font-weight:800;color:var(--green)}
+    .tier.feat-t li::before{color:#8affce}
+    .ribbon{position:absolute;top:14px;right:-32px;transform:rotate(38deg);background:var(--accent);color:#fff;font-size:11px;font-weight:800;padding:4px 40px}
+    @media(max-width:860px){ .tiers{grid-template-columns:1fr} }
 
     /* Steps */
     .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
     .step{text-align:center;padding:10px}
-    .step .num{width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;display:grid;place-items:center;font-size:20px;font-weight:800;margin:0 auto 14px}
-    .step h3{margin:0 0 6px;font-size:17px} .step p{margin:0;color:var(--muted);font-size:14px}
+    .step .num{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;display:grid;place-items:center;font-family:var(--disp);font-size:22px;font-weight:800;margin:0 auto 14px;box-shadow:0 10px 24px rgba(61,67,224,.34)}
+    .step h3{margin:0 0 6px;font-size:17px;font-weight:700} .step p{margin:0;color:var(--muted);font-size:14px}
     @media(max-width:860px){ .steps{grid-template-columns:1fr} }
 
-    /* CTA band */
-    .cta-band{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-radius:22px;padding:44px;text-align:center}
-    .cta-band h2{margin:0 0 10px;font-size:28px}
-    .cta-band p{margin:0 0 22px;color:#e7e8ff}
+    /* Testimonials */
+    .quotes{position:relative;max-width:760px;margin:0 auto;min-height:150px}
+    .quote{position:absolute;inset:0;opacity:0;transform:translateY(10px);transition:.5s;background:#fff;border:1px solid var(--line);border-radius:20px;padding:30px 32px;box-shadow:var(--shadow-sm)}
+    .quote.on{opacity:1;transform:none}
+    .quote p{font-size:17px;margin:0 0 16px} .quote .who{display:flex;align-items:center;gap:12px}
+    .quote .av{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;display:grid;place-items:center;font-weight:800}
+    .quote .who b{display:block} .quote .who span{color:var(--muted);font-size:13px}
+    .dots{display:flex;gap:8px;justify-content:center;margin-top:170px}
+    .dots i{width:9px;height:9px;border-radius:50%;background:var(--line);cursor:pointer;transition:.2s}
+    .dots i.on{background:var(--brand);width:22px;border-radius:6px}
 
-    footer{background:#0f1230;color:#aeb4d6;padding:48px 0 26px;margin-top:20px}
+    /* Download / CTA band */
+    .band{background:linear-gradient(135deg,#ff8a2b,var(--accent));color:#fff;border-radius:24px;padding:44px;display:grid;grid-template-columns:1.4fr 1fr;gap:24px;align-items:center;overflow:hidden;position:relative}
+    .band h2{font-family:var(--disp);margin:0 0 8px;font-size:30px;font-weight:800}
+    .band p{margin:0 0 20px;color:#fff2e8;font-size:16px}
+    .band .art{font-size:120px;text-align:center;line-height:1;filter:drop-shadow(0 12px 24px rgba(0,0,0,.2))}
+    @media(max-width:760px){ .band{grid-template-columns:1fr} .band .art{display:none} }
+
+    /* Footer */
+    footer{background:#0e1030;color:#aeb4d6;padding:52px 0 26px;margin-top:20px}
     .fgrid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1.2fr;gap:30px}
     footer h5{color:#fff;font-size:15px;margin:0 0 12px}
-    footer a{display:block;color:#aeb4d6;padding:4px 0;font-size:14px}
-    footer a:hover{color:#fff}
-    footer .addr{font-size:13.5px;line-height:1.7;color:#9aa0c6}
-    footer .addr b{color:#cdd1ee;font-weight:600}
+    footer a{display:block;color:#aeb4d6;padding:4px 0;font-size:14px} footer a:hover{color:#fff}
+    footer .addr{font-size:13.5px;line-height:1.7;color:#9aa0c6} footer .addr b{color:#cdd1ee}
     .fbottom{border-top:1px solid #23264d;margin-top:30px;padding-top:18px;font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
     @media(max-width:860px){ .fgrid{grid-template-columns:1fr 1fr} }
     @media(max-width:520px){ .fgrid{grid-template-columns:1fr} }
 
-    /* Company strip */
-    .topbar{background:#0f1230;color:#c7cbe8;font-size:12.5px}
-    .topbar .inner{display:flex;flex-wrap:wrap;gap:6px 22px;align-items:center;justify-content:center;padding:7px 20px;text-align:center;max-width:1140px;margin:0 auto}
-    .topbar b{color:#fff;font-weight:600}
-    .topbar a{color:#c7cbe8}
+    /* Reveal animation */
+    .reveal{opacity:0;transform:translateY(22px);transition:opacity .6s ease, transform .6s ease}
+    .reveal.in{opacity:1;transform:none}
+    @media(prefers-reduced-motion:reduce){ *{animation:none!important} .reveal{opacity:1;transform:none;transition:none} html{scroll-behavior:auto} }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <div class="inner">
-      <span><b>REAL BROTHERS TECHNOLOGY SERVICES LLP</b></span>
-      <span>✉ <a href="mailto:support@tutipays.com">support@tutipays.com</a></span>
-    </div>
-  </div>
-  <header>
+  <div class="strip"><div class="inner">
+    <span><b>REAL BROTHERS TECHNOLOGY SERVICES LLP</b></span>
+    <span>✉ <a href="mailto:support@tutipays.com">support@tutipays.com</a></span>
+    <span>🇮🇳 Made for Bharat</span>
+  </div></div>
+
+  <header id="hdr">
     <div class="wrap nav">
       <div class="logo"><span class="dot">₹</span> Tuti<b>Pays</b></div>
       <nav class="links">
         <a href="#services">Services</a>
-        <a href="#why">Why TutiPays</a>
+        <a href="#why">Why us</a>
+        <a href="#tiers">Earn</a>
         <a href="#how">How it works</a>
-        <a href="about.html">About</a>
         <a href="faq.html">FAQ</a>
         <a href="contact.html">Contact</a>
       </nav>
       <div class="cta">
         <a class="btn ghost" href="panel/">Login</a>
-        <a class="btn primary" href="panel/?signup=1">Sign Up</a>
+        <a class="btn primary" href="panel/?signup=1">Become a Partner</a>
       </div>
-      <button class="menu-btn" onclick="document.querySelector('nav.links').style.display='flex'">☰</button>
+      <button class="menu-btn" onclick="var n=document.querySelector('nav.links');n.style.display=n.style.display==='flex'?'none':'flex'">☰</button>
     </div>
   </header>
 
@@ -137,85 +219,149 @@
     <div class="wrap grid">
       <div>
         <span class="badge">⚡ Instant settlement · Best commissions</span>
-        <h1>One platform for every payment &amp; recharge.</h1>
-        <p class="sub">TutiPays gives retailers and distributors a single wallet to run recharge, AEPS, money transfer, bill payments, payouts and more — and earn commission on every transaction.</p>
+        <h1>Banking for the new <span class="k deva">भारत</span>.</h1>
+        <p class="sub">One wallet for recharge, AEPS, money transfer, bill payments, payouts, travel &amp; insurance — run every assisted service from your shop and earn on each transaction.</p>
         <div class="ctas">
-          <a class="btn primary big" href="panel/?signup=1">Become a Partner →</a>
+          <a class="btn accent big" href="panel/?signup=1">Become a Partner →</a>
           <a class="btn light big" href="panel/">Login to Panel</a>
         </div>
+        <div class="trust">
+          <span>🔒 Bank-grade security</span>
+          <span>🕔 24×7 uptime</span>
+          <span>🧑‍🤝‍🧑 3-tier network</span>
+        </div>
       </div>
-      <div class="hero-card">
-        <h4>Everything in one wallet</h4>
-        <div class="mini">
-          <div class="m"><div class="i">📱</div><div class="t">Recharge &amp; DTH</div></div>
-          <div class="m"><div class="i">🏧</div><div class="t">AEPS Banking</div></div>
-          <div class="m"><div class="i">💸</div><div class="t">Money Transfer</div></div>
-          <div class="m"><div class="i">🧾</div><div class="t">Bill Payments</div></div>
-          <div class="m"><div class="i">💳</div><div class="t">Card Swipe</div></div>
-          <div class="m"><div class="i">🏦</div><div class="t">Payouts &amp; UPI</div></div>
+      <div style="position:relative">
+        <div class="float f1"><span class="em">💰</span> Commission <span class="up">+₹12.80</span></div>
+        <div class="float f2"><span class="em">✅</span> Payout <b>success</b></div>
+        <div class="hcard">
+          <h4>Everything in one wallet</h4>
+          <div class="mini">
+            <div class="m"><div class="i">📱</div><div class="t">Recharge</div></div>
+            <div class="m"><div class="i">🏧</div><div class="t">AEPS</div></div>
+            <div class="m"><div class="i">💸</div><div class="t">Transfer</div></div>
+            <div class="m"><div class="i">🧾</div><div class="t">Bills</div></div>
+            <div class="m"><div class="i">✈️</div><div class="t">Travel</div></div>
+            <div class="m"><div class="i">🛡️</div><div class="t">Insurance</div></div>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
+  <!-- Marquee -->
+  <div class="marq"><div class="track" id="marq"></div></div>
+
+  <!-- Stats -->
   <div class="wrap">
-    <div class="stats">
-      <div class="stat"><div class="n">12+</div><div class="l">Services</div></div>
+    <div class="stats reveal">
+      <div class="stat"><div class="n" data-count="14" data-suffix="+">0</div><div class="l">Services</div></div>
       <div class="stat"><div class="n">Instant</div><div class="l">Settlement</div></div>
-      <div class="stat"><div class="n">24×7</div><div class="l">Availability</div></div>
-      <div class="stat"><div class="n">3-tier</div><div class="l">Distribution</div></div>
+      <div class="stat"><div class="n" data-count="24" data-suffix="×7">0</div><div class="l">Availability</div></div>
+      <div class="stat"><div class="n" data-count="3" data-suffix="-tier">0</div><div class="l">Distribution</div></div>
     </div>
   </div>
 
   <!-- Services -->
   <section id="services" class="wrap">
-    <h2 class="h2">All your services, one login</h2>
-    <p class="lead">Offer a full suite of assisted financial services from your shop and earn on every transaction.</p>
-    <div class="services">
-      <div class="svc"><div class="ic">📱</div><h3>Mobile &amp; DTH Recharge</h3><p>Prepaid, postpaid and DTH for every operator.</p></div>
-      <div class="svc"><div class="ic">🏧</div><h3>AEPS</h3><p>Aadhaar cash withdrawal, balance &amp; mini statement.</p></div>
-      <div class="svc"><div class="ic">💸</div><h3>Money Transfer (DMT)</h3><p>IMPS/NEFT transfers to any bank account.</p></div>
-      <div class="svc"><div class="ic">🧾</div><h3>BBPS Bill Payments</h3><p>Electricity, gas, water, FASTag, insurance, loan &amp; more.</p></div>
-      <div class="svc"><div class="ic">🏧</div><h3>Micro ATM</h3><p>Card-based cash withdrawal on a mini POS.</p></div>
-      <div class="svc"><div class="ic">🆔</div><h3>Aadhaar Pay</h3><p>Accept payments with Aadhaar + fingerprint.</p></div>
-      <div class="svc"><div class="ic">🏦</div><h3>Payout &amp; UPI</h3><p>Instant disbursals to bank accounts and UPI IDs.</p></div>
-      <div class="svc"><div class="ic">💳</div><h3>Card Swipe (mPOS)</h3><p>Accept debit/credit cards, settle to your wallet.</p></div>
-      <div class="svc"><div class="ic">💰</div><h3>CMS</h3><p>Cash collection for NBFCs and lenders.</p></div>
-      <div class="svc"><div class="ic">🪪</div><h3>PAN Card</h3><p>New &amp; correction applications via NSDL/UTI.</p></div>
-      <div class="svc"><div class="ic">🔁</div><h3>Wallet Transfer</h3><p>Move funds instantly across your network.</p></div>
-      <div class="svc"><div class="ic">📊</div><h3>Reports &amp; Receipts</h3><p>Every transaction logged with a printable receipt.</p></div>
+    <div class="eyebrow reveal">One login, every counter</div>
+    <h2 class="h2 reveal">All your services in one place</h2>
+    <p class="lead reveal">Offer a full suite of assisted financial services from your shop and earn on every transaction.</p>
+    <div class="tabs reveal">
+      <button class="on" data-cat="all">All</button>
+      <button data-cat="bank">Banking</button>
+      <button data-cat="bill">Recharge &amp; Bills</button>
+      <button data-cat="pay">Payouts</button>
+      <button data-cat="more">Travel &amp; more</button>
+    </div>
+    <div class="services" id="svcgrid">
+      <div class="svc reveal" data-cat="bill"><div class="ic">📱</div><h3>Mobile &amp; DTH Recharge</h3><p>Prepaid, postpaid and DTH for every operator.</p></div>
+      <div class="svc reveal g" data-cat="bank"><div class="ic">🏧</div><h3>AEPS</h3><p>Aadhaar cash withdrawal, balance &amp; mini statement.</p></div>
+      <div class="svc reveal" data-cat="bank"><div class="ic">💸</div><h3>Money Transfer (DMT)</h3><p>IMPS/NEFT transfers to any bank account.</p></div>
+      <div class="svc reveal" data-cat="bill"><div class="ic">🧾</div><h3>BBPS Bill Payments</h3><p>Electricity, gas, water, FASTag, loan &amp; more.</p></div>
+      <div class="svc reveal g" data-cat="bank"><div class="ic">🏧</div><h3>Micro ATM</h3><p>Card-based cash withdrawal on a mini POS.</p></div>
+      <div class="svc reveal g" data-cat="bank"><div class="ic">🆔</div><h3>Aadhaar Pay</h3><p>Accept payments with Aadhaar + fingerprint.</p></div>
+      <div class="svc reveal" data-cat="pay"><div class="ic">🏦</div><h3>Payout &amp; UPI</h3><p>Instant disbursals to bank accounts and UPI IDs.</p></div>
+      <div class="svc reveal a" data-cat="bank"><div class="ic">💳</div><h3>Card Swipe (mPOS)</h3><p>Accept debit/credit cards, settle to your wallet.</p></div>
+      <div class="svc reveal a" data-cat="bank"><div class="ic">💵</div><h3>CMS</h3><p>Cash collection for NBFCs and lenders.</p></div>
+      <div class="svc reveal a" data-cat="more"><div class="ic">🪪</div><h3>PAN Card</h3><p>New &amp; correction applications via NSDL/UTI.</p></div>
+      <div class="svc reveal a" data-cat="more"><div class="ic">✈️</div><h3>Travel Booking</h3><p>Flight, bus, train &amp; hotel bookings.</p></div>
+      <div class="svc reveal g" data-cat="more"><div class="ic">🛡️</div><h3>Insurance</h3><p>Motor, health, life &amp; travel cover.</p></div>
     </div>
   </section>
 
   <!-- Why -->
-  <section id="why" class="features">
+  <section id="why" class="why">
     <div class="wrap">
-      <h2 class="h2">Why partners choose TutiPays</h2>
-      <p class="lead">Built for retailers, distributors and master distributors who want to grow.</p>
+      <div class="eyebrow reveal">Why partners choose us</div>
+      <h2 class="h2 reveal">Built for retailers who want to grow</h2>
+      <p class="lead reveal">Everything you need to turn your shop into a full financial-services point.</p>
       <div class="feat">
-        <div class="fcard"><div class="ic">⚡</div><h3>Instant settlement</h3><p>Successful transactions reflect in your wallet immediately — no waiting.</p></div>
-        <div class="fcard"><div class="ic">💹</div><h3>Best commissions</h3><p>Transparent, slab-based commission on every service, credited automatically.</p></div>
-        <div class="fcard"><div class="ic">🔒</div><h3>Bank-grade security</h3><p>Encrypted, signature-verified transactions and a full audit trail.</p></div>
-        <div class="fcard"><div class="ic">🧑‍🤝‍🧑</div><h3>Build your network</h3><p>Onboard retailers under you and earn override commission on their business.</p></div>
-        <div class="fcard"><div class="ic">📱</div><h3>One simple panel</h3><p>Run every service, top up your wallet and track earnings from one dashboard.</p></div>
-        <div class="fcard"><div class="ic">🕔</div><h3>24×7 uptime</h3><p>Serve customers any time with a platform that’s always on.</p></div>
+        <div class="fcard reveal"><div class="ic">⚡</div><h3>Instant settlement</h3><p>Successful transactions reflect in your wallet immediately — no waiting.</p></div>
+        <div class="fcard reveal"><div class="ic">💹</div><h3>Best commissions</h3><p>Transparent, slab-based commission on every service, credited automatically.</p></div>
+        <div class="fcard reveal"><div class="ic">🔒</div><h3>Bank-grade security</h3><p>Encrypted, signature-verified transactions with a full audit trail.</p></div>
+        <div class="fcard reveal"><div class="ic">🧑‍🤝‍🧑</div><h3>Build your network</h3><p>Onboard members under you and earn override commission on their business.</p></div>
+        <div class="fcard reveal"><div class="ic">📱</div><h3>One simple panel</h3><p>Run every service, top up your wallet and track earnings from one dashboard.</p></div>
+        <div class="fcard reveal"><div class="ic">🎫</div><h3>Disputes &amp; support</h3><p>Raise a dispute by reference id and track it to resolution with SMS updates.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tiers -->
+  <section id="tiers" class="wrap">
+    <div class="eyebrow reveal">Choose your role</div>
+    <h2 class="h2 reveal">Earn at every level of the network</h2>
+    <p class="lead reveal">Start as a retailer, or build a network as a distributor — everyone earns commission.</p>
+    <div class="tiers">
+      <div class="tier reveal">
+        <div class="t-top"><div class="t-ic">🏪</div><div><div class="t-name">Retailer</div><div class="t-sub">Serve customers directly</div></div></div>
+        <ul><li>Run all 14 services from one wallet</li><li>Commission on every transaction</li><li>Printable receipt &amp; SMS for each</li><li>Withdraw earnings to your bank</li></ul>
+      </div>
+      <div class="tier feat-t reveal"><div class="ribbon">Popular</div>
+        <div class="t-top"><div class="t-ic">🧑‍💼</div><div><div class="t-name">Distributor</div><div class="t-sub">Onboard &amp; manage retailers</div></div></div>
+        <ul><li>Everything a retailer gets</li><li>Onboard retailers under you</li><li>Override commission on their business</li><li>Network dashboard &amp; reports</li></ul>
+      </div>
+      <div class="tier reveal">
+        <div class="t-top"><div class="t-ic">👑</div><div><div class="t-name">Master Distributor</div><div class="t-sub">Build a distributor network</div></div></div>
+        <ul><li>Onboard distributors &amp; retailers</li><li>Top-of-chain override earnings</li><li>Full downline visibility</li><li>Dedicated support</li></ul>
       </div>
     </div>
   </section>
 
   <!-- How -->
-  <section id="how" class="wrap">
-    <h2 class="h2">Start earning in 3 steps</h2>
-    <p class="lead">Sign up today and go live in minutes.</p>
-    <div class="steps">
-      <div class="step"><div class="num">1</div><h3>Create your account</h3><p>Sign up as a retailer or partner and complete a quick KYC.</p></div>
-      <div class="step"><div class="num">2</div><h3>Load your wallet</h3><p>Add funds to your TutiPays wallet through the payment gateway.</p></div>
-      <div class="step"><div class="num">3</div><h3>Serve &amp; earn</h3><p>Offer recharge, AEPS, transfers &amp; bills — earn commission on each.</p></div>
+  <section id="how" class="why">
+    <div class="wrap">
+      <div class="eyebrow reveal">Go live in minutes</div>
+      <h2 class="h2 reveal">Start earning in 3 steps</h2>
+      <div class="steps">
+        <div class="step reveal"><div class="num">1</div><h3>Create your account</h3><p>Sign up as a retailer or partner and complete a quick KYC.</p></div>
+        <div class="step reveal"><div class="num">2</div><h3>Load your wallet</h3><p>Add funds to your TutiPays wallet through the payment gateway.</p></div>
+        <div class="step reveal"><div class="num">3</div><h3>Serve &amp; earn</h3><p>Offer recharge, AEPS, transfers &amp; bills — earn commission on each.</p></div>
+      </div>
     </div>
-    <div class="cta-band" style="margin-top:40px">
-      <h2>Ready to grow your business?</h2>
-      <p>Join TutiPays and turn your shop into a full financial services point.</p>
-      <a class="btn light big" href="panel/?signup=1">Create your free account →</a>
+  </section>
+
+  <!-- Testimonials -->
+  <section class="wrap">
+    <div class="eyebrow reveal">What partners say</div>
+    <h2 class="h2 reveal">Trusted by shops across भारत</h2>
+    <div class="quotes reveal" id="quotes">
+      <div class="quote on"><p>“I run recharge, AEPS and bill payments from my mobile shop now. The wallet settles instantly and the commission is the best I've seen.”</p><div class="who"><div class="av">RK</div><div><b>Ravi Kumar</b><span>Retailer · Nagpur</span></div></div></div>
+      <div class="quote"><p>“Onboarding retailers under me was simple, and I can see every member's business and my override earnings in one dashboard.”</p><div class="who"><div class="av">SP</div><div><b>Sunita Patel</b><span>Distributor · Ahmedabad</span></div></div></div>
+      <div class="quote"><p>“Payouts and DMT are fast and reliable. When something needs attention I raise a dispute by reference id and it's tracked to resolution.”</p><div class="who"><div class="av">AM</div><div><b>Arjun Mehta</b><span>Master Distributor · Jaipur</span></div></div></div>
+    </div>
+    <div class="dots" id="dots"><i class="on"></i><i></i><i></i></div>
+  </section>
+
+  <!-- Band -->
+  <section class="wrap">
+    <div class="band reveal">
+      <div>
+        <h2>Ready to grow your business?</h2>
+        <p>Join TutiPays and turn your shop into a full financial-services point — free to start.</p>
+        <a class="btn light big" href="panel/?signup=1">Create your free account →</a>
+      </div>
+      <div class="art">🚀</div>
     </div>
   </section>
 
@@ -260,7 +406,53 @@
       </div>
     </div>
   </footer>
-  <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+
+  <script>
+    document.getElementById('yr').textContent = new Date().getFullYear();
+    // Sticky header shadow
+    var hdr = document.getElementById('hdr');
+    addEventListener('scroll', function(){ hdr.classList.toggle('stuck', scrollY > 8); }, { passive:true });
+
+    // Marquee content (duplicated for seamless loop)
+    var items = ['📱 Recharge','🏧 AEPS','💸 DMT','🧾 BBPS','🏦 Payouts','💳 Card Swipe','✈️ Travel','🛡️ Insurance','🪪 PAN','💵 CMS','🔁 Wallet transfer','⚡ Instant settlement'];
+    var track = document.getElementById('marq');
+    if (track) track.innerHTML = [].concat(items, items).map(function(t){ return '<span>'+t+'</span>'; }).join('');
+
+    // Scroll reveal + count-up
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (!e.isIntersecting) return;
+        e.target.classList.add('in');
+        e.target.querySelectorAll && e.target.querySelectorAll('[data-count]').forEach(countUp);
+        if (e.target.hasAttribute && e.target.hasAttribute('data-count')) countUp(e.target);
+        io.unobserve(e.target);
+      });
+    }, { threshold:.14 });
+    document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });
+    function countUp(el){
+      var target = +el.getAttribute('data-count'), suf = el.getAttribute('data-suffix')||'', t0 = null;
+      function tick(t){ if(!t0)t0=t; var p=Math.min((t-t0)/900,1); el.textContent = Math.round(p*target)+suf; if(p<1) requestAnimationFrame(tick); }
+      requestAnimationFrame(tick);
+    }
+
+    // Service tabs
+    document.querySelectorAll('.tabs button').forEach(function(b){
+      b.onclick = function(){
+        document.querySelectorAll('.tabs button').forEach(function(x){ x.classList.remove('on'); });
+        b.classList.add('on');
+        var cat = b.getAttribute('data-cat');
+        document.querySelectorAll('#svcgrid .svc').forEach(function(s){
+          s.style.display = (cat==='all' || s.getAttribute('data-cat')===cat) ? '' : 'none';
+        });
+      };
+    });
+
+    // Testimonials rotator
+    var qs = document.querySelectorAll('#quotes .quote'), dots = document.querySelectorAll('#dots i'), qi = 0;
+    function showQ(n){ qs.forEach(function(q,i){ q.classList.toggle('on', i===n); }); dots.forEach(function(d,i){ d.classList.toggle('on', i===n); }); qi=n; }
+    dots.forEach(function(d,i){ d.onclick = function(){ showQ(i); }; });
+    if (qs.length) setInterval(function(){ showQ((qi+1)%qs.length); }, 4500);
+  </script>
   <script src="brand.js"></script>
 </body>
 </html>
