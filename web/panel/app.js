@@ -225,6 +225,7 @@ const NAV = [
   { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'webhooks', label: 'Webhook Log', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'aistudio', label: '🤖 AI Integration Studio', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'devdesk', label: '🛠️ AI Dev Desk', roles: ['admin', 'staff'], perm: 'devdesk.manage', section: 'API & Providers' },
   { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
   { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
   { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
@@ -1401,6 +1402,10 @@ const Screens = {
         </div>
         <button class="btn" onclick="Actions.aiSaveModel()">Save AI settings</button>
         <span class="muted" style="margin-left:10px;font-size:12px">${ai?.is_active?'✅ AI is configured':'Not configured — the studio will still give you a fillable template.'}</span>
+        <div class="msg" style="margin-top:12px;background:#eef2ff">
+          🧩 <b>Using n8n with a free model?</b> Import our ready-made workflow, set its model + key, activate it, and paste its Production webhook URL above (mode: n8n).
+          <a href="/n8n-ai-provider-generator.json" download style="margin-left:6px">Download n8n workflow →</a>
+        </div>
       </div>
 
       <div class="panel mt"><h2>Build a provider from its API docs</h2>
@@ -1411,6 +1416,26 @@ const Screens = {
         <button class="btn" onclick="Actions.aiDraft()">✨ Generate config</button>
         <div id="ai_out"></div>
       </div>`;
+  },
+
+  // Admin: AI Dev Desk — file feature/bug requests, AI drafts the plan,
+  // approve to dispatch to automation. No developer spend.
+  async devdesk() {
+    const d = await Api.get('/admin/devdesk').catch(() => ({ items: [] }));
+    const kindIco = { feature:'✨', bug:'🐞', ui:'🎨' };
+    const rows = (d.items || []).map(r => `<tr>
+      <td class="mono">${esc(r.ticket_no||'')}</td>
+      <td>${kindIco[r.kind]||'•'} ${esc(r.title)}<div class="muted" style="font-size:11.5px">${esc(r.area||'')}${r.created_by_name?' · by '+esc(r.created_by_name):''}</div></td>
+      <td><span class="tag ${r.priority==='urgent'||r.priority==='high'?'pending':'active'}">${esc(r.priority)}</span></td>
+      <td>${UI.statusTag(r.status)}</td>
+      <td><button class="btn sm ghost" onclick="Actions.viewDev('${r.id}')">Open</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
+        <h2>🛠️ AI Dev Desk</h2><button class="btn sm" onclick="Actions.newDev()">＋ New request</button></div>
+        <p class="muted">File a feature request or bug. The AI drafts exactly what to build or fix (the plan), you approve it, and it's dispatched to your automation (n8n / coding agent) to open a PR — nothing is auto-deployed. Configure the AI under <a href="#/aistudio">AI Integration Studio</a>.</p>
+        <div class="msg" style="background:#eef2ff">🤖 <b>Turnkey dev agent:</b> import the ready-made n8n workflow that receives an approval, runs the free AI, and opens a draft PR. Set its GitHub token + AI model, then paste its webhook URL into <a href="#/website">Website → Automation webhook</a>.
+          <a href="/n8n-dev-agent.json" download style="margin-left:6px">Download dev-agent workflow →</a></div>
+        <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Request</th><th>Priority</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=5 class=muted>No requests yet — file the first one.</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Admin: manage upstream providers per service (multiple, one active).
@@ -2172,6 +2197,74 @@ const Actions = {
   },
 
   // ----- service providers (admin) -----
+  // ----- AI Dev Desk -----
+  newDev() {
+    UI.modal(`<h3>New request</h3>
+      <div class="field"><label>Type</label><select id="dv_kind">
+        <option value="feature">✨ Feature</option><option value="bug">🐞 Bug</option><option value="ui">🎨 UI / design</option></select></div>
+      <div class="field"><label>Title</label><input id="dv_title" placeholder="Short summary of what you want"></div>
+      <div class="field"><label>Area (optional)</label><input id="dv_area" placeholder="e.g. payout, retailer dashboard"></div>
+      <div class="field"><label>Priority</label><select id="dv_prio"><option>low</option><option selected>normal</option><option>high</option><option>urgent</option></select></div>
+      <div class="field"><label>Details</label><textarea id="dv_desc" rows="5" placeholder="Describe the feature or the bug (steps to reproduce, what you expected)…"></textarea></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveDev()">File request</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveDev() {
+    const body = { kind: val('dv_kind'), title: val('dv_title'), area: val('dv_area'), priority: val('dv_prio'), description: val('dv_desc') };
+    if (!body.title || body.title.length < 3) return UI.toast('Enter a title', 'err');
+    try { const r = await Api.post('/admin/devdesk', body); UI.closeModal(); UI.toast('Filed'); Actions.viewDev(r.request.id); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  _planBox(plan) {
+    if (!plan) return `<div class="muted" style="padding:8px 0">No plan yet. Click <b>AI: draft plan</b> to generate what to build/fix.</div>`;
+    const list = (t, arr, ic) => (arr && arr.length) ? `<div style="margin-top:8px"><b>${ic} ${t}</b><ul style="margin:4px 0">${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+    return `<div class="panel" style="background:#f7f8fb;margin-top:10px">
+      <div style="font-size:13px"><b>Summary:</b> ${esc(plan.summary||'')}
+        ${plan.effort?`&nbsp;<span class="tag active">${esc(plan.effort)}</span>`:''}
+        ${plan._source?`<span class="muted" style="font-size:11px">· ${plan._source==='ai'?('AI '+(plan._model||'')):'template'}</span>`:''}</div>
+      ${list('What to build / fix', plan.changes, '🔧')}
+      ${list('Areas / files', plan.areas, '📂')}
+      ${list('Risks', plan.risks, '⚠️')}
+      ${list('How to test', plan.tests, '✅')}</div>`;
+  },
+  async viewDev(id) {
+    const d = await Api.get('/admin/devdesk').catch(() => ({ items: [] }));
+    const r = (d.items || []).find(x => x.id === id);
+    if (!r) return UI.toast('Not found', 'err');
+    const done = ['approved','dispatched','done','rejected'].includes(r.status);
+    UI.modal(`<h3>${esc(r.ticket_no||'')} — ${esc(r.title)}</h3>
+      <div class="muted" style="font-size:12px">${esc(r.kind)} · ${esc(r.priority)} · ${UI.statusTag(r.status)} ${r.area?'· '+esc(r.area):''}</div>
+      <div style="white-space:pre-wrap;margin-top:8px;font-size:13px">${esc(r.description||'')}</div>
+      ${this._planBox(r.ai_plan)}
+      ${r.remark?`<div class="muted" style="margin-top:8px;font-size:12px">Remark: ${esc(r.remark)}</div>`:''}
+      <div class="foot" style="flex-wrap:wrap;gap:6px">
+        <button class="btn sm" onclick="Actions.triageDev('${r.id}')">🤖 AI: draft plan</button>
+        ${!done?`<button class="btn sm" onclick="Actions.approveDev('${r.id}')">✅ Approve &amp; dispatch</button>
+        <button class="btn sm ghost" onclick="Actions.rejectDev('${r.id}')">Reject</button>`:''}
+        ${r.status==='approved'?`<button class="btn sm ghost" onclick="Actions.devStatus('${r.id}','dispatched')">Mark dispatched</button>`:''}
+        ${(r.status==='approved'||r.status==='dispatched')?`<button class="btn sm ghost" onclick="Actions.devStatus('${r.id}','done')">Mark done</button>`:''}
+        <button class="btn sm ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async triageDev(id) {
+    UI.toast('Drafting plan…');
+    try { const r = await Api.post(`/admin/devdesk/${id}/triage`, {}); UI.toast(r.source==='ai'?'AI plan ready':'Template plan (configure AI)'); Actions.viewDev(id); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async approveDev(id) {
+    const remark = prompt('Approval note (what to build/fix, any constraints):', 'Approved — proceed'); if (remark === null) return;
+    try { await Api.post(`/admin/devdesk/${id}/approve`, { remark }); UI.closeModal(); UI.toast('Approved & dispatched to automation'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async rejectDev(id) {
+    const remark = prompt('Reason for rejection:'); if (remark === null) return;
+    try { await Api.post(`/admin/devdesk/${id}/reject`, { remark }); UI.closeModal(); UI.toast('Rejected'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async devStatus(id, status) {
+    try { await Api.post(`/admin/devdesk/${id}/status`, { status }); UI.closeModal(); UI.toast('Updated'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+
   // ----- AI Integration Studio -----
   async aiSaveModel() {
     const mode = val('ai_mode'), url = val('ai_url'), key = val('ai_key'), model = val('ai_model') || 'gpt-4o-mini';
@@ -2205,8 +2298,10 @@ const Actions = {
         <div class="row" style="gap:8px">
           <select id="ai_testsvc" style="max-width:160px">${services.map(s=>`<option>${esc(s)}</option>`).join('')}</select>
           <button class="btn sm ghost" onclick="Actions.aiTest()">🧪 Test mapping</button>
+          <button class="btn sm ghost" onclick="Actions.aiLiveTest()">🔴 Live call</button>
           <button class="btn" onclick="Actions.aiSaveProvider()">💾 Save &amp; activate provider</button>
         </div>
+        <p class="muted" style="font-size:11.5px;margin:6px 0 0">🔴 <b>Live call</b> sends a real request to the provider with test data — use sandbox / UAT credentials.</p>
         <div id="ai_test"></div>`;
     } catch (err) { UI.toast(err.message, 'err'); }
   },
@@ -2223,6 +2318,30 @@ const Actions = {
         ${r.url?`<div class="mono" style="font-size:12px;margin-top:8px"><b>${esc(r.method)}</b> ${esc(r.url)}</div>
         <div class="muted" style="font-size:12px;margin-top:6px">Headers: <span class="mono">${esc(JSON.stringify(r.headers))}</span></div>
         <pre style="background:#111;color:#eee;border-radius:8px;padding:10px;overflow:auto;font-size:12px;margin-top:8px">${esc(JSON.stringify(r.body, null, 2))}</pre>`:''}</div>`;
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async aiLiveTest() {
+    const config = this._parseAiJson(); if (!config) return;
+    const body = { service: val('ai_testsvc'), live: true, config, creds: {
+      base_url: '', api_key: val('ai_ckey'), api_secret: val('ai_csecret'), auth_token: val('ai_ctoken'), partner_id: val('ai_cpartner') } };
+    UI.toast('Calling provider…');
+    try {
+      const r = await Api.post('/admin/integrations/provider-test', body);
+      if (!r.live) { // mapping failed validation — show the same problems view
+        $('ai_test').innerHTML = `<div class="panel mt" style="background:#fef7e0"><b>⚠️ Fix the mapping first</b>
+          <ul>${(r.problems||[]).map(p=>`<li>${esc(p)}</li>`).join('')}</ul></div>`;
+        return;
+      }
+      const st = r.result?.status || 'pending';
+      $('ai_test').innerHTML = `<div class="panel mt" style="background:${st==='success'?'#f0fbf4':st==='failed'?'#fdecea':'#fef7e0'}">
+        <b>🔴 Live provider response</b> &nbsp; ${UI.statusTag(st)}
+        <div class="mono" style="font-size:12px;margin-top:8px">${esc(r.request?.method||'POST')} ${esc(r.request?.url||'')}</div>
+        <div style="font-size:12.5px;margin-top:8px">
+          ${r.result?.providerRef?`Provider ref: <b class="mono">${esc(r.result.providerRef)}</b><br>`:''}
+          ${r.result?.utr?`UTR: <b class="mono">${esc(r.result.utr)}</b><br>`:''}
+          ${r.result?.message?`Message: ${esc(r.result.message)}`:''}
+        </div>
+        <pre style="background:#111;color:#eee;border-radius:8px;padding:10px;overflow:auto;font-size:12px;margin-top:8px">${esc(JSON.stringify(r.result?.raw ?? {}, null, 2))}</pre></div>`;
     } catch (err) { UI.toast(err.message, 'err'); }
   },
   async aiSaveProvider() {

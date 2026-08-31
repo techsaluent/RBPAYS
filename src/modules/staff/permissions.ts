@@ -26,6 +26,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'website.manage', label: 'Website & branding', group: 'Config' },
   { key: 'risk.manage', label: 'Risk & AML, onboarding scoring', group: 'Risk' },
   { key: 'disputes.manage', label: 'Disputes / complaints desk', group: 'Ops' },
+  { key: 'devdesk.manage', label: 'AI Dev Desk (feature / bug requests)', group: 'Config' },
   { key: 'ledger.view', label: 'Ledger (read-only)', group: 'Audit' },
   { key: 'staff.manage', label: 'Manage staff & permissions', group: 'Admin' },
 ];
@@ -82,6 +83,7 @@ export function permissionForPath(path: string, method: string): string | null |
   if (/^\/site\b/.test(path)) return 'website.manage';
   if (/^\/integrations\b/.test(path)) return 'integrations.manage';
   if (/^\/provider-events\b/.test(path)) return 'integrations.manage';
+  if (/^\/devdesk\b/.test(path)) return 'devdesk.manage';
 
   if (/^\/tax(\b|-config)/.test(path) || /^\/tds\b/.test(path) || /^\/gst\b/.test(path)) return 'tax.manage';
 
