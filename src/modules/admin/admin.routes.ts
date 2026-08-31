@@ -18,6 +18,8 @@ import { createMember } from '../members/members.service';
 import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
 import { refreshProviderRegistry } from '../../providers/registry';
+import { dryRunDynamic } from '../../providers/dynamic';
+import { draftProviderConfig } from '../ai/ai.service';
 import { postJournal } from '../_shared/ledger';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
@@ -1585,6 +1587,67 @@ router.post(
 );
 
 // ---------------------------------------------------------------------
+// AI Integration Studio — draft a `dynamic` provider config from pasted docs,
+// then self-test the mapping before saving/activating. No developer, no deploy.
+// ---------------------------------------------------------------------
+const aiDraftSchema = z.object({
+  docs: z.string().trim().max(60000).default(''),
+  services: z.array(z.string().trim().min(1).max(40)).max(14).default([]),
+});
+router.post(
+  '/integrations/ai-draft',
+  validate(aiDraftSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof aiDraftSchema>;
+    const draft = await draftProviderConfig(b.docs, b.services);
+    res.json(draft);
+  }),
+);
+
+// Self-test a dynamic config (dry run): resolve the request the platform would
+// send for a sample transaction, so the mapping is validated before going live.
+const providerTestSchema = z.object({
+  service: z.string().trim().min(1).max(40),
+  config: z.record(z.any()),
+  creds: z
+    .object({
+      base_url: z.string().trim().optional(),
+      api_key: z.string().trim().optional(),
+      api_secret: z.string().trim().optional(),
+      auth_token: z.string().trim().optional(),
+      partner_id: z.string().trim().optional(),
+    })
+    .optional(),
+  sample: z.record(z.string()).optional(),
+});
+router.post(
+  '/integrations/provider-test',
+  validate(providerTestSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof providerTestSchema>;
+    const defaults: Record<string, string> = {
+      reference: 'TESTREF12345678', amount: '100.00', amount_paise: '10000',
+      account_number: '000201548796', ifsc: 'ICIC0000002', beneficiary_name: 'Test Payee',
+      mode: 'IMPS', operator: 'Jio', number: '9812345678', recharge_type: 'prepaid',
+      biller_id: 'MSEB00000MAH01', consumer_number: '180012345678', category: 'electricity', vpa: 'test@okhdfcbank',
+    };
+    const result = dryRunDynamic(
+      {
+        baseUrl: b.creds?.base_url ?? '',
+        apiKey: b.creds?.api_key ?? '',
+        apiSecret: b.creds?.api_secret ?? '',
+        authToken: b.creds?.auth_token ?? '',
+        partnerId: b.creds?.partner_id ?? '',
+        extra: b.config,
+      },
+      b.service,
+      { ...defaults, ...(b.sample ?? {}) },
+    );
+    res.json(result);
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Service providers — multiple per service, one active (routing target)
 // ---------------------------------------------------------------------
 router.get(
@@ -1611,7 +1674,7 @@ router.get(
 
 const providerSchema = z.object({
   label: z.string().trim().min(2).max(120),
-  driver: z.enum(['sandbox', 'aggregator', 'razorpay', 'generic', 'aeronpay', 'eko']).default('sandbox'),
+  driver: z.enum(['sandbox', 'aggregator', 'razorpay', 'generic', 'aeronpay', 'eko', 'dynamic']).default('sandbox'),
   base_url: z.string().trim().max(300).optional(),
   api_key: z.string().trim().max(300).optional(),
   api_secret: z.string().trim().max(300).optional(),
