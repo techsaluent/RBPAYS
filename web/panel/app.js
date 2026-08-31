@@ -58,6 +58,28 @@ const taxFyOptions = () => {
 const _rangeCtl = (pfx) => `<div class="row" style="gap:6px;align-items:end">
   <div class="field" style="margin:0"><label>From</label><input id="${pfx}_from" type="date"></div>
   <div class="field" style="margin:0"><label>To</label><input id="${pfx}_to" type="date"></div></div>`;
+
+// Dependency-free SVG bar chart. values: number[]; labels: string[] (optional).
+// fmt formats the tooltip value. Renders a responsive, theme-friendly chart.
+const barChart = (values, labels, fmt) => {
+  const W = 720, H = 180, pad = 24, n = values.length || 1;
+  const max = Math.max(1, ...values);
+  const bw = (W - pad * 2) / n;
+  const f = fmt || (v => v);
+  const bars = values.map((v, i) => {
+    const h = Math.round((v / max) * (H - pad * 2));
+    const x = pad + i * bw, y = H - pad - h;
+    const lbl = labels && labels[i] ? labels[i] : '';
+    return `<rect x="${x + bw * 0.15}" y="${y}" width="${bw * 0.7}" height="${h}" rx="2" fill="#3d43e0" opacity="0.85">
+      <title>${esc(lbl)}: ${esc(f(v))}</title></rect>`;
+  }).join('');
+  // sparse x labels (first, mid, last)
+  const tick = (i) => labels && labels[i] ? `<text x="${pad + i * bw + bw / 2}" y="${H - 6}" font-size="10" fill="#6b7488" text-anchor="middle">${esc(labels[i])}</text>` : '';
+  const ticks = n > 2 ? tick(0) + tick(Math.floor(n / 2)) + tick(n - 1) : values.map((_, i) => tick(i)).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
+    <line x1="${pad}" y1="${H - pad}" x2="${W - pad}" y2="${H - pad}" stroke="#e7e9f4"/>
+    ${bars}${ticks}</svg>`;
+};
 const $ = (id) => document.getElementById(id);
 
 // ---------------- API client ----------------
@@ -238,6 +260,7 @@ const NAV = [
   { key: 'wallet', label: 'Wallet', roles: NETWORK_ROLES },
   { key: 'addmoney', label: 'Add Money', roles: NETWORK_ROLES },
   { key: 'txns', label: 'Transactions', roles: NETWORK_ROLES },
+  { key: 'myearnings', label: 'My Earnings', roles: NETWORK_ROLES },
   { key: 'mydisputes', label: 'My Disputes', roles: NETWORK_ROLES },
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
@@ -245,6 +268,7 @@ const NAV = [
   { key: 'profile', label: 'Profile', roles: '*' },
   { key: 'security', label: 'Security', roles: '*' },
   // Admin console — grouped into sidebar sections; each maps to a staff permission.
+  { key: 'analytics', label: '📊 Analytics', roles: ['admin', 'staff'], section: 'Users & KYC' },
   { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review', section: 'Users & KYC' },
   { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
@@ -1701,6 +1725,60 @@ const Screens = {
       <div class="tbl-wrap"><table>
       <thead><tr><th>Label</th><th>Driver</th><th>Base URL</th><th>Active</th><th>Key</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=6 class=muted>No providers — add one</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: business analytics — GTV/revenue trend, service mix, top members.
+  async analytics() {
+    const days = Actions._anDays || 30;
+    const d = await Api.get('/analytics/platform?days=' + days);
+    const gtv = d.daily.map(x => x.gtv_paise / 100);
+    const rev = d.daily.map(x => x.revenue_paise / 100);
+    const labels = d.daily.map(x => x.day.slice(5));
+    const mixTotal = d.service_mix.reduce((a, s) => a + s.gtv_paise, 0) || 1;
+    const rangeBtns = [7, 30, 90].map(n => `<button class="btn sm ${days===n?'':'ghost'}" onclick="Actions._anDays=${n};App.route()">${n}d</button>`).join(' ');
+    $('view').innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">Analytics</h2><div class="row" style="gap:6px">${rangeBtns}</div></div>
+      <div class="grid cards mt">
+        ${UI.stat('a','💸','GTV ('+days+'d)', money(d.totals.gtv_paise/100))}
+        ${UI.stat('b','🏦','Platform revenue', money(d.totals.revenue_paise/100))}
+        ${UI.stat('c','🧾','Transactions', d.totals.count)}
+      </div>
+      <div class="panel mt"><h2>Gross transaction value (daily)</h2>${barChart(gtv, labels, v => '₹'+v.toLocaleString('en-IN'))}</div>
+      <div class="panel mt"><h2>Platform revenue (daily)</h2>${barChart(rev, labels, v => '₹'+v.toLocaleString('en-IN'))}</div>
+      <div class="panel mt"><h2>Service mix</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th class="right">Txns</th><th class="right">GTV</th><th>Share</th></tr></thead>
+        <tbody>${d.service_mix.map(s => `<tr><td>${esc(s.service)}</td><td class="right">${s.count}</td>
+          <td class="right">${money(s.gtv_paise/100)}</td>
+          <td><div style="background:#eef1f8;border-radius:4px;height:10px;width:120px;overflow:hidden"><div style="background:#3d43e0;height:10px;width:${Math.round(s.gtv_paise/mixTotal*100)}%"></div></div></td></tr>`).join('') || '<tr><td colspan=4 class=muted>No data</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><h2>Top members by GTV</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Member</th><th>Role</th><th class="right">Txns</th><th class="right">GTV</th></tr></thead>
+        <tbody>${d.top_members.map(m => `<tr><td>${esc(m.full_name)}</td><td>${esc((m.role||'').replace(/_/g,' '))}</td>
+          <td class="right">${m.count}</td><td class="right">${money(m.gtv_paise/100)}</td></tr>`).join('') || '<tr><td colspan=4 class=muted>No data</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Member: my earnings + activity analytics.
+  async myearnings() {
+    const days = Actions._anDays || 30;
+    const d = await Api.get('/analytics/me?days=' + days);
+    const earned = d.daily.map(x => x.earned_paise / 100);
+    const gtv = d.daily.map(x => x.gtv_paise / 100);
+    const labels = d.daily.map(x => x.day.slice(5));
+    const mixTotal = d.service_mix.reduce((a, s) => a + s.gtv_paise, 0) || 1;
+    const rangeBtns = [7, 30, 90].map(n => `<button class="btn sm ${days===n?'':'ghost'}" onclick="Actions._anDays=${n};App.route()">${n}d</button>`).join(' ');
+    $('view').innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">My Earnings</h2><div class="row" style="gap:6px">${rangeBtns}</div></div>
+      <div class="grid cards mt">
+        ${UI.stat('a','🎁','Commission earned ('+days+'d)', money(d.totals.earned_paise/100))}
+        ${UI.stat('b','💸','My volume (GTV)', money(d.totals.gtv_paise/100))}
+        ${UI.stat('c','🧾','Transactions', d.totals.count)}
+      </div>
+      <div class="panel mt"><h2>Commission earned (daily)</h2>${barChart(earned, labels, v => '₹'+v.toLocaleString('en-IN'))}</div>
+      <div class="panel mt"><h2>My transaction volume (daily)</h2>${barChart(gtv, labels, v => '₹'+v.toLocaleString('en-IN'))}</div>
+      <div class="panel mt"><h2>My service mix</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th class="right">Txns</th><th class="right">Volume</th><th>Share</th></tr></thead>
+        <tbody>${d.service_mix.map(s => `<tr><td>${esc(s.service)}</td><td class="right">${s.count}</td>
+          <td class="right">${money(s.gtv_paise/100)}</td>
+          <td><div style="background:#eef1f8;border-radius:4px;height:10px;width:120px;overflow:hidden"><div style="background:#3d43e0;height:10px;width:${Math.round(s.gtv_paise/mixTotal*100)}%"></div></div></td></tr>`).join('') || '<tr><td colspan=4 class=muted>No activity yet</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Admin: recharge operator + BBPS biller catalog. Members' dropdowns read
