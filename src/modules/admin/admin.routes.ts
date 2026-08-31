@@ -1056,6 +1056,38 @@ router.get(
   }),
 );
 
+// Stale-pending report: transactions the provider never gave a final status for.
+router.get(
+  '/recon/pending',
+  validate(z.object({ older_than_min: z.coerce.number().int().min(0).max(100000).default(120) }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { older_than_min } = req.query as unknown as { older_than_min: number };
+    const { listStalePending } = await import('../recon/autoRecon');
+    const items = await listStalePending(older_than_min);
+    res.json({ older_than_min, count: items.length, items });
+  }),
+);
+
+// Sweep stale pendings to failed (reverses the debit, refunding the member).
+// Guarded: older_than_min must be >= 60 so a hasty small window can't nuke
+// transactions that are still legitimately in flight.
+router.post(
+  '/recon/sweep',
+  validate(z.object({
+    older_than_min: z.coerce.number().int().min(60).max(100000),
+    remark: z.string().trim().min(3).max(200).default('Auto-recon: stale pending swept to failed'),
+  })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as { older_than_min: number; remark: string };
+    const { sweepStalePending } = await import('../recon/autoRecon');
+    const result = await sweepStalePending(b.older_than_min, b.remark);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'recon.sweep',
+      targetType: 'recon', targetId: 'pending', detail: { older_than_min: b.older_than_min, swept: result.swept, failed: result.failed } });
+    res.json(result);
+  }),
+);
+
 router.get(
   '/recon/batches/:id',
   asyncHandler(async (req: Request, res: Response) => {

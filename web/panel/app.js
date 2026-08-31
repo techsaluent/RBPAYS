@@ -1265,6 +1265,13 @@ const Screens = {
         <div class="field"><label>Label</label><input id="rc_label" value="EOD ${new Date().toISOString().slice(0,10)}"></div>
         <div class="field"><label>MIS rows (JSON)</label><textarea id="rc_rows" rows="6" style="width:100%;font-family:monospace">[{"reference":"","bank_status":"settled"}]</textarea></div>
         <button class="btn" onclick="Actions.runRecon()">Run reconciliation</button></div>
+      <div class="panel mt"><h2>Stale pending sweep (auto-recon)</h2>
+        <p class="muted">Find transactions stuck in <b>pending</b> — the provider never sent a final status — and fail them, which reverses the debit and refunds the member. Idempotent: a late callback on a swept txn is a no-op. The background sweeper runs this automatically when <b>Auto-recon</b> is set under Website settings.</p>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0"><label>Older than (minutes)</label><input id="sweep_min" type="number" value="120" min="60" style="max-width:140px"></div>
+          <button class="btn sm ghost" onclick="Actions.listStale()">Preview</button>
+          <button class="btn sm" onclick="Actions.sweepStale()">Sweep &amp; refund</button></div>
+        <div id="stale_out" class="muted mt">Preview to see how many pendings are stale.</div></div>
       <div class="panel mt"><h2>Recent batches</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Label</th><th>Records</th><th class="right">Matched</th><th class="right">Force-settled</th><th class="right">Exceptions</th><th>When</th></tr></thead>
         <tbody>${rows || '<tr><td colspan=6 class=muted>No batches yet</td></tr>'}</tbody></table></div></div>`;
@@ -1514,6 +1521,8 @@ const Screens = {
         ${field('duplicate_txn_window_minutes','Duplicate-block window (minutes)','5')}
         <p class="muted mt">Default resolution <b>SLA</b> for disputes (hours). The desk flags anything past its deadline as overdue. Money-stuck complaints (not credited / double charge / wrong amount) auto-use a tighter 12h target.</p>
         ${field('dispute_sla_hours','Dispute SLA (hours)','24')}
+        <p class="muted mt"><b>Auto-reconciliation</b> — automatically fail &amp; refund transactions stuck in <i>pending</i> for this many hours (the provider never sent a final status). <b>0</b> = off. Runs in the background; you can also sweep manually under Reconciliation.</p>
+        ${field('auto_recon_hours','Auto-recon after (hours, 0 = off)','0')}
         <h2 class="mt">Webhooks &amp; callbacks</h2>
         <p class="muted">Give these callback URLs to your payout / DMT / recharge provider. The aggregator secret below signs incoming callbacks (HMAC-SHA256).</p>
         <div class="field"><label>Aggregator callback URL</label><input value="${esc(location.origin)}/api/v1/webhooks/aggregator" readonly onclick="this.select()"></div>
@@ -2091,6 +2100,28 @@ const Actions = {
       UI.toast(`Recon: ${d.summary.matched} matched, ${d.summary.forceSettled} force-settled, ${d.summary.exceptions} exceptions`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  async listStale() {
+    const min = Math.max(0, parseInt(val('sweep_min')) || 120);
+    try {
+      const d = await Api.get('/admin/recon/pending?older_than_min=' + min);
+      const out = $('stale_out'); if (!out) return;
+      if (!d.count) { out.innerHTML = `<span class="muted">No pending transactions older than ${min} min.</span>`; return; }
+      out.innerHTML = `<b>${d.count}</b> stale pending (older than ${min} min):
+        <div class="tbl-wrap mt"><table><thead><tr><th>Ref</th><th>Service</th><th class="right">Amount</th><th class="right">Age (min)</th></tr></thead>
+        <tbody>${d.items.slice(0,50).map(t=>`<tr><td class="mono">${esc(t.reference)}</td><td>${esc(t.service)}</td>
+          <td class="right">${money((t.amount_paise||0)/100)}</td><td class="right">${t.age_minutes}</td></tr>`).join('')}</tbody></table></div>`;
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async sweepStale() {
+    const min = Math.max(60, parseInt(val('sweep_min')) || 120);
+    if (min < 60) return UI.toast('Window must be at least 60 minutes', 'err');
+    if (!confirm(`Fail & refund all pending transactions older than ${min} minutes? This reverses each debit to the member.`)) return;
+    try {
+      const d = await Api.post('/admin/recon/sweep', { older_than_min: min, remark: 'Manual stale-pending sweep' });
+      UI.toast(`Swept ${d.swept} pending → failed${d.failed?`, ${d.failed} errors`:''}`);
+      Actions.listStale();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
   async createBatch() {
     let records;
     try { records = JSON.parse(val('bp_rows')); } catch { return UI.toast('Records must be valid JSON', 'err'); }
@@ -2413,7 +2444,7 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';

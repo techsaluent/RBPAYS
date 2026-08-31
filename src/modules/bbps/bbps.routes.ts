@@ -8,7 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getBbpsProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
-import { resolveProviderChoice } from '../_shared/providerChoice';
+import { resolveProviderChoice, failoverCandidates } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -101,6 +101,18 @@ router.post(
           category: body.category,
           providerId,
         }),
+      failover: {
+        candidates: failoverCandidates('bbps', providerId),
+        call: (pid, { reference }) =>
+          getBbpsProvider(pid).pay({
+            reference,
+            amountPaise,
+            billerId: body.biller_id,
+            consumerNumber: body.consumer_number,
+            category: body.category,
+            providerId: pid,
+          }),
+      },
     });
 
     res.status(idempotent ? 200 : 201).json({ transaction, idempotent });

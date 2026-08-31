@@ -8,7 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getPayoutProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
-import { resolveProviderChoice } from '../_shared/providerChoice';
+import { resolveProviderChoice, failoverCandidates } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -75,6 +75,19 @@ router.post(
           mode: body.mode,
           providerId,
         }),
+      failover: {
+        candidates: failoverCandidates('payout', providerId),
+        call: (pid, { reference }) =>
+          getPayoutProvider(pid).payout({
+            reference,
+            amountPaise,
+            beneficiaryName: body.beneficiary_name,
+            accountNumber: body.account_number,
+            ifsc: body.ifsc,
+            mode: body.mode,
+            providerId: pid,
+          }),
+      },
     });
 
     res.status(idempotent ? 200 : 201).json({ transaction, idempotent });

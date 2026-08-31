@@ -8,7 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getDmtProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
-import { resolveProviderChoice } from '../_shared/providerChoice';
+import { resolveProviderChoice, failoverCandidates } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 import { env } from '../../config/env';
 import { assertNotDmtStructuring } from '../risk/risk.service';
@@ -105,6 +105,19 @@ router.post(
           mode: body.mode,
           providerId,
         }),
+      failover: {
+        candidates: failoverCandidates('dmt', providerId),
+        call: (pid, { reference }) =>
+          getDmtProvider(pid).transfer({
+            reference,
+            amountPaise,
+            beneficiaryName: body.beneficiary_name,
+            accountNumber: body.account_number,
+            ifsc: body.ifsc,
+            mode: body.mode,
+            providerId: pid,
+          }),
+      },
     });
 
     res.status(idempotent ? 200 : 201).json({ transaction, idempotent });

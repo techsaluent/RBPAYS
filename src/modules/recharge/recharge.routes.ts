@@ -8,7 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getRechargeProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
-import { resolveProviderChoice } from '../_shared/providerChoice';
+import { resolveProviderChoice, failoverCandidates } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -99,6 +99,21 @@ router.post(
           circle: body.circle,
           providerId,
         }),
+      // Auto-failover across active providers (kicks in only when the admin has
+      // activated 2+ providers for recharge; advances only on a hard failure).
+      failover: {
+        candidates: failoverCandidates('recharge', providerId),
+        call: (pid, { reference }) =>
+          getRechargeProvider(pid).recharge({
+            reference,
+            amountPaise,
+            operator: body.operator,
+            number: body.number,
+            rechargeType: body.recharge_type,
+            circle: body.circle,
+            providerId: pid,
+          }),
+      },
     });
 
     res.status(idempotent ? 200 : 201).json({ transaction, idempotent });
