@@ -30,6 +30,13 @@ const ADMIN_PORTAL = window.ADMIN_PORTAL === true
 const MEMBER_ROLES = ['retailer', 'distributor', 'master_distributor'];
 const money = (v) => '₹' + Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+// Condense a User-Agent string to something recognisable in the sessions list.
+const uaShort = (ua) => {
+  if (!ua) return 'Unknown device';
+  const os = /Windows/i.test(ua) ? 'Windows' : /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iOS/i.test(ua) ? 'iOS' : /Mac OS X|Macintosh/i.test(ua) ? 'macOS' : /Linux/i.test(ua) ? 'Linux' : '';
+  const br = /Edg\//i.test(ua) ? 'Edge' : /Chrome\//i.test(ua) ? 'Chrome' : /Firefox\//i.test(ua) ? 'Firefox' : /Safari\//i.test(ua) ? 'Safari' : /curl|PostmanRuntime|okhttp|Dart|python|node/i.test(ua) ? 'API client' : 'Browser';
+  return [br, os].filter(Boolean).join(' · ') || ua.slice(0, 40);
+};
 const $ = (id) => document.getElementById(id);
 
 // ---------------- API client ----------------
@@ -68,6 +75,7 @@ const Auth = {
     const f = e.target;
     const body = { identifier: f.identifier.value.trim(), password: f.password.value };
     if (f.mpin && f.mpin.value.trim()) body.mpin = f.mpin.value.trim();
+    if (f.totp && f.totp.value.trim()) body.totp = f.totp.value.trim();
     try {
       const d = await Api.post('/auth/login', body, false);
       // Keep the two portals separate: the admin console (super admin + staff)
@@ -90,6 +98,12 @@ const Auth = {
         $('mpin-field').classList.remove('hidden');
         $('mpin-field').querySelector('input').focus();
         UI.authMsg('Enter your MPIN to continue.', 'ok');
+      } else if (err.code === 'totp_required') {
+        $('totp-field').classList.remove('hidden');
+        $('totp-field').querySelector('input').focus();
+        UI.authMsg('Enter the 6-digit code from your authenticator app.', 'ok');
+      } else if (err.code === 'account_locked') {
+        UI.authMsg(err.message, 'err');
       } else { UI.authMsg(err.message, 'err'); }
     }
     return false;
@@ -545,12 +559,17 @@ const Screens = {
       ${companyNote}`;
   },
 
-  // Account security: change password, set/remove login MPIN.
+  // Account security: change password, set/remove login MPIN, authenticator
+  // 2FA, and active-session management.
   async security() {
-    const s = await Api.get('/security').catch(() => ({ mpin_set: false }));
+    const s = await Api.get('/security').catch(() => ({ mpin_set: false, totp_enabled: false, pending: false }));
     $('view').innerHTML = `
-      <div class="grid cards"><div class="card"><div class="k">Login MPIN (PIN)</div>
-        <div class="v" style="font-size:18px">${s.mpin_set ? UI.statusTag('verified') : '<span class="tag">not set</span>'}</div></div></div>
+      <div class="grid cards">
+        <div class="card"><div class="k">Login MPIN (PIN)</div>
+          <div class="v" style="font-size:18px">${s.mpin_set ? UI.statusTag('verified') : '<span class="tag">not set</span>'}</div></div>
+        <div class="card"><div class="k">Authenticator 2FA</div>
+          <div class="v" style="font-size:18px">${s.totp_enabled ? UI.statusTag('verified') : '<span class="tag">off</span>'}</div></div>
+      </div>
       <div class="panel mt" style="max-width:480px"><h2>Change password</h2>
         <div class="field"><label>Current password</label><input id="cp_cur" type="password"></div>
         <div class="field"><label>New password (min 8)</label><input id="cp_new" type="password"></div>
@@ -560,7 +579,39 @@ const Screens = {
         <div class="field"><label>Current password</label><input id="mp_pw" type="password"></div>
         <div class="field"><label>${s.mpin_set ? 'New ' : ''}MPIN (4-6 digits)</label><input id="mp_pin" type="password" inputmode="numeric" maxlength="6"></div>
         <button class="btn" onclick="Actions.setMpin()">${s.mpin_set ? 'Change' : 'Set'} MPIN</button>
-        ${s.mpin_set ? `<button class="btn ghost mt" onclick="Actions.removeMpin()">Remove MPIN</button>` : ''}</div>`;
+        ${s.mpin_set ? `<button class="btn ghost mt" onclick="Actions.removeMpin()">Remove MPIN</button>` : ''}</div>
+
+      <div class="panel mt" style="max-width:480px"><h2>Authenticator app (2FA)</h2>
+        ${s.totp_enabled ? `
+          <p class="muted">Two-factor authentication is <b>on</b>. A 6-digit code from your authenticator app is required at every login.</p>
+          <div class="field"><label>Current password (to turn off)</label><input id="tf_pw" type="password"></div>
+          <button class="btn danger" onclick="Actions.disable2fa()">Disable 2FA</button>
+        ` : `
+          <p class="muted">Add a strong second factor using Google Authenticator, Authy, 1Password, or any TOTP app.</p>
+          <div id="tf_setup"><button class="btn" onclick="Actions.start2fa()">Set up authenticator</button></div>
+        `}</div>
+
+      <div class="panel mt" style="max-width:640px"><h2>Active sessions</h2>
+        <p class="muted">Devices currently signed in to your account. Revoke any you don't recognise.</p>
+        <div id="sess_list" class="muted">Loading…</div>
+        <button class="btn ghost mt" onclick="Actions.revokeAllSessions()">Log out of all sessions</button></div>`;
+    this._loadSessions();
+  },
+
+  async _loadSessions() {
+    const box = $('sess_list'); if (!box) return;
+    try {
+      const { sessions } = await Api.get('/security/sessions');
+      if (!sessions.length) { box.innerHTML = '<span class="muted">No active sessions.</span>'; return; }
+      box.innerHTML = `<table class="tbl"><thead><tr><th>Device</th><th>IP</th><th>Last used</th><th></th></tr></thead><tbody>${
+        sessions.map((x) => `<tr>
+          <td>${esc(uaShort(x.user_agent))}</td>
+          <td>${esc(x.ip || '—')}</td>
+          <td>${x.last_used_at ? new Date(x.last_used_at).toLocaleString('en-IN') : '—'}</td>
+          <td style="text-align:right"><button class="btn ghost sm" onclick="Actions.revokeSession('${x.id}')">Revoke</button></td>
+        </tr>`).join('')
+      }</tbody></table>`;
+    } catch { box.innerHTML = '<span class="muted">Could not load sessions.</span>'; }
   },
 
   // Member self-service KYC: submit documents and see status.
@@ -1976,6 +2027,45 @@ const Actions = {
     const pw = prompt('Enter your current password to remove the MPIN:');
     if (!pw) return;
     try { await Api.call('/security/mpin', { method: 'DELETE', body: { current_password: pw } }); UI.toast('MPIN removed'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- authenticator 2FA -----
+  async start2fa() {
+    try {
+      const r = await Api.post('/security/2fa/setup', {});
+      const box = $('tf_setup');
+      box.innerHTML = `
+        <p class="muted">1. Add this key to your authenticator app (Google Authenticator, Authy, 1Password…):</p>
+        <div class="field"><label>Secret key (manual entry)</label>
+          <input value="${esc(r.secret)}" readonly onclick="this.select()" style="font-family:monospace;letter-spacing:1px"></div>
+        <p class="muted" style="word-break:break-all">Or open this link on the phone: <a href="${esc(r.otpauth_uri)}">${esc(r.otpauth_uri)}</a></p>
+        <p class="muted">2. Enter the current 6-digit code to turn it on:</p>
+        <div class="field"><label>Authenticator code</label><input id="tf_code" inputmode="numeric" maxlength="6" placeholder="000000"></div>
+        <button class="btn" onclick="Actions.enable2fa()">Verify &amp; enable</button>`;
+      $('tf_code').focus();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async enable2fa() {
+    const token = val('tf_code');
+    if (!/^\d{6}$/.test(token)) return UI.toast('Enter the 6-digit code', 'err');
+    try { await Api.post('/security/2fa/enable', { token }); UI.toast('Two-factor authentication enabled'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async disable2fa() {
+    const current_password = val('tf_pw');
+    if (!current_password) return UI.toast('Enter your current password', 'err');
+    try { await Api.call('/security/2fa', { method: 'DELETE', body: { current_password } }); UI.toast('Two-factor authentication disabled'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- active sessions -----
+  async revokeSession(id) {
+    if (!confirm('Revoke this session? That device will be signed out.')) return;
+    try { await Api.del('/security/sessions/' + id); UI.toast('Session revoked'); Screens._loadSessions(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async revokeAllSessions() {
+    if (!confirm('Log out of ALL sessions, including this one? You will need to sign in again.')) return;
+    try { await Api.post('/security/sessions/revoke-all', {}); UI.toast('Logged out everywhere'); Auth.logout(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   // ----- beneficiaries -----

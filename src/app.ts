@@ -40,6 +40,19 @@ export function createApp() {
     }),
   );
 
+  // Tighter per-IP limiter on credential endpoints (login / signup-OTP /
+  // forgot / reset). Stacks with the per-identifier lockout in auth.service.
+  app.use(
+    ['/api/v1/auth/login', '/api/v1/auth/forgot-password', '/api/v1/auth/reset-password', '/api/v1/auth/signup/request-otp'],
+    rateLimit({
+      windowMs: 15 * 60_000,
+      max: 30,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: { error: { code: 'too_many_requests', message: 'Too many attempts. Please wait a few minutes.' } },
+    }),
+  );
+
   // Liveness — no DB dependency.
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', service: 'tutipays-api', time: new Date().toISOString() });

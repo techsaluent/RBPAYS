@@ -285,6 +285,7 @@
         <div class="field"><label>Email, phone or username</label><input name="identifier" required autocomplete="username" /></div>
         <div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password" /></div>
         <div class="field hidden" id="mpin-field"><label>MPIN (PIN)</label><input name="mpin" type="password" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="4-6 digit PIN" /></div>
+        <div class="field hidden" id="totp-field"><label>Authenticator code</label><input name="totp" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6-digit code" /></div>
         <div style="text-align:right;margin:-6px 0 12px"><a href="#" onclick="return Auth.forgotPassword()" style="font-size:12px">Forgot password?</a></div>
         <button class="btn" type="submit">Login</button>
       </form>
