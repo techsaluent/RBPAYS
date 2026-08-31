@@ -1657,7 +1657,8 @@ const Screens = {
       <td>${esc(p.label)}</td><td>${esc(p.driver)}</td><td class="muted">${esc(p.base_url||'')}</td>
       <td>${p.is_active ? '<span class="tag active">active</span>' : ''}</td>
       <td>${p.api_key ? '••••' : '<span class="muted">no key</span>'}</td>
-      <td>${p.is_active
+      <td><button class="btn sm ghost" onclick="Actions.testProvider('${p.id}','${esc(p.label)}')">Test</button>
+          ${p.is_active
           ? `<button class="btn sm ghost" onclick="Actions.deactivateProvider('${p.id}')">Deactivate</button>`
           : `<button class="btn sm" onclick="Actions.activateProvider('${p.id}')">Activate</button>`}
           <button class="btn sm ghost" onclick="Actions.deleteProvider('${p.id}')">Delete</button></td></tr>
@@ -1669,8 +1670,21 @@ const Screens = {
           <span class="tag ${p.has_webhook_secret?'active':''}" style="font-size:11px">${p.has_webhook_secret?'secret set':'shared secret'}</span>
           <button class="btn sm ghost" onclick="Actions.editProviderSecret('${p.id}','${esc(p.label)}')">Set secret</button>
         </div></td></tr>`).join('');
+    const gl = await Api.get('/admin/go-live').catch(() => null);
+    const glCard = gl ? `<div class="box" style="background:#f7f8fb;border:1px solid #e5e9f2;border-radius:10px;padding:12px 16px;margin-bottom:14px">
+      <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <b>Go-live readiness</b>
+        <div class="row" style="gap:8px;font-size:12px">
+          <span class="tag active">${gl.live_count} live</span>
+          <span class="tag" style="background:#fef7e0;color:#b26a00">${gl.sandbox_count} sandbox</span>
+          ${gl.none_count?`<span class="tag" style="background:#fce8e6;color:#c5221f">${gl.none_count} none</span>`:''}
+        </div></div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
+        ${gl.items.map(i=>`<span class="tag ${i.status==='live'?'active':''}" style="font-size:11px;${i.status==='sandbox'?'background:#fef7e0;color:#b26a00':i.status==='none_active'?'background:#fce8e6;color:#c5221f':''}" title="${esc(i.active_provider||'no active provider')}">${esc(i.service_code)}: ${i.status==='live'?'live':i.status}</span>`).join('')}
+      </div></div>` : '';
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
       <h2>Service providers</h2><button class="btn sm" onclick="Actions.addProvider('${sel}')">+ Add provider</button></div>
+      ${glCard}
       <div class="field" style="max-width:360px"><label>Service</label>
         <select id="prov_svc" onchange="Actions._provService=this.value;App.route()">${opts}</select></div>
       <p class="muted">Register one or more providers per service and activate the one to route through. Paste API keys here — going live is just adding keys and activating. Each provider has its <b>own callback URL</b> below — give it to that provider so status updates (success / pending / failed) post back and settle automatically for every service.</p>
@@ -2727,6 +2741,22 @@ const Actions = {
   copyText(t) {
     try { navigator.clipboard.writeText(t); UI.toast('Copied'); }
     catch { UI.toast('Copy failed — select manually', 'err'); }
+  },
+  async testProvider(id, label) {
+    UI.modal(`<h3>Testing ${esc(label)}…</h3><p class="muted" id="pt_body">Running a connectivity check (no live transaction)…</p>`);
+    try {
+      const r = await Api.post(`/admin/providers/${id}/test`, {});
+      const rowHtml = (r.checks || []).map(c => `<div class="row" style="gap:8px;align-items:center">
+        <span style="font-size:15px">${c.ok?'✅':'❌'}</span><b>${esc(c.label)}</b>
+        <span class="muted" style="font-size:12px">${esc(c.detail||'')}</span></div>`).join('');
+      const banner = r.ok
+        ? `<div class="msg" style="background:#e6f4ea;color:#137333;padding:10px;border-radius:8px">${esc(r.message)}</div>`
+        : `<div class="msg err">${esc(r.message)}</div>`;
+      UI.modal(`<h3>${esc(label)} — ${r.mode==='sandbox'?'sandbox':(r.ok?'ready':'not ready')}</h3>
+        ${banner}<div class="mt" style="display:flex;flex-direction:column;gap:6px">${rowHtml}</div>
+        <div class="row mt" style="justify-content:flex-end"><button class="btn sm" onclick="UI.closeModal()">Close</button></div>`);
+    } catch (err) { UI.modal(`<h3>${esc(label)}</h3><div class="msg err">${esc(err.message)}</div>
+        <div class="row mt" style="justify-content:flex-end"><button class="btn sm" onclick="UI.closeModal()">Close</button></div>`); }
   },
   async deactivateProvider(id) {
     try { await Api.post(`/admin/providers/${id}/deactivate`, {}); UI.toast('Deactivated'); App.route(); }

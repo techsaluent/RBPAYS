@@ -2079,4 +2079,52 @@ router.delete(
   }),
 );
 
+// Go-live pre-flight: verify a saved provider's config + endpoint reachability
+// WITHOUT running a real transaction. Safe to run before activating live keys.
+router.post(
+  '/providers/:id/test',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query<import('../../providers/health').ProviderRow>(
+      `SELECT id, service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, is_active
+         FROM service_providers WHERE id = $1`,
+      [req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Provider not found');
+    const { probeProvider } = await import('../../providers/health');
+    const result = await probeProvider(rows[0]);
+    res.json({ provider: { id: rows[0].id, label: rows[0].label, driver: rows[0].driver, service_code: rows[0].service_code }, ...result });
+  }),
+);
+
+// Go-live readiness: for every service, which provider is active and whether it
+// is still the sandbox — so the admin can see at a glance what is not yet live.
+router.get(
+  '/go-live',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query<{ service_code: string; label: string | null; driver: string | null; provider_id: string | null; total_providers: string }>(
+      `SELECT s.service_code,
+              a.label, a.driver, a.id AS provider_id,
+              (SELECT COUNT(*) FROM service_providers sp WHERE sp.service_code = s.service_code)::text AS total_providers
+         FROM (SELECT DISTINCT service_code FROM service_providers) s
+         LEFT JOIN service_providers a ON a.service_code = s.service_code AND a.is_active
+        ORDER BY s.service_code`,
+    );
+    const items = rows.map((r) => ({
+      service_code: r.service_code,
+      active_provider: r.label,
+      driver: r.driver,
+      provider_id: r.provider_id,
+      total_providers: Number(r.total_providers),
+      live: !!r.driver && r.driver !== 'sandbox',
+      status: !r.driver ? 'none_active' : r.driver === 'sandbox' ? 'sandbox' : 'live',
+    }));
+    res.json({
+      items,
+      live_count: items.filter((i) => i.live).length,
+      sandbox_count: items.filter((i) => i.status === 'sandbox').length,
+      none_count: items.filter((i) => i.status === 'none_active').length,
+    });
+  }),
+);
+
 export default router;
