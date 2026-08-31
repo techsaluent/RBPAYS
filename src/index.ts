@@ -4,6 +4,7 @@ import { logger } from './config/logger';
 import { closePool, pool } from '../db';
 import { refreshProviderRegistry } from './providers/registry';
 import { refreshTaxConfig } from './modules/tax/tax.config';
+import { startAutoReconLoop } from './modules/recon/autoRecon';
 
 async function main() {
   // Fail fast if the VPS database is unreachable at boot.
@@ -19,8 +20,12 @@ async function main() {
     logger.info(`TutiPays API listening on port ${env.PORT} (${env.NODE_ENV})`);
   });
 
+  // Background auto-reconciliation sweep (no-op unless auto_recon_hours > 0).
+  const stopAutoRecon = startAutoReconLoop();
+
   const shutdown = (signal: string) => {
     logger.info({ signal }, 'shutting down');
+    stopAutoRecon();
     server.close(async () => {
       await closePool();
       process.exit(0);

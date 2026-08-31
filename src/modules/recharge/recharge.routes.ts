@@ -8,7 +8,7 @@ import { query } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { getRechargeProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
-import { resolveProviderChoice } from '../_shared/providerChoice';
+import { resolveProviderChoice, failoverCandidates } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
 
 const router = Router();
@@ -30,6 +30,31 @@ const listSchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   status: z.enum(['pending', 'success', 'failed', 'refunded']).optional(),
 });
+
+// Operator catalog — feeds the recharge form's operator dropdown.
+router.get(
+  '/operators',
+  validate(z.object({ type: z.enum(['prepaid', 'postpaid', 'dth']).optional() }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { type?: string };
+    const { rows } = await query(
+      `SELECT code, name, type FROM operators
+        WHERE enabled = true AND ($1::text IS NULL OR type = $1)
+        ORDER BY type, sort_order, name`,
+      [q.type ?? null],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+// Telecom circles — feeds the circle dropdown for prepaid/postpaid.
+router.get(
+  '/circles',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT code, name FROM telecom_circles WHERE enabled = true ORDER BY name');
+    res.json({ items: rows });
+  }),
+);
 
 // Do a recharge: debit wallet (amount + charge), record it.
 router.post(
@@ -74,6 +99,21 @@ router.post(
           circle: body.circle,
           providerId,
         }),
+      // Auto-failover across active providers (kicks in only when the admin has
+      // activated 2+ providers for recharge; advances only on a hard failure).
+      failover: {
+        candidates: failoverCandidates('recharge', providerId),
+        call: (pid, { reference }) =>
+          getRechargeProvider(pid).recharge({
+            reference,
+            amountPaise,
+            operator: body.operator,
+            number: body.number,
+            rechargeType: body.recharge_type,
+            circle: body.circle,
+            providerId: pid,
+          }),
+      },
     });
 
     res.status(idempotent ? 200 : 201).json({ transaction, idempotent });

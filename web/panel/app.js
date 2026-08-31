@@ -30,6 +30,34 @@ const ADMIN_PORTAL = window.ADMIN_PORTAL === true
 const MEMBER_ROLES = ['retailer', 'distributor', 'master_distributor'];
 const money = (v) => '₹' + Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+// Condense a User-Agent string to something recognisable in the sessions list.
+const uaShort = (ua) => {
+  if (!ua) return 'Unknown device';
+  const os = /Windows/i.test(ua) ? 'Windows' : /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iOS/i.test(ua) ? 'iOS' : /Mac OS X|Macintosh/i.test(ua) ? 'macOS' : /Linux/i.test(ua) ? 'Linux' : '';
+  const br = /Edg\//i.test(ua) ? 'Edge' : /Chrome\//i.test(ua) ? 'Chrome' : /Firefox\//i.test(ua) ? 'Firefox' : /Safari\//i.test(ua) ? 'Safari' : /curl|PostmanRuntime|okhttp|Dart|python|node/i.test(ua) ? 'API client' : 'Browser';
+  return [br, os].filter(Boolean).join(' · ') || ua.slice(0, 40);
+};
+// SLA badge for a dispute row (terminal disputes show nothing).
+const slaBadge = (x) => {
+  if (x.status === 'resolved' || x.status === 'rejected') return '<span class="muted">—</span>';
+  const h = x.sla_hours_left;
+  if (h == null) return '<span class="muted">—</span>';
+  if (h < 0) return `<span class="tag" style="background:#fce8e6;color:#c5221f">⏰ ${Math.abs(Math.round(h*10)/10)}h overdue</span>`;
+  if (h < 2) return `<span class="tag" style="background:#fef7e0;color:#b26a00">due in ${Math.round(h*10)/10}h</span>`;
+  return `<span class="tag">due in ${Math.round(h)}h</span>`;
+};
+// Financial-year <option>s (current + 3 prior), value = FY start year.
+const taxFyOptions = () => {
+  const now = new Date();
+  const cur = now.getUTCMonth() + 1 >= 4 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+  let o = '';
+  for (let y = cur; y >= cur - 3; y--) o += `<option value="${y}">FY ${y}-${String(y + 1).slice(-2)}</option>`;
+  return o;
+};
+// Inline From/To date inputs (ids <pfx>_from / <pfx>_to) for use with Actions._range.
+const _rangeCtl = (pfx) => `<div class="row" style="gap:6px;align-items:end">
+  <div class="field" style="margin:0"><label>From</label><input id="${pfx}_from" type="date"></div>
+  <div class="field" style="margin:0"><label>To</label><input id="${pfx}_to" type="date"></div></div>`;
 const $ = (id) => document.getElementById(id);
 
 // ---------------- API client ----------------
@@ -68,6 +96,7 @@ const Auth = {
     const f = e.target;
     const body = { identifier: f.identifier.value.trim(), password: f.password.value };
     if (f.mpin && f.mpin.value.trim()) body.mpin = f.mpin.value.trim();
+    if (f.totp && f.totp.value.trim()) body.totp = f.totp.value.trim();
     try {
       const d = await Api.post('/auth/login', body, false);
       // Keep the two portals separate: the admin console (super admin + staff)
@@ -90,6 +119,12 @@ const Auth = {
         $('mpin-field').classList.remove('hidden');
         $('mpin-field').querySelector('input').focus();
         UI.authMsg('Enter your MPIN to continue.', 'ok');
+      } else if (err.code === 'totp_required') {
+        $('totp-field').classList.remove('hidden');
+        $('totp-field').querySelector('input').focus();
+        UI.authMsg('Enter the 6-digit code from your authenticator app.', 'ok');
+      } else if (err.code === 'account_locked') {
+        UI.authMsg(err.message, 'err');
       } else { UI.authMsg(err.message, 'err'); }
     }
     return false;
@@ -223,6 +258,7 @@ const NAV = [
   { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'catalog', label: 'Operator & Biller Catalog', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'webhooks', label: 'Webhook Log', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'aistudio', label: '🤖 AI Integration Studio', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
@@ -545,12 +581,17 @@ const Screens = {
       ${companyNote}`;
   },
 
-  // Account security: change password, set/remove login MPIN.
+  // Account security: change password, set/remove login MPIN, authenticator
+  // 2FA, and active-session management.
   async security() {
-    const s = await Api.get('/security').catch(() => ({ mpin_set: false }));
+    const s = await Api.get('/security').catch(() => ({ mpin_set: false, totp_enabled: false, pending: false }));
     $('view').innerHTML = `
-      <div class="grid cards"><div class="card"><div class="k">Login MPIN (PIN)</div>
-        <div class="v" style="font-size:18px">${s.mpin_set ? UI.statusTag('verified') : '<span class="tag">not set</span>'}</div></div></div>
+      <div class="grid cards">
+        <div class="card"><div class="k">Login MPIN (PIN)</div>
+          <div class="v" style="font-size:18px">${s.mpin_set ? UI.statusTag('verified') : '<span class="tag">not set</span>'}</div></div>
+        <div class="card"><div class="k">Authenticator 2FA</div>
+          <div class="v" style="font-size:18px">${s.totp_enabled ? UI.statusTag('verified') : '<span class="tag">off</span>'}</div></div>
+      </div>
       <div class="panel mt" style="max-width:480px"><h2>Change password</h2>
         <div class="field"><label>Current password</label><input id="cp_cur" type="password"></div>
         <div class="field"><label>New password (min 8)</label><input id="cp_new" type="password"></div>
@@ -560,7 +601,39 @@ const Screens = {
         <div class="field"><label>Current password</label><input id="mp_pw" type="password"></div>
         <div class="field"><label>${s.mpin_set ? 'New ' : ''}MPIN (4-6 digits)</label><input id="mp_pin" type="password" inputmode="numeric" maxlength="6"></div>
         <button class="btn" onclick="Actions.setMpin()">${s.mpin_set ? 'Change' : 'Set'} MPIN</button>
-        ${s.mpin_set ? `<button class="btn ghost mt" onclick="Actions.removeMpin()">Remove MPIN</button>` : ''}</div>`;
+        ${s.mpin_set ? `<button class="btn ghost mt" onclick="Actions.removeMpin()">Remove MPIN</button>` : ''}</div>
+
+      <div class="panel mt" style="max-width:480px"><h2>Authenticator app (2FA)</h2>
+        ${s.totp_enabled ? `
+          <p class="muted">Two-factor authentication is <b>on</b>. A 6-digit code from your authenticator app is required at every login.</p>
+          <div class="field"><label>Current password (to turn off)</label><input id="tf_pw" type="password"></div>
+          <button class="btn danger" onclick="Actions.disable2fa()">Disable 2FA</button>
+        ` : `
+          <p class="muted">Add a strong second factor using Google Authenticator, Authy, 1Password, or any TOTP app.</p>
+          <div id="tf_setup"><button class="btn" onclick="Actions.start2fa()">Set up authenticator</button></div>
+        `}</div>
+
+      <div class="panel mt" style="max-width:640px"><h2>Active sessions</h2>
+        <p class="muted">Devices currently signed in to your account. Revoke any you don't recognise.</p>
+        <div id="sess_list" class="muted">Loading…</div>
+        <button class="btn ghost mt" onclick="Actions.revokeAllSessions()">Log out of all sessions</button></div>`;
+    this._loadSessions();
+  },
+
+  async _loadSessions() {
+    const box = $('sess_list'); if (!box) return;
+    try {
+      const { sessions } = await Api.get('/security/sessions');
+      if (!sessions.length) { box.innerHTML = '<span class="muted">No active sessions.</span>'; return; }
+      box.innerHTML = `<table class="tbl"><thead><tr><th>Device</th><th>IP</th><th>Last used</th><th></th></tr></thead><tbody>${
+        sessions.map((x) => `<tr>
+          <td>${esc(uaShort(x.user_agent))}</td>
+          <td>${esc(x.ip || '—')}</td>
+          <td>${x.last_used_at ? new Date(x.last_used_at).toLocaleString('en-IN') : '—'}</td>
+          <td style="text-align:right"><button class="btn ghost sm" onclick="Actions.revokeSession('${x.id}')">Revoke</button></td>
+        </tr>`).join('')
+      }</tbody></table>`;
+    } catch { box.innerHTML = '<span class="muted">Could not load sessions.</span>'; }
   },
 
   // Member self-service KYC: submit documents and see status.
@@ -691,7 +764,14 @@ const Screens = {
         <div class="field"><label>GSTIN (optional)</label><input id="tx_gst" value="${esc(pr.gstin||'')}"></div>
         <div class="field"><label>State code</label><input id="tx_state" value="${esc(pr.state_code||'')}" placeholder="27"></div>
         <button class="btn" onclick="Actions.saveTaxProfile()">Save</button></div>
-      <div class="panel mt"><h2>My TDS statement</h2><div class="tbl-wrap"><table>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">My TDS statement</h2>
+        <div class="row" style="gap:6px">
+          <select id="tx_fy" style="max-width:150px">${taxFyOptions()}</select>
+          <button class="btn sm ghost" onclick="Actions.openDoc('/tax/tds/statement?format=html&fy='+val('tx_fy'))">🧾 Certificate</button>
+          <button class="btn sm" onclick="Actions.dl('/tax/tds/statement?format=csv&fy='+val('tx_fy'),'tds_'+val('tx_fy')+'.csv')">⬇ CSV</button>
+        </div></div>
+        <div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th class="right">Net</th><th>When</th></tr></thead>
         <tbody>${rows || '<tr><td colspan=7 class=muted>No TDS yet</td></tr>'}</tbody></table></div></div>`;
   },
@@ -859,23 +939,39 @@ const Screens = {
   async disputes() {
     const q = Actions._dispSearch || '';
     const st = Actions._dispStatus || '';
-    const d = await Api.get(`/admin/disputes?limit=100${q?'&q='+encodeURIComponent(q):''}${st?'&status='+st:''}`);
-    const rows = (d.items || []).map(x => `<tr>
+    const ov = Actions._dispOverdue ? '&overdue=true' : '';
+    const [d, sum] = await Promise.all([
+      Api.get(`/admin/disputes?limit=100${q?'&q='+encodeURIComponent(q):''}${st?'&status='+st:''}${ov}`),
+      Api.get('/admin/disputes-summary').catch(() => null),
+    ]);
+    const rows = (d.items || []).map(x => `<tr${x.overdue?' style="background:#fff5f5"':''}>
       <td class="mono">${esc(x.ticket_no||'')}</td>
       <td class="muted">${esc(x.reference||'')}<div style="font-size:11px">${esc(x.txn_service||'')} ${x.txn_amount_paise?money(x.txn_amount_paise/100):''}</div></td>
       <td>${esc(x.raised_by_name||'')}<div class="muted" style="font-size:11px">${esc(x.raised_by_phone||'')}</div></td>
       <td>${esc((x.category||'').replace(/_/g,' '))}<div class="muted" style="font-size:11px;max-width:220px;white-space:normal">${esc(x.description||'')}</div></td>
       <td>${UI.statusTag(x.status)}</td>
+      <td>${slaBadge(x)}</td>
       <td><button class="btn sm" onclick="Actions.viewDispute('${x.id}',true)">Open</button></td></tr>`).join('');
+    const stat = (label, val, cls) => `<div class="card"><div class="k">${label}</div><div class="v" style="font-size:20px;${cls||''}">${val}</div></div>`;
+    const summary = sum ? `<div class="grid cards" style="margin-bottom:14px">
+      ${stat('Open', sum.open)}
+      ${stat('In review', sum.in_review)}
+      ${stat('⏰ Overdue', sum.overdue, sum.overdue>0?'color:#c5221f':'')}
+      ${stat('Due &lt; 2h', sum.due_soon, sum.due_soon>0?'color:#b26a00':'')}
+      ${stat('Oldest open', sum.oldest_open_hours!=null?sum.oldest_open_hours+'h':'—')}
+      ${stat('Avg resolve', sum.avg_resolution_hours!=null?sum.avg_resolution_hours+'h':'—')}
+    </div>` : '';
     $('view').innerHTML = `<div class="panel"><h2>Disputes / complaints desk</h2>
+      ${summary}
       <div class="row" style="gap:8px;margin-bottom:12px">
         <input id="disp_q" placeholder="Search by reference or ticket…" value="${esc(q)}" style="max-width:280px" onkeydown="if(event.key==='Enter')Actions.disputeSearch()">
         <select id="disp_status" onchange="Actions._dispStatus=this.value;Actions.disputeSearch()">
           <option value="">All statuses</option>
           ${['open','in_review','resolved','rejected'].map(s=>`<option value="${s}" ${st===s?'selected':''}>${s}</option>`).join('')}</select>
+        <label class="row" style="gap:6px;align-items:center;font-size:13px"><input type="checkbox" ${Actions._dispOverdue?'checked':''} onchange="Actions._dispOverdue=this.checked;Actions.disputeSearch()"> Overdue only</label>
         <button class="btn sm" onclick="Actions.disputeSearch()">Search</button></div>
-      <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Txn / ref</th><th>Raised by</th><th>Complaint</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows || '<tr><td colspan=6 class=muted>No disputes found.</td></tr>'}</tbody></table></div></div>`;
+      <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Txn / ref</th><th>Raised by</th><th>Complaint</th><th>Status</th><th>SLA</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=7 class=muted>No disputes found.</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Incoming provider callbacks / webhooks log.
@@ -1141,12 +1237,20 @@ const Screens = {
         <thead><tr><th>Tax</th><th>Rate</th><th>Max per txn</th><th>On</th></tr></thead>
         <tbody data-codes='${cfgCodes}'>${crows}</tbody></table></div>
         <button class="btn sm mt" onclick='Actions.saveTaxConfig(${cfgCodes})'>Save tax rates</button></div>
-      <div class="panel mt"><h2>TDS records (Section 194H / 194N)</h2><div class="tbl-wrap"><table>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <h2 style="margin:0">TDS records (Section 194H / 194N)</h2>
+          ${_rangeCtl('tx')}
+          <button class="btn sm" onclick="Actions.dl('/admin/tds?format=csv&'+Actions._range('tx'),'tds_26q.csv')">⬇ 26Q CSV</button></div>
+        <div class="tbl-wrap"><table>
         <thead><tr><th>Member</th><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th>When</th></tr></thead>
         <tbody>${trows || '<tr><td colspan=7 class=muted>No TDS yet</td></tr>'}</tbody></table></div></div>
-      <div class="panel mt"><h2>GST invoices (18% on platform margin)</h2><div class="tbl-wrap"><table>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <h2 style="margin:0">GST invoices (18% on platform margin)</h2>
+          <button class="btn sm" onclick="Actions.dl('/admin/gst?format=csv&'+Actions._range('tx'),'gst.csv')">⬇ GST CSV</button></div>
+        <div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th class="right">Base</th><th class="right">CGST</th><th class="right">SGST</th><th class="right">IGST</th><th>PoS</th></tr></thead>
-        <tbody>${grows || '<tr><td colspan=6 class=muted>No GST yet</td></tr>'}</tbody></table></div></div>`;
+        <tbody>${grows || '<tr><td colspan=6 class=muted>No GST yet</td></tr>'}</tbody></table></div>
+        <p class="muted" style="font-size:12px;margin-top:8px">Both exports honour the date range above. Leave dates blank for all-time.</p></div>`;
   },
 
   // Admin: reconciliation batches (upload MIS -> match + auto force-settle).
@@ -1161,6 +1265,13 @@ const Screens = {
         <div class="field"><label>Label</label><input id="rc_label" value="EOD ${new Date().toISOString().slice(0,10)}"></div>
         <div class="field"><label>MIS rows (JSON)</label><textarea id="rc_rows" rows="6" style="width:100%;font-family:monospace">[{"reference":"","bank_status":"settled"}]</textarea></div>
         <button class="btn" onclick="Actions.runRecon()">Run reconciliation</button></div>
+      <div class="panel mt"><h2>Stale pending sweep (auto-recon)</h2>
+        <p class="muted">Find transactions stuck in <b>pending</b> — the provider never sent a final status — and fail them, which reverses the debit and refunds the member. Idempotent: a late callback on a swept txn is a no-op. The background sweeper runs this automatically when <b>Auto-recon</b> is set under Website settings.</p>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0"><label>Older than (minutes)</label><input id="sweep_min" type="number" value="120" min="60" style="max-width:140px"></div>
+          <button class="btn sm ghost" onclick="Actions.listStale()">Preview</button>
+          <button class="btn sm" onclick="Actions.sweepStale()">Sweep &amp; refund</button></div>
+        <div id="stale_out" class="muted mt">Preview to see how many pendings are stale.</div></div>
       <div class="panel mt"><h2>Recent batches</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Label</th><th>Records</th><th class="right">Matched</th><th class="right">Force-settled</th><th class="right">Exceptions</th><th>When</th></tr></thead>
         <tbody>${rows || '<tr><td colspan=6 class=muted>No batches yet</td></tr>'}</tbody></table></div></div>`;
@@ -1408,6 +1519,10 @@ const Screens = {
         <h2 class="mt">Transaction safety</h2>
         <p class="muted">Block an accidental <b>duplicate</b> transaction — the same member sending the same service, amount and details (account / VPA / consumer no.) again within this window. Set the minutes below; <b>0</b> turns the guard off. A previous <i>failed</i> attempt never blocks a retry.</p>
         ${field('duplicate_txn_window_minutes','Duplicate-block window (minutes)','5')}
+        <p class="muted mt">Default resolution <b>SLA</b> for disputes (hours). The desk flags anything past its deadline as overdue. Money-stuck complaints (not credited / double charge / wrong amount) auto-use a tighter 12h target.</p>
+        ${field('dispute_sla_hours','Dispute SLA (hours)','24')}
+        <p class="muted mt"><b>Auto-reconciliation</b> — automatically fail &amp; refund transactions stuck in <i>pending</i> for this many hours (the provider never sent a final status). <b>0</b> = off. Runs in the background; you can also sweep manually under Reconciliation.</p>
+        ${field('auto_recon_hours','Auto-recon after (hours, 0 = off)','0')}
         <h2 class="mt">Webhooks &amp; callbacks</h2>
         <p class="muted">Give these callback URLs to your payout / DMT / recharge provider. The aggregator secret below signs incoming callbacks (HMAC-SHA256).</p>
         <div class="field"><label>Aggregator callback URL</label><input value="${esc(location.origin)}/api/v1/webhooks/aggregator" readonly onclick="this.select()"></div>
@@ -1552,7 +1667,8 @@ const Screens = {
       <td>${esc(p.label)}</td><td>${esc(p.driver)}</td><td class="muted">${esc(p.base_url||'')}</td>
       <td>${p.is_active ? '<span class="tag active">active</span>' : ''}</td>
       <td>${p.api_key ? '••••' : '<span class="muted">no key</span>'}</td>
-      <td>${p.is_active
+      <td><button class="btn sm ghost" onclick="Actions.testProvider('${p.id}','${esc(p.label)}')">Test</button>
+          ${p.is_active
           ? `<button class="btn sm ghost" onclick="Actions.deactivateProvider('${p.id}')">Deactivate</button>`
           : `<button class="btn sm" onclick="Actions.activateProvider('${p.id}')">Activate</button>`}
           <button class="btn sm ghost" onclick="Actions.deleteProvider('${p.id}')">Delete</button></td></tr>
@@ -1564,14 +1680,56 @@ const Screens = {
           <span class="tag ${p.has_webhook_secret?'active':''}" style="font-size:11px">${p.has_webhook_secret?'secret set':'shared secret'}</span>
           <button class="btn sm ghost" onclick="Actions.editProviderSecret('${p.id}','${esc(p.label)}')">Set secret</button>
         </div></td></tr>`).join('');
+    const gl = await Api.get('/admin/go-live').catch(() => null);
+    const glCard = gl ? `<div class="box" style="background:#f7f8fb;border:1px solid #e5e9f2;border-radius:10px;padding:12px 16px;margin-bottom:14px">
+      <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <b>Go-live readiness</b>
+        <div class="row" style="gap:8px;font-size:12px">
+          <span class="tag active">${gl.live_count} live</span>
+          <span class="tag" style="background:#fef7e0;color:#b26a00">${gl.sandbox_count} sandbox</span>
+          ${gl.none_count?`<span class="tag" style="background:#fce8e6;color:#c5221f">${gl.none_count} none</span>`:''}
+        </div></div>
+      <div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">
+        ${gl.items.map(i=>`<span class="tag ${i.status==='live'?'active':''}" style="font-size:11px;${i.status==='sandbox'?'background:#fef7e0;color:#b26a00':i.status==='none_active'?'background:#fce8e6;color:#c5221f':''}" title="${esc(i.active_provider||'no active provider')}">${esc(i.service_code)}: ${i.status==='live'?'live':i.status}</span>`).join('')}
+      </div></div>` : '';
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
       <h2>Service providers</h2><button class="btn sm" onclick="Actions.addProvider('${sel}')">+ Add provider</button></div>
+      ${glCard}
       <div class="field" style="max-width:360px"><label>Service</label>
         <select id="prov_svc" onchange="Actions._provService=this.value;App.route()">${opts}</select></div>
       <p class="muted">Register one or more providers per service and activate the one to route through. Paste API keys here — going live is just adding keys and activating. Each provider has its <b>own callback URL</b> below — give it to that provider so status updates (success / pending / failed) post back and settle automatically for every service.</p>
       <div class="tbl-wrap"><table>
       <thead><tr><th>Label</th><th>Driver</th><th>Base URL</th><th>Active</th><th>Key</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=6 class=muted>No providers — add one</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: recharge operator + BBPS biller catalog. Members' dropdowns read
+  // the enabled rows here — manage the lists without a deploy.
+  async catalog() {
+    const [ops, bills] = await Promise.all([Api.get('/admin/operators'), Api.get('/admin/billers')]);
+    const orow = (ops.items || []).map(o => `<tr>
+      <td class="mono">${esc(o.code)}</td><td>${esc(o.name)}</td><td>${esc(o.type)}</td>
+      <td>${o.enabled ? '<span class="tag active">on</span>' : '<span class="tag">off</span>'}</td>
+      <td class="right">
+        <button class="btn sm ghost" onclick="Actions.toggleOperator('${esc(o.code)}',${!o.enabled})">${o.enabled?'Disable':'Enable'}</button>
+        <button class="btn sm ghost" onclick="Actions.delOperator('${esc(o.code)}')">Delete</button></td></tr>`).join('');
+    const brow = (bills.items || []).map(b => `<tr>
+      <td class="mono">${esc(b.biller_id)}</td><td>${esc(b.name)}</td><td>${esc(b.category)}</td><td>${esc(b.coverage||'')}</td>
+      <td>${b.enabled ? '<span class="tag active">on</span>' : '<span class="tag">off</span>'}</td>
+      <td class="right">
+        <button class="btn sm ghost" onclick="Actions.toggleBiller('${esc(b.biller_id)}',${!b.enabled})">${b.enabled?'Disable':'Enable'}</button>
+        <button class="btn sm ghost" onclick="Actions.delBiller('${esc(b.biller_id)}')">Delete</button></td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Recharge operators</h2>
+        <button class="btn sm" onclick="Actions.addOperator()">+ Add operator</button></div>
+        <p class="muted">Prepaid / postpaid / DTH operators shown to members on the Recharge form.</p>
+        <div class="tbl-wrap"><table><thead><tr><th>Code</th><th>Name</th><th>Type</th><th>Status</th><th></th></tr></thead>
+        <tbody>${orow || '<tr><td colspan=5 class=muted>No operators</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between"><h2 style="margin:0">BBPS billers</h2>
+        <button class="btn sm" onclick="Actions.addBiller()">+ Add biller</button></div>
+        <p class="muted">Biller directory shown on the BBPS form, grouped by category.</p>
+        <div class="tbl-wrap"><table><thead><tr><th>Biller ID</th><th>Name</th><th>Category</th><th>Coverage</th><th>Status</th><th></th></tr></thead>
+        <tbody>${brow || '<tr><td colspan=6 class=muted>No billers</td></tr>'}</tbody></table></div></div>`;
   },
 };
 
@@ -1581,7 +1739,7 @@ const SERVICES = [
     ['recharge_type', 'Type', 'select', ['prepaid', 'postpaid', 'dth']],
     ['operator', 'Operator', 'select', ['Jio', 'Airtel', 'Vi', 'BSNL', 'Tata Play (DTH)', 'Dish TV (DTH)', 'Airtel Digital TV (DTH)', 'd2h (DTH)', 'Sun Direct (DTH)']],
     ['number', 'Mobile / DTH number', 'text'], ['amount', 'Amount', 'number'] ],
-    build: v => ({ operator: v.operator, number: v.number, amount: +v.amount, recharge_type: v.recharge_type || 'prepaid' }) },
+    build: v => ({ operator: v.operator, number: v.number, amount: +v.amount, recharge_type: v.recharge_type || 'prepaid', ...(v.circle ? { circle: v.circle } : {}) }) },
   { key: 'dmt', label: 'DMT (bank transfer)', path: '/dmt', provider: true, fields: [
     ['beneficiary_name', 'Beneficiary name', 'text'], ['account_number', 'Account number', 'text'],
     ['ifsc', 'IFSC', 'text'], ['amount', 'Amount', 'number'] ],
@@ -1720,7 +1878,39 @@ const Actions = {
           <div class="field" id="bbps_biller_wrap" style="display:none"><label>Biller</label>
           <select id="bbps_biller" onchange="document.querySelector('#svc-fields [name=biller_id]').value=this.value"></select></div>`;
       } catch { box.innerHTML = ''; }
+    } else if (key === 'recharge') {
+      // Feed the operator + circle dropdowns from the live catalog, and keep
+      // the operator list in sync with the prepaid/postpaid/dth type.
+      await Actions.loadOperators();
+      const typeSel = document.querySelector('#svc-fields [name=recharge_type]');
+      if (typeSel) typeSel.addEventListener('change', () => Actions.loadOperators());
+      box.innerHTML = '';
     } else { box.innerHTML = ''; }
+  },
+  // Replace the recharge operator <select> with catalog options for the chosen
+  // type, and add a Circle dropdown from the catalog.
+  async loadOperators() {
+    const opSel = document.querySelector('#svc-fields [name=operator]');
+    if (!opSel) return;
+    const type = (document.querySelector('#svc-fields [name=recharge_type]') || {}).value || 'prepaid';
+    try {
+      const d = await Api.get('/recharge/operators?type=' + encodeURIComponent(type));
+      opSel.innerHTML = (d.items || []).map(o => `<option value="${esc(o.name)}">${esc(o.name)}</option>`).join('')
+        || '<option value="">No operators</option>';
+    } catch { /* leave the static options */ }
+    // Circle only applies to prepaid/postpaid; render/remove a Circle select.
+    const opField = opSel.closest('.field');
+    let circleField = document.getElementById('rch_circle_field');
+    if (type === 'dth') { if (circleField) circleField.remove(); return; }
+    if (!circleField && opField) {
+      try {
+        const c = await Api.get('/recharge/circles');
+        const opts = ['<option value="">— circle (optional) —</option>']
+          .concat((c.items || []).map(x => `<option value="${esc(x.name)}">${esc(x.name)}</option>`)).join('');
+        opField.insertAdjacentHTML('afterend',
+          `<div class="field" id="rch_circle_field"><label>Circle</label><select name="circle">${opts}</select></div>`);
+      } catch { /* no circle field */ }
+    }
   },
   fillBeneficiary(sel) {
     const o = sel.selectedOptions[0]; if (!o || !o.value) return;
@@ -1910,6 +2100,28 @@ const Actions = {
       UI.toast(`Recon: ${d.summary.matched} matched, ${d.summary.forceSettled} force-settled, ${d.summary.exceptions} exceptions`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  async listStale() {
+    const min = Math.max(0, parseInt(val('sweep_min')) || 120);
+    try {
+      const d = await Api.get('/admin/recon/pending?older_than_min=' + min);
+      const out = $('stale_out'); if (!out) return;
+      if (!d.count) { out.innerHTML = `<span class="muted">No pending transactions older than ${min} min.</span>`; return; }
+      out.innerHTML = `<b>${d.count}</b> stale pending (older than ${min} min):
+        <div class="tbl-wrap mt"><table><thead><tr><th>Ref</th><th>Service</th><th class="right">Amount</th><th class="right">Age (min)</th></tr></thead>
+        <tbody>${d.items.slice(0,50).map(t=>`<tr><td class="mono">${esc(t.reference)}</td><td>${esc(t.service)}</td>
+          <td class="right">${money((t.amount_paise||0)/100)}</td><td class="right">${t.age_minutes}</td></tr>`).join('')}</tbody></table></div>`;
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async sweepStale() {
+    const min = Math.max(60, parseInt(val('sweep_min')) || 120);
+    if (min < 60) return UI.toast('Window must be at least 60 minutes', 'err');
+    if (!confirm(`Fail & refund all pending transactions older than ${min} minutes? This reverses each debit to the member.`)) return;
+    try {
+      const d = await Api.post('/admin/recon/sweep', { older_than_min: min, remark: 'Manual stale-pending sweep' });
+      UI.toast(`Swept ${d.swept} pending → failed${d.failed?`, ${d.failed} errors`:''}`);
+      Actions.listStale();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
   async createBatch() {
     let records;
     try { records = JSON.parse(val('bp_rows')); } catch { return UI.toast('Records must be valid JSON', 'err'); }
@@ -1976,6 +2188,45 @@ const Actions = {
     const pw = prompt('Enter your current password to remove the MPIN:');
     if (!pw) return;
     try { await Api.call('/security/mpin', { method: 'DELETE', body: { current_password: pw } }); UI.toast('MPIN removed'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- authenticator 2FA -----
+  async start2fa() {
+    try {
+      const r = await Api.post('/security/2fa/setup', {});
+      const box = $('tf_setup');
+      box.innerHTML = `
+        <p class="muted">1. Add this key to your authenticator app (Google Authenticator, Authy, 1Password…):</p>
+        <div class="field"><label>Secret key (manual entry)</label>
+          <input value="${esc(r.secret)}" readonly onclick="this.select()" style="font-family:monospace;letter-spacing:1px"></div>
+        <p class="muted" style="word-break:break-all">Or open this link on the phone: <a href="${esc(r.otpauth_uri)}">${esc(r.otpauth_uri)}</a></p>
+        <p class="muted">2. Enter the current 6-digit code to turn it on:</p>
+        <div class="field"><label>Authenticator code</label><input id="tf_code" inputmode="numeric" maxlength="6" placeholder="000000"></div>
+        <button class="btn" onclick="Actions.enable2fa()">Verify &amp; enable</button>`;
+      $('tf_code').focus();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async enable2fa() {
+    const token = val('tf_code');
+    if (!/^\d{6}$/.test(token)) return UI.toast('Enter the 6-digit code', 'err');
+    try { await Api.post('/security/2fa/enable', { token }); UI.toast('Two-factor authentication enabled'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async disable2fa() {
+    const current_password = val('tf_pw');
+    if (!current_password) return UI.toast('Enter your current password', 'err');
+    try { await Api.call('/security/2fa', { method: 'DELETE', body: { current_password } }); UI.toast('Two-factor authentication disabled'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- active sessions -----
+  async revokeSession(id) {
+    if (!confirm('Revoke this session? That device will be signed out.')) return;
+    try { await Api.del('/security/sessions/' + id); UI.toast('Session revoked'); Screens._loadSessions(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async revokeAllSessions() {
+    if (!confirm('Log out of ALL sessions, including this one? You will need to sign in again.')) return;
+    try { await Api.post('/security/sessions/revoke-all', {}); UI.toast('Logged out everywhere'); Auth.logout(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   // ----- beneficiaries -----
@@ -2193,7 +2444,7 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
@@ -2584,8 +2835,82 @@ const Actions = {
     try { navigator.clipboard.writeText(t); UI.toast('Copied'); }
     catch { UI.toast('Copy failed — select manually', 'err'); }
   },
+  async testProvider(id, label) {
+    UI.modal(`<h3>Testing ${esc(label)}…</h3><p class="muted" id="pt_body">Running a connectivity check (no live transaction)…</p>`);
+    try {
+      const r = await Api.post(`/admin/providers/${id}/test`, {});
+      const rowHtml = (r.checks || []).map(c => `<div class="row" style="gap:8px;align-items:center">
+        <span style="font-size:15px">${c.ok?'✅':'❌'}</span><b>${esc(c.label)}</b>
+        <span class="muted" style="font-size:12px">${esc(c.detail||'')}</span></div>`).join('');
+      const banner = r.ok
+        ? `<div class="msg" style="background:#e6f4ea;color:#137333;padding:10px;border-radius:8px">${esc(r.message)}</div>`
+        : `<div class="msg err">${esc(r.message)}</div>`;
+      UI.modal(`<h3>${esc(label)} — ${r.mode==='sandbox'?'sandbox':(r.ok?'ready':'not ready')}</h3>
+        ${banner}<div class="mt" style="display:flex;flex-direction:column;gap:6px">${rowHtml}</div>
+        <div class="row mt" style="justify-content:flex-end"><button class="btn sm" onclick="UI.closeModal()">Close</button></div>`);
+    } catch (err) { UI.modal(`<h3>${esc(label)}</h3><div class="msg err">${esc(err.message)}</div>
+        <div class="row mt" style="justify-content:flex-end"><button class="btn sm" onclick="UI.closeModal()">Close</button></div>`); }
+  },
   async deactivateProvider(id) {
     try { await Api.post(`/admin/providers/${id}/deactivate`, {}); UI.toast('Deactivated'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- catalog: operators -----
+  addOperator() {
+    UI.modal(`<h3>Add / update operator</h3>
+      <div class="field"><label>Code (A-Z, 0-9, _)</label><input id="op_code" placeholder="JIO"></div>
+      <div class="field"><label>Name</label><input id="op_name" placeholder="Jio"></div>
+      <div class="field"><label>Type</label><select id="op_type"><option value="prepaid">prepaid</option><option value="postpaid">postpaid</option><option value="dth">dth</option></select></div>
+      <div class="row mt" style="justify-content:flex-end;gap:8px"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+        <button class="btn" onclick="Actions.saveOperator()">Save</button></div>`);
+  },
+  async saveOperator() {
+    const body = { code: val('op_code').toUpperCase(), name: val('op_name'), type: val('op_type') };
+    if (!/^[A-Z0-9_]+$/.test(body.code) || !body.name) return UI.toast('Enter a code and name', 'err');
+    try { await Api.post('/admin/operators', body); UI.closeModal(); UI.toast('Operator saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async toggleOperator(code, enabled) {
+    // Re-send the row with the flipped enabled flag (upsert).
+    try {
+      const d = await Api.get('/admin/operators');
+      const o = (d.items || []).find(x => x.code === code); if (!o) return;
+      await Api.post('/admin/operators', { code: o.code, name: o.name, type: o.type, enabled, sort_order: o.sort_order });
+      UI.toast(enabled ? 'Enabled' : 'Disabled'); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async delOperator(code) {
+    if (!confirm('Delete operator ' + code + '?')) return;
+    try { await Api.del('/admin/operators/' + encodeURIComponent(code)); UI.toast('Deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- catalog: billers -----
+  addBiller() {
+    UI.modal(`<h3>Add / update biller</h3>
+      <div class="field"><label>Biller ID</label><input id="bl_id" placeholder="ELEC-UPPCL"></div>
+      <div class="field"><label>Name</label><input id="bl_name" placeholder="UPPCL Uttar Pradesh"></div>
+      <div class="field"><label>Category</label><input id="bl_cat" placeholder="electricity"></div>
+      <div class="field"><label>Coverage</label><select id="bl_cov"><option value="national">national</option><option value="state">state</option></select></div>
+      <div class="row mt" style="justify-content:flex-end;gap:8px"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+        <button class="btn" onclick="Actions.saveBiller()">Save</button></div>`);
+  },
+  async saveBiller() {
+    const body = { biller_id: val('bl_id'), name: val('bl_name'), category: val('bl_cat'), coverage: val('bl_cov') };
+    if (!body.biller_id || !body.name || !body.category) return UI.toast('Fill ID, name and category', 'err');
+    try { await Api.post('/admin/billers', body); UI.closeModal(); UI.toast('Biller saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async toggleBiller(id, enabled) {
+    try {
+      const d = await Api.get('/admin/billers');
+      const b = (d.items || []).find(x => x.biller_id === id); if (!b) return;
+      await Api.post('/admin/billers', { biller_id: b.biller_id, name: b.name, category: b.category, coverage: b.coverage || 'national', enabled });
+      UI.toast(enabled ? 'Enabled' : 'Disabled'); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async delBiller(id) {
+    if (!confirm('Delete biller ' + id + '?')) return;
+    try { await Api.del('/admin/billers/' + encodeURIComponent(id)); UI.toast('Deleted'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async activateProvider(id) {

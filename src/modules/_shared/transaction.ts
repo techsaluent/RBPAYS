@@ -43,12 +43,53 @@ export interface RunOptions {
   insertServiceRow: (client: PoolClient, ctx: { reference: string; chargePaise: number }) => Promise<string>;
   /** Call the external provider (runs after the debit commits). */
   callProvider: (ctx: { reference: string }) => Promise<ProviderResult>;
+  /**
+   * Optional provider failover. When present, the orchestrator tries each
+   * candidate provider in order and advances to the next ONLY on a hard
+   * `failed` result (a `pending`/`success` is accepted as-is — never retried,
+   * so money is never double-sent). The winning provider's name is what
+   * settlement records. `callProvider` is ignored when this is set.
+   */
+  failover?: {
+    /** Ordered provider ids to try (primary first); an entry may be undefined (env default). */
+    candidates: Array<{ id: string | undefined; name: string }>;
+    call: (providerId: string | undefined, ctx: { reference: string }) => Promise<ProviderResult>;
+  };
 }
 
 export interface RunResult {
   transaction: Record<string, unknown>; // service detail row
   master: Record<string, unknown>; // transactions ledger row
   idempotent: boolean;
+}
+
+/**
+ * Try each candidate provider in order, advancing to the next ONLY on a hard
+ * `failed`. A `success` or `pending` is accepted immediately and never retried,
+ * so money is never double-sent. Returns the accepted result and the name of
+ * the provider that produced it. Exported for unit testing.
+ */
+export async function runWithFailover(
+  candidates: Array<{ id: string | undefined; name: string }>,
+  call: (id: string | undefined) => Promise<ProviderResult>,
+  fallbackName: string,
+): Promise<{ result: ProviderResult; providerName: string }> {
+  let result: ProviderResult = { status: 'failed', message: 'No provider available' };
+  let providerName = fallbackName;
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    try {
+      result = await call(c.id);
+    } catch (err) {
+      result = { status: 'failed', message: (err as Error).message };
+    }
+    providerName = c.name;
+    if (result.status !== 'failed') break; // success / pending — accept
+    if (i < candidates.length - 1) {
+      result = { ...result, message: `${result.message ?? 'failed'} (failing over from ${c.name})` };
+    }
+  }
+  return { result, providerName };
 }
 
 /** Admin-configured duplicate window in minutes (0 = disabled). Default 5. */
@@ -214,8 +255,13 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
   if (debitedBalance != null) void notifyLowBalance(opts.userId, debitedBalance + netPaise, debitedBalance);
 
   // 3) Provider call + settle (outside the reserve transaction).
-  const result = await opts.callProvider({ reference });
-  await settleByReference(reference, opts.providerName, result);
+  //    With failover, try each candidate in priority order, advancing only on a
+  //    hard `failed` — a pending/success is accepted and never retried.
+  const settled =
+    opts.failover && opts.failover.candidates.length
+      ? await runWithFailover(opts.failover.candidates, (id) => opts.failover!.call(id, { reference }), opts.providerName)
+      : { result: await opts.callProvider({ reference }), providerName: opts.providerName };
+  await settleByReference(reference, settled.providerName, settled.result);
 
   const detail = await query(`SELECT * FROM ${opts.table} WHERE id = $1`, [ids.serviceTxnId]);
   const master = await query('SELECT * FROM transactions WHERE id = $1', [ids.masterId]);

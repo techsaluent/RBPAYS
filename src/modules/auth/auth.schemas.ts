@@ -44,6 +44,16 @@ export const loginSchema = z.object({
   password: z.string().min(1),
   // Optional MPIN; required at login when the account has one set.
   mpin: z.string().trim().regex(/^\d{4,6}$/).optional(),
+  // Optional authenticator code; required at login when 2FA is enabled.
+  totp: z.string().trim().regex(/^\d{6}$/).optional(),
+});
+
+export const enableTotpSchema = z.object({
+  token: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from your authenticator app'),
+});
+
+export const disableTotpSchema = z.object({
+  current_password: z.string().min(1),
 });
 
 export const mpinSchema = z.string().trim().regex(/^\d{4,6}$/, 'MPIN must be 4-6 digits');

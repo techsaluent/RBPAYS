@@ -296,25 +296,63 @@ router.get(
 );
 
 // ---- Disputes / complaints desk -------------------------------------------
+// Ops summary: live counts by status, overdue count, and average resolution
+// time — the numbers the disputes desk needs at a glance.
+router.get(
+  '/disputes-summary',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query<{
+      open: string; in_review: string; resolved: string; rejected: string;
+      overdue: string; due_soon: string; oldest_open_hours: string | null; avg_resolution_hours: string | null;
+    }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'open')        AS open,
+         COUNT(*) FILTER (WHERE status = 'in_review')   AS in_review,
+         COUNT(*) FILTER (WHERE status = 'resolved')    AS resolved,
+         COUNT(*) FILTER (WHERE status = 'rejected')    AS rejected,
+         COUNT(*) FILTER (WHERE status IN ('open','in_review') AND sla_due_at < now())                          AS overdue,
+         COUNT(*) FILTER (WHERE status IN ('open','in_review') AND sla_due_at >= now() AND sla_due_at < now() + interval '2 hours') AS due_soon,
+         MAX(EXTRACT(EPOCH FROM (now() - created_at)) / 3600) FILTER (WHERE status IN ('open','in_review'))       AS oldest_open_hours,
+         AVG(EXTRACT(EPOCH FROM (resolved_at - created_at)) / 3600) FILTER (WHERE resolved_at IS NOT NULL)        AS avg_resolution_hours
+       FROM disputes`,
+    );
+    const r = rows[0];
+    res.json({
+      open: Number(r.open), in_review: Number(r.in_review), resolved: Number(r.resolved), rejected: Number(r.rejected),
+      overdue: Number(r.overdue), due_soon: Number(r.due_soon),
+      oldest_open_hours: r.oldest_open_hours != null ? Math.round(Number(r.oldest_open_hours) * 10) / 10 : null,
+      avg_resolution_hours: r.avg_resolution_hours != null ? Math.round(Number(r.avg_resolution_hours) * 10) / 10 : null,
+    });
+  }),
+);
+
 router.get(
   '/disputes',
   validate(z.object({
     status: z.enum(['open', 'in_review', 'resolved', 'rejected']).optional(),
     q: z.string().trim().max(64).optional(), // search by reference or ticket no
+    overdue: z.coerce.boolean().optional(),  // only past-SLA, still-open disputes
     limit: z.coerce.number().int().min(1).max(200).default(50),
   }), 'query'),
   asyncHandler(async (req: Request, res: Response) => {
-    const p = req.query as unknown as { status?: string; q?: string; limit: number };
+    const p = req.query as unknown as { status?: string; q?: string; overdue?: boolean; limit: number };
     const { rows } = await query(
       `SELECT d.*, u.full_name AS raised_by_name, u.phone AS raised_by_phone,
-              t.service AS txn_service, t.amount_paise AS txn_amount_paise, t.status AS txn_status
+              t.service AS txn_service, t.amount_paise AS txn_amount_paise, t.status AS txn_status,
+              (d.status IN ('open','in_review') AND d.sla_due_at < now()) AS overdue,
+              EXTRACT(EPOCH FROM (d.sla_due_at - now())) / 3600 AS sla_hours_left
          FROM disputes d
          JOIN users u ON u.id = d.raised_by
          LEFT JOIN transactions t ON t.id = d.transaction_id
         WHERE ($1::text IS NULL OR d.status = $1)
           AND ($2::text IS NULL OR d.reference ILIKE '%' || $2 || '%' OR d.ticket_no ILIKE '%' || $2 || '%')
-        ORDER BY d.created_at DESC LIMIT $3`,
-      [p.status ?? null, p.q ?? null, p.limit],
+          AND ($3::boolean IS NOT TRUE OR (d.status IN ('open','in_review') AND d.sla_due_at < now()))
+        -- Unresolved first, then most-overdue first, then newest.
+        ORDER BY (d.status IN ('open','in_review')) DESC,
+                 CASE WHEN d.status IN ('open','in_review') THEN d.sla_due_at END ASC NULLS LAST,
+                 d.created_at DESC
+        LIMIT $4`,
+      [p.status ?? null, p.q ?? null, p.overdue ?? null, p.limit],
     );
     res.json({ items: rows });
   }),
@@ -1018,6 +1056,38 @@ router.get(
   }),
 );
 
+// Stale-pending report: transactions the provider never gave a final status for.
+router.get(
+  '/recon/pending',
+  validate(z.object({ older_than_min: z.coerce.number().int().min(0).max(100000).default(120) }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { older_than_min } = req.query as unknown as { older_than_min: number };
+    const { listStalePending } = await import('../recon/autoRecon');
+    const items = await listStalePending(older_than_min);
+    res.json({ older_than_min, count: items.length, items });
+  }),
+);
+
+// Sweep stale pendings to failed (reverses the debit, refunding the member).
+// Guarded: older_than_min must be >= 60 so a hasty small window can't nuke
+// transactions that are still legitimately in flight.
+router.post(
+  '/recon/sweep',
+  validate(z.object({
+    older_than_min: z.coerce.number().int().min(60).max(100000),
+    remark: z.string().trim().min(3).max(200).default('Auto-recon: stale pending swept to failed'),
+  })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as { older_than_min: number; remark: string };
+    const { sweepStalePending } = await import('../recon/autoRecon');
+    const result = await sweepStalePending(b.older_than_min, b.remark);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'recon.sweep',
+      targetType: 'recon', targetId: 'pending', detail: { older_than_min: b.older_than_min, swept: result.swept, failed: result.failed } });
+    res.json(result);
+  }),
+);
+
 router.get(
   '/recon/batches/:id',
   asyncHandler(async (req: Request, res: Response) => {
@@ -1385,43 +1455,100 @@ router.put(
   }),
 );
 
+// Form 26Q source — every TDS deduction, date-ranged. JSON for the console,
+// CSV for the filing (per member: PAN, section, gross, rate, TDS).
+const taxReportSchema = z.object({
+  from: z.string().trim().optional(),
+  to: z.string().trim().optional(),
+  format: z.enum(['json', 'csv']).default('json'),
+});
 router.get(
   '/tds',
-  asyncHandler(async (_req: Request, res: Response) => {
+  validate(taxReportSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const p = req.query as unknown as z.infer<typeof taxReportSchema>;
+    const csv = p.format === 'csv';
     const totals = await query<{ gross: string; tds: string }>(
-      'SELECT COALESCE(SUM(gross_paise),0) gross, COALESCE(SUM(tds_paise),0) tds FROM tds_records',
+      `SELECT COALESCE(SUM(gross_paise),0) gross, COALESCE(SUM(tds_paise),0) tds FROM tds_records
+        WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+          AND ($2::timestamptz IS NULL OR created_at < ($2::timestamptz + interval '1 day'))`,
+      [p.from || null, p.to || null],
     );
-    const { rows } = await query(
-      `SELECT t.id, t.user_id, u.full_name, t.service_code, t.section,
+    const { rows } = await query<{ id: string; user_id: string; full_name: string; pan: string | null; service_code: string | null; section: string; gross_paise: string; rate_bps: number; tds_paise: string; net_paise: string; created_at: string }>(
+      `SELECT t.id, t.user_id, u.full_name, tp.pan, t.service_code, t.section,
               t.gross_paise, t.rate_bps, t.tds_paise, t.net_paise, t.created_at
-         FROM tds_records t JOIN users u ON u.id = t.user_id
-        ORDER BY t.created_at DESC LIMIT 100`,
+         FROM tds_records t
+         JOIN users u ON u.id = t.user_id
+         LEFT JOIN tax_profiles tp ON tp.user_id = t.user_id
+        WHERE ($1::timestamptz IS NULL OR t.created_at >= $1)
+          AND ($2::timestamptz IS NULL OR t.created_at < ($2::timestamptz + interval '1 day'))
+        ORDER BY t.created_at DESC ${csv ? 'LIMIT 100000' : 'LIMIT 100'}`,
+      [p.from || null, p.to || null],
     );
+    if (csv) {
+      const out = toCsv(
+        ['Date', 'Member', 'PAN', 'Section', 'Service', 'Gross', 'Rate %', 'TDS', 'Net'],
+        rows.map((r) => [
+          new Date(r.created_at).toISOString().slice(0, 10), r.full_name, r.pan || '', r.section, r.service_code || '',
+          paiseToRupees(r.gross_paise), (r.rate_bps / 100).toFixed(2), paiseToRupees(r.tds_paise), paiseToRupees(r.net_paise),
+        ]),
+      );
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="tds_26q_${p.from || 'all'}_${p.to || 'now'}.csv"`);
+      res.send(out);
+      return;
+    }
     res.json({
       total_gross_paise: bigintToNumber(totals.rows[0].gross),
       total_tds_paise: bigintToNumber(totals.rows[0].tds),
       total_tds: paiseToRupees(totals.rows[0].tds),
       items: rows.map((r) => ({
         ...r,
-        gross_paise: bigintToNumber(r.gross_paise as string),
-        tds_paise: bigintToNumber(r.tds_paise as string),
-        net_paise: bigintToNumber(r.net_paise as string),
+        gross_paise: bigintToNumber(r.gross_paise),
+        tds_paise: bigintToNumber(r.tds_paise),
+        net_paise: bigintToNumber(r.net_paise),
       })),
     });
   }),
 );
 
+// GST liability summary (output tax on the platform margin), date-ranged.
+// JSON for the console; CSV for the GSTR working (CGST / SGST / IGST split).
 router.get(
   '/gst',
-  asyncHandler(async (_req: Request, res: Response) => {
+  validate(taxReportSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const p = req.query as unknown as z.infer<typeof taxReportSchema>;
+    const csv = p.format === 'csv';
     const totals = await query<{ base: string; cgst: string; sgst: string; igst: string }>(
       `SELECT COALESCE(SUM(taxable_base_paise),0) base, COALESCE(SUM(cgst_paise),0) cgst,
-              COALESCE(SUM(sgst_paise),0) sgst, COALESCE(SUM(igst_paise),0) igst FROM gst_invoices`,
+              COALESCE(SUM(sgst_paise),0) sgst, COALESCE(SUM(igst_paise),0) igst FROM gst_invoices
+        WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+          AND ($2::timestamptz IS NULL OR created_at < ($2::timestamptz + interval '1 day'))`,
+      [p.from || null, p.to || null],
     );
-    const { rows } = await query(
+    const { rows } = await query<{ id: string; service_code: string | null; taxable_base_paise: string; cgst_paise: string; sgst_paise: string; igst_paise: string; place_of_supply: string | null; created_at: string }>(
       `SELECT id, service_code, taxable_base_paise, cgst_paise, sgst_paise, igst_paise, place_of_supply, created_at
-         FROM gst_invoices ORDER BY created_at DESC LIMIT 100`,
+         FROM gst_invoices
+        WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+          AND ($2::timestamptz IS NULL OR created_at < ($2::timestamptz + interval '1 day'))
+        ORDER BY created_at DESC ${csv ? 'LIMIT 100000' : 'LIMIT 100'}`,
+      [p.from || null, p.to || null],
     );
+    if (csv) {
+      const out = toCsv(
+        ['Date', 'Service', 'Place of supply', 'Taxable base', 'CGST', 'SGST', 'IGST', 'Total GST'],
+        rows.map((r) => [
+          new Date(r.created_at).toISOString().slice(0, 10), r.service_code || '', r.place_of_supply || '',
+          paiseToRupees(r.taxable_base_paise), paiseToRupees(r.cgst_paise), paiseToRupees(r.sgst_paise), paiseToRupees(r.igst_paise),
+          paiseToRupees(String(Number(r.cgst_paise) + Number(r.sgst_paise) + Number(r.igst_paise))),
+        ]),
+      );
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="gst_${p.from || 'all'}_${p.to || 'now'}.csv"`);
+      res.send(out);
+      return;
+    }
     const t = totals.rows[0];
     res.json({
       total_base_paise: bigintToNumber(t.base),
@@ -1431,10 +1558,10 @@ router.get(
       total_igst_paise: bigintToNumber(t.igst),
       items: rows.map((r) => ({
         ...r,
-        taxable_base_paise: bigintToNumber(r.taxable_base_paise as string),
-        cgst_paise: bigintToNumber(r.cgst_paise as string),
-        sgst_paise: bigintToNumber(r.sgst_paise as string),
-        igst_paise: bigintToNumber(r.igst_paise as string),
+        taxable_base_paise: bigintToNumber(r.taxable_base_paise),
+        cgst_paise: bigintToNumber(r.cgst_paise),
+        sgst_paise: bigintToNumber(r.sgst_paise),
+        igst_paise: bigintToNumber(r.igst_paise),
       })),
     });
   }),
@@ -1981,6 +2108,131 @@ router.delete(
     if (!rowCount) throw ApiError.notFound('Provider not found');
     await refreshProviderRegistry();
     res.status(204).send();
+  }),
+);
+
+// ---- Catalog: recharge operators + BBPS billers ---------------------------
+// Admin manages the recharge operator list and the biller directory without a
+// deploy; members' dropdowns read the enabled rows.
+router.get(
+  '/operators',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT code, name, type, enabled, sort_order FROM operators ORDER BY type, sort_order, name');
+    res.json({ items: rows });
+  }),
+);
+const operatorSchema = z.object({
+  code: z.string().trim().min(1).max(40).regex(/^[A-Z0-9_]+$/, 'Code: A-Z, 0-9, _'),
+  name: z.string().trim().min(1).max(80),
+  type: z.enum(['prepaid', 'postpaid', 'dth']),
+  enabled: z.boolean().default(true),
+  sort_order: z.coerce.number().int().min(0).max(999).default(0),
+});
+router.post(
+  '/operators',
+  validate(operatorSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof operatorSchema>;
+    const { rows } = await query(
+      `INSERT INTO operators (code, name, type, enabled, sort_order) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, type = EXCLUDED.type,
+         enabled = EXCLUDED.enabled, sort_order = EXCLUDED.sort_order RETURNING *`,
+      [b.code, b.name, b.type, b.enabled, b.sort_order],
+    );
+    res.json({ operator: rows[0] });
+  }),
+);
+router.delete(
+  '/operators/:code',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('DELETE FROM operators WHERE code = $1', [req.params.code]);
+    if (!rowCount) throw ApiError.notFound('Operator not found');
+    res.status(204).send();
+  }),
+);
+
+router.get(
+  '/billers',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query('SELECT biller_id, name, category, coverage, enabled FROM billers ORDER BY category, name');
+    res.json({ items: rows });
+  }),
+);
+const billerSchema = z.object({
+  biller_id: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1).max(120),
+  category: z.string().trim().min(1).max(40),
+  coverage: z.enum(['national', 'state']).default('national'),
+  enabled: z.boolean().default(true),
+});
+router.post(
+  '/billers',
+  validate(billerSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof billerSchema>;
+    const { rows } = await query(
+      `INSERT INTO billers (biller_id, name, category, coverage, enabled) VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (biller_id) DO UPDATE SET name = EXCLUDED.name, category = EXCLUDED.category,
+         coverage = EXCLUDED.coverage, enabled = EXCLUDED.enabled RETURNING *`,
+      [b.biller_id, b.name, b.category, b.coverage, b.enabled],
+    );
+    res.json({ biller: rows[0] });
+  }),
+);
+router.delete(
+  '/billers/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('DELETE FROM billers WHERE biller_id = $1', [req.params.id]);
+    if (!rowCount) throw ApiError.notFound('Biller not found');
+    res.status(204).send();
+  }),
+);
+
+// Go-live pre-flight: verify a saved provider's config + endpoint reachability
+// WITHOUT running a real transaction. Safe to run before activating live keys.
+router.post(
+  '/providers/:id/test',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query<import('../../providers/health').ProviderRow>(
+      `SELECT id, service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, is_active
+         FROM service_providers WHERE id = $1`,
+      [req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Provider not found');
+    const { probeProvider } = await import('../../providers/health');
+    const result = await probeProvider(rows[0]);
+    res.json({ provider: { id: rows[0].id, label: rows[0].label, driver: rows[0].driver, service_code: rows[0].service_code }, ...result });
+  }),
+);
+
+// Go-live readiness: for every service, which provider is active and whether it
+// is still the sandbox — so the admin can see at a glance what is not yet live.
+router.get(
+  '/go-live',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query<{ service_code: string; label: string | null; driver: string | null; provider_id: string | null; total_providers: string }>(
+      `SELECT s.service_code,
+              a.label, a.driver, a.id AS provider_id,
+              (SELECT COUNT(*) FROM service_providers sp WHERE sp.service_code = s.service_code)::text AS total_providers
+         FROM (SELECT DISTINCT service_code FROM service_providers) s
+         LEFT JOIN service_providers a ON a.service_code = s.service_code AND a.is_active
+        ORDER BY s.service_code`,
+    );
+    const items = rows.map((r) => ({
+      service_code: r.service_code,
+      active_provider: r.label,
+      driver: r.driver,
+      provider_id: r.provider_id,
+      total_providers: Number(r.total_providers),
+      live: !!r.driver && r.driver !== 'sandbox',
+      status: !r.driver ? 'none_active' : r.driver === 'sandbox' ? 'sandbox' : 'live',
+    }));
+    res.json({
+      items,
+      live_count: items.filter((i) => i.live).length,
+      sandbox_count: items.filter((i) => i.status === 'sandbox').length,
+      none_count: items.filter((i) => i.status === 'none_active').length,
+    });
   }),
 );
 
