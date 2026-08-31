@@ -74,19 +74,19 @@
     .trust{display:flex;gap:18px;flex-wrap:wrap;margin-top:26px;color:#cfd2f4;font-size:13.5px;font-weight:500}
     .trust span{display:inline-flex;align-items:center;gap:7px}
     /* floating hero card */
-    .hcard{position:relative;background:rgba(255,255,255,.96);color:var(--ink);border-radius:22px;box-shadow:0 30px 70px rgba(10,10,40,.4);padding:22px}
+    .hcard{position:relative;z-index:1;background:rgba(255,255,255,.96);color:var(--ink);border-radius:22px;box-shadow:0 30px 70px rgba(10,10,40,.4);padding:22px}
     .hcard h4{margin:0 0 14px;font-size:14px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em}
     .mini{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
     .mini .m{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:14px 10px;text-align:center;transition:transform .15s,box-shadow .15s}
     .mini .m:hover{transform:translateY(-3px);box-shadow:var(--shadow-sm)}
     .mini .m .i{font-size:22px}.mini .m .t{font-weight:600;margin-top:6px;font-size:12px}
-    .float{position:absolute;background:#fff;color:var(--ink);border-radius:14px;box-shadow:0 16px 40px rgba(10,10,40,.28);padding:10px 14px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;animation:floaty 5s ease-in-out infinite}
+    .float{position:absolute;z-index:3;background:#fff;color:var(--ink);border-radius:14px;box-shadow:0 16px 40px rgba(10,10,40,.28);padding:10px 14px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;white-space:nowrap;animation:floaty 5s ease-in-out infinite}
     .float .em{font-size:18px}
-    .float.f1{top:-18px;right:22px;animation-delay:.2s}
-    .float.f2{bottom:34px;left:-26px;animation-delay:1.4s}
+    .float.f1{top:-16px;right:-8px;animation-delay:.2s}
+    .float.f2{bottom:22px;left:-10px;animation-delay:1.4s}
     .float .up{color:var(--green);font-weight:800}
     @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
-    @media(max-width:920px){ .hero .grid{grid-template-columns:1fr;gap:30px;padding:48px 0 70px} .float.f2{left:auto;right:10px;bottom:-16px} }
+    @media(max-width:920px){ .hero .grid{grid-template-columns:1fr;gap:30px;padding:48px 0 70px} .float.f1{right:0} .float.f2{left:0;bottom:-14px} }
 
     /* Marquee */
     .marq{background:#0e1030;overflow:hidden;white-space:nowrap;border-top:1px solid #23264d;border-bottom:1px solid #23264d}
