@@ -78,6 +78,7 @@ export function permissionForPath(path: string, method: string): string | null |
   if (/^\/recon\b/.test(path)) return 'recon.manage';
   if (/^\/adjustments\b/.test(path)) return 'recon.manage';
   if (/^\/transactions\b/.test(path)) return 'recon.manage'; // refund / resolve / ops list
+  if (/^\/settlement-report\b/.test(path)) return 'recon.manage';
   if (/^\/disputes\b/.test(path)) return 'disputes.manage'; // complaints desk
 
   if (/^\/site\b/.test(path)) return 'website.manage';

@@ -6,6 +6,7 @@ import { applyUplineCredits, CommissionEntry } from '../commission/commission.se
 import { apply194N } from '../tax/tax.service';
 import { postJournal, JournalLine } from './ledger';
 import { ProviderResult } from '../../providers/types';
+import { notifyTxn } from '../notify/alerts';
 
 // Cash-out inflow services accumulate in the retailer's AePS Settlement
 // wallet (per the multi-wallet model), not the pre-funded Main wallet.
@@ -58,7 +59,8 @@ export async function settleByReference(
   providerName: string,
   result: ProviderResult,
 ): Promise<boolean> {
-  return withTransaction(async (client) => {
+  let notify = null as null | { userId: string; service: string; status: string; amountPaise: number };
+  const ok = await withTransaction(async (client) => {
     const { rows } = await client.query<TxnRow>(
       'SELECT * FROM transactions WHERE reference = $1 FOR UPDATE',
       [reference],
@@ -160,6 +162,13 @@ export async function settleByReference(
       }
     }
 
+    if (result.status === 'success' || result.status === 'failed') {
+      notify = { userId: txn.user_id, service: txn.service, status: result.status, amountPaise: Number(txn.amount_paise) };
+    }
     return true;
   });
+
+  // Member SMS alert (best-effort, after commit) for a terminal outcome.
+  if (notify) void notifyTxn(notify.userId, { ...notify, reference });
+  return ok;
 }
