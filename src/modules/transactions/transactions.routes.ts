@@ -7,6 +7,7 @@ import { ApiError } from '../../utils/ApiError';
 import { query } from '../../../db';
 import { paiseToRupees } from '../../utils/money';
 import { receiptData, receiptHtml } from './receipt';
+import { toCsv, statementHtml } from '../reports/reports.service';
 
 const router = Router();
 router.use(requireAuth);
@@ -78,6 +79,67 @@ router.get(
       [targetUser, q.service ?? null, q.status ?? null, q.direction ?? null, q.limit, q.offset],
     );
     res.json({ items: rows.map(serialize), limit: q.limit, offset: q.offset });
+  }),
+);
+
+// Downloadable transaction statement (CSV or printable HTML), date-ranged.
+const stmtSchema = z.object({
+  from: z.string().trim().optional(),
+  to: z.string().trim().optional(),
+  status: z.enum(['pending', 'success', 'failed', 'refunded']).optional(),
+  format: z.enum(['csv', 'html']).default('html'),
+  user_id: z.string().uuid().optional(),
+});
+router.get(
+  '/statement',
+  validate(stmtSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const q = req.query as unknown as z.infer<typeof stmtSchema>;
+    const targetUser = req.user.role === 'admin' && q.user_id ? q.user_id : req.user.id;
+    const { rows } = await query<Record<string, string>>(
+      `SELECT created_at, service, reference, status, direction, amount_paise, charge_paise, commission_paise, net_paise
+         FROM transactions
+        WHERE user_id = $1
+          AND ($2::timestamptz IS NULL OR created_at >= $2)
+          AND ($3::timestamptz IS NULL OR created_at < ($3::timestamptz + interval '1 day'))
+          AND ($4::text IS NULL OR status = $4)
+        ORDER BY created_at DESC LIMIT 5000`,
+      [targetUser, q.from || null, q.to || null, q.status ?? null],
+    );
+    const r = (p: string) => paiseToRupees(p);
+    const sum = (k: string) => rows.reduce((a, x) => a + Number(x[k] || 0), 0);
+    const period = `${q.from || 'start'} to ${q.to || 'today'}`;
+
+    if (q.format === 'csv') {
+      const csv = toCsv(
+        ['Date', 'Service', 'Reference', 'Direction', 'Status', 'Amount', 'Charge', 'Commission', 'Net'],
+        rows.map((t) => [
+          new Date(t.created_at).toISOString(), t.service, t.reference, t.direction, t.status,
+          r(t.amount_paise), r(t.charge_paise), r(t.commission_paise), r(t.net_paise),
+        ]),
+      );
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="statement_${q.from || 'all'}_${q.to || 'now'}.csv"`);
+      res.send(csv);
+      return;
+    }
+    res.type('html').send(
+      statementHtml({
+        title: 'Transaction statement',
+        subtitle: period,
+        meta: [['Records', String(rows.length)], ['Successful value', '₹' + r(String(sum('amount_paise')))], ['Commission', '₹' + r(String(sum('commission_paise')))]],
+        columns: [
+          { label: 'Date' }, { label: 'Service' }, { label: 'Reference' }, { label: 'Status' },
+          { label: 'Amount', align: 'right' }, { label: 'Charge', align: 'right' }, { label: 'Commission', align: 'right' }, { label: 'Net', align: 'right' },
+        ],
+        rows: rows.map((t) => [
+          new Date(t.created_at).toLocaleString('en-IN'), String(t.service).replace(/_/g, ' '), t.reference, t.status,
+          '₹' + r(t.amount_paise), '₹' + r(t.charge_paise), '₹' + r(t.commission_paise), '₹' + r(t.net_paise),
+        ]),
+        totals: ['Total', '', '', '', '₹' + r(String(sum('amount_paise'))), '₹' + r(String(sum('charge_paise'))), '₹' + r(String(sum('commission_paise'))), '₹' + r(String(sum('net_paise')))],
+      }),
+    );
   }),
 );
 

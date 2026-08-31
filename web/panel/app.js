@@ -218,6 +218,7 @@ const NAV = [
   { key: 'plans', label: 'Commission', roles: ['admin', 'staff'], perm: 'commission.manage', section: 'Finance' },
   { key: 'taxdesk', label: 'Tax (TDS/GST)', roles: ['admin', 'staff'], perm: 'tax.manage', section: 'Finance' },
   { key: 'recon', label: 'Reconciliation', roles: ['admin', 'staff'], perm: 'recon.manage', section: 'Finance' },
+  { key: 'settlement', label: 'Settlement Report', roles: ['admin', 'staff'], perm: 'recon.manage', section: 'Finance' },
   { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
@@ -617,7 +618,10 @@ const Screens = {
           ${sw.commission_paise > 0 ? `<button class="btn sm" onclick="Actions.sweep('commission',${sw.commission_paise/100})">Sweep to main</button>` : ''}</div>
       </div>
       <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Main wallet ledger</h2>
-        <button class="btn sm" onclick="Actions.topup()">Top up (test gateway)</button></div>
+        <div class="row" style="gap:8px">
+          <button class="btn sm ghost" onclick="Actions.openDoc('/wallet/statement?format=html')">🧾 Passbook</button>
+          <button class="btn sm ghost" onclick="Actions.dl('/wallet/statement?format=csv','passbook.csv')">⬇ CSV</button>
+          <button class="btn sm" onclick="Actions.topup()">Top up (test gateway)</button></div></div>
         <div class="tbl-wrap"><table><thead><tr><th>Amount</th><th>Source</th><th>Description</th><th class="right">Balance</th><th>When</th></tr></thead>
         <tbody>${rows || '<tr><td colspan=5 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>
       <div class="panel mt"><h2>Bank withdrawals</h2>
@@ -735,7 +739,15 @@ const Screens = {
       <td class="muted">${esc(t.reference)}</td><td class="muted">${new Date(t.created_at).toLocaleString('en-IN')}</td>
       <td><button class="btn sm ghost" onclick="Actions.receipt('${t.id}')">Receipt</button>
         <button class="btn sm ghost" onclick="Actions.raiseDispute('${esc(t.reference)}','${esc(t.service)}')">Raise dispute</button></td></tr>`).join('');
-    $('view').innerHTML = `<div class="panel"><h2>All transactions</h2><div class="tbl-wrap"><table>
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:end">
+        <h2 style="margin:0">All transactions</h2>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0"><label>From</label><input id="st_from" type="date"></div>
+          <div class="field" style="margin:0"><label>To</label><input id="st_to" type="date"></div>
+          <button class="btn sm ghost" onclick="Actions.openDoc('/transactions/statement?format=html&'+Actions._range('st'))">🧾 Print statement</button>
+          <button class="btn sm" onclick="Actions.dl('/transactions/statement?format=csv&'+Actions._range('st'),'statement.csv')">⬇ CSV</button>
+        </div></div>
+      <div class="tbl-wrap mt"><table>
       <thead><tr><th>Service</th><th>Dir</th><th class="right">Amount</th><th class="right">Net</th><th>Status</th><th>Reference</th><th>When</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=8 class=muted>No transactions</td></tr>'}</tbody></table></div></div>`;
   },
@@ -1453,6 +1465,35 @@ const Screens = {
         <tbody>${rows || '<tr><td colspan=5 class=muted>No requests yet — file the first one.</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Admin: T+1 settlement report — per-member daily summary.
+  async settlement() {
+    const date = Actions._settleDate || '';
+    const d = await Api.get('/admin/settlement-report' + (date ? '?date=' + date : '')).catch(() => ({ items: [], totals: {} }));
+    const t = d.totals || {};
+    const rows = (d.items || []).map(x => `<tr>
+      <td>${esc(x.full_name)}<div class="muted" style="font-size:11px">${esc(x.role)} · ${esc(x.phone||'')}</div></td>
+      <td class="right">${x.txns}</td>
+      <td class="right">${money((x.gtv_paise||0)/100)}</td>
+      <td class="right comm-pos">${money((x.commission_paise||0)/100)}</td>
+      <td class="right">${money((x.charge_paise||0)/100)}</td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:end">
+        <div><h2 style="margin:0">Settlement report</h2><p class="muted" style="margin:2px 0 0">Per-member summary of successful transactions for <b>${esc(d.date||'yesterday')}</b> (T+1). Blank date = yesterday.</p></div>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0"><label>Date</label><input id="se_date" type="date" value="${esc(date)}" onchange="Actions._settleDate=this.value;App.route()"></div>
+          <button class="btn sm" onclick="Actions.dl('/admin/settlement-report?format=csv'+(Actions._settleDate?'&date='+Actions._settleDate:''),'settlement.csv')">⬇ CSV</button>
+        </div></div>
+      <div class="stats mt">
+        ${UI.stat('b','🧾','Transactions', t.txns||0, 'Successful, that day')}
+        ${UI.stat('t','💳','GTV', money((t.gtv_paise||0)/100), 'Successful value')}
+        ${UI.stat('g','💰','Commission', money((t.commission_paise||0)/100), 'Paid to the network')}
+        ${UI.stat('o','🏦','Charges', money((t.charge_paise||0)/100), 'Collected')}
+      </div>
+      <div class="tbl-wrap mt"><table>
+        <thead><tr><th>Member</th><th class="right">Txns</th><th class="right">GTV</th><th class="right">Commission</th><th class="right">Charges</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=5 class=muted>No settled transactions for this day.</td></tr>'}</tbody></table></div></div>`;
+  },
+
   // Admin: manage upstream providers per service (multiple, one active).
   async providers() {
     const svcs = await Api.get('/admin/services');
@@ -1730,6 +1771,23 @@ const Actions = {
       w.document.write(html); w.document.close();
     } catch (err) { UI.toast(err.message, 'err'); }
   },
+  // Open an authed HTML document (statement / passbook) in a new window.
+  async openDoc(path) {
+    try { const res = await Api.raw(path); const html = await res.text(); const w = window.open('', '_blank'); w.document.write(html); w.document.close(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Download an authed CSV as a file.
+  async dl(path, filename) {
+    try {
+      const res = await Api.raw(path);
+      if (!res.ok) throw new Error('Download failed (' + res.status + ')');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+      a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  _range(pfx) { const f = val(pfx + '_from'), t = val(pfx + '_to'); const qs = []; if (f) qs.push('from=' + f); if (t) qs.push('to=' + t); return qs.join('&'); },
   addMember(asAdmin) {
     const roleOpts = (asAdmin ? MEMBER_ROLES : MEMBER_ROLES.filter(r => rank(r) < rank(State.user.role)))
       .map(r => `<option value="${r}">${r.replace(/_/g,' ')}</option>`).join('');

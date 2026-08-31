@@ -19,6 +19,7 @@ import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
 import { refreshProviderRegistry } from '../../providers/registry';
 import { dryRunDynamic, liveTestDynamic } from '../../providers/dynamic';
+import { toCsv } from '../reports/reports.service';
 import { draftProviderConfig, analyzeDevRequest } from '../ai/ai.service';
 import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } from '../devdesk/devdesk.service';
 import { postJournal } from '../_shared/ledger';
@@ -1584,6 +1585,55 @@ router.post(
     await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'topup.reject',
       targetType: 'topup', targetId: req.params.id, detail: { remarks: remarks ?? null } });
     res.json({ request: rows[0] });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// T+1 settlement report — per-member daily summary (JSON or CSV).
+// ---------------------------------------------------------------------
+const settlementSchema = z.object({
+  date: z.string().trim().optional(), // YYYY-MM-DD; defaults to yesterday
+  format: z.enum(['json', 'csv']).default('json'),
+});
+router.get(
+  '/settlement-report',
+  validate(settlementSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof settlementSchema>;
+    const day = q.date || null;
+    const { rows } = await query<Record<string, string>>(
+      `SELECT u.full_name, u.phone, u.role,
+              COUNT(*) FILTER (WHERE t.status='success')          AS txns,
+              COALESCE(SUM(t.amount_paise)     FILTER (WHERE t.status='success'),0) AS gtv_paise,
+              COALESCE(SUM(t.commission_paise) FILTER (WHERE t.status='success'),0) AS commission_paise,
+              COALESCE(SUM(t.charge_paise)     FILTER (WHERE t.status='success'),0) AS charge_paise
+         FROM transactions t JOIN users u ON u.id = t.user_id
+        WHERE t.created_at >= COALESCE($1::date, current_date - 1)
+          AND t.created_at <  COALESCE($1::date, current_date - 1) + interval '1 day'
+        GROUP BY u.id, u.full_name, u.phone, u.role
+       HAVING COUNT(*) FILTER (WHERE t.status='success') > 0
+        ORDER BY gtv_paise DESC`,
+      [day],
+    );
+    const r = (p: string) => paiseToRupees(p);
+    const reportDate = day || 'yesterday';
+    if (q.format === 'csv') {
+      const csv = toCsv(
+        ['Member', 'Phone', 'Role', 'Txns', 'GTV', 'Commission', 'Charge'],
+        rows.map((x) => [x.full_name, x.phone, x.role, x.txns, r(x.gtv_paise), r(x.commission_paise), r(x.charge_paise)]),
+      );
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="settlement_${reportDate}.csv"`);
+      res.send(csv);
+      return;
+    }
+    const totals = {
+      txns: rows.reduce((a, x) => a + Number(x.txns), 0),
+      gtv_paise: rows.reduce((a, x) => a + Number(x.gtv_paise), 0),
+      commission_paise: rows.reduce((a, x) => a + Number(x.commission_paise), 0),
+      charge_paise: rows.reduce((a, x) => a + Number(x.charge_paise), 0),
+    };
+    res.json({ date: reportDate, items: rows, totals });
   }),
 );
 
