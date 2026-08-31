@@ -1432,6 +1432,8 @@ const Screens = {
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between">
         <h2>🛠️ AI Dev Desk</h2><button class="btn sm" onclick="Actions.newDev()">＋ New request</button></div>
         <p class="muted">File a feature request or bug. The AI drafts exactly what to build or fix (the plan), you approve it, and it's dispatched to your automation (n8n / coding agent) to open a PR — nothing is auto-deployed. Configure the AI under <a href="#/aistudio">AI Integration Studio</a>.</p>
+        <div class="msg" style="background:#eef2ff">🤖 <b>Turnkey dev agent:</b> import the ready-made n8n workflow that receives an approval, runs the free AI, and opens a draft PR. Set its GitHub token + AI model, then paste its webhook URL into <a href="#/website">Website → Automation webhook</a>.
+          <a href="/n8n-dev-agent.json" download style="margin-left:6px">Download dev-agent workflow →</a></div>
         <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Request</th><th>Priority</th><th>Status</th><th></th></tr></thead>
         <tbody>${rows || '<tr><td colspan=5 class=muted>No requests yet — file the first one.</td></tr>'}</tbody></table></div></div>`;
   },

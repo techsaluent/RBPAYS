@@ -1,0 +1,173 @@
+{
+  "name": "TutiPays — AI Dev Agent (approved request → draft PR)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tutipays-dev-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-in",
+      "name": "Dev Desk Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 320],
+      "webhookId": "tutipays-dev-agent",
+      "notes": "Paste this node's Production URL into TutiPays -> Website settings -> Automation webhook. TutiPays posts { event, at, data } here; data has ticket_no, kind, title, description, plan, remark."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.event }}",
+              "rightValue": "devdesk.approved",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "only-approved",
+      "name": "Only devdesk.approved",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [440, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'llama-3.3-70b-versatile', temperature: 0.2, messages: [ { role: 'system', content: 'You are a senior TypeScript engineer. Given an approved change request and its plan, write concise implementation notes: the files to touch, the exact edits in prose, and how to test. Markdown only, no preamble.' }, { role: 'user', content: 'Ticket ' + $json.body.data.ticket_no + ' (' + $json.body.data.kind + '): ' + $json.body.data.title + '\\n\\nDetails:\\n' + ($json.body.data.description || '') + '\\n\\nApproved plan:\\n' + JSON.stringify($json.body.data.plan || {}, null, 2) } ] }) }}",
+        "options": {}
+      },
+      "id": "ai-notes",
+      "name": "Free AI: implementation notes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 320],
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "notes": "Any free OpenAI-compatible endpoint. Add an httpHeaderAuth credential 'Authorization: Bearer <key>'. Update the model string when your free model changes. continueOnError is on so a hiccup still opens the PR from the plan."
+    },
+    {
+      "parameters": {
+        "jsCode": "const ev = $('Dev Desk Webhook').item.json.body;\nconst data = ev.data || {};\nconst plan = data.plan || {};\nconst ticket = (data.ticket_no || 'DEV').toString();\nconst branch = 'agent/' + ticket.toLowerCase();\nlet aiNotes = '';\ntry { aiNotes = $('Free AI: implementation notes').item.json.choices?.[0]?.message?.content || ''; } catch (e) {}\nconst list = (t, a) => (Array.isArray(a) && a.length) ? ('\\n### ' + t + '\\n' + a.map(x => '- ' + x).join('\\n') + '\\n') : '';\nconst prBody = '**Ticket:** ' + ticket + '  \\u2022  **Type:** ' + (data.kind || '') + '\\n\\n' +\n  '**Summary:** ' + (plan.summary || data.title || '') + '\\n' +\n  list('What to build / fix', plan.changes) + list('Areas', plan.areas) +\n  list('Risks', plan.risks) + list('How to test', plan.tests) +\n  (aiNotes ? ('\\n---\\n### AI implementation notes\\n' + aiNotes + '\\n') : '') +\n  '\\n---\\n_Auto-created from a TutiPays AI Dev Desk approval. This is a draft \\u2014 review and complete the code before merge._';\nconst spec = '# ' + ticket + ' \\u2014 ' + (data.title || '') + '\\n\\n' + (data.description || '') + '\\n\\n## Approved plan\\n\\n```json\\n' + JSON.stringify(plan, null, 2) + '\\n```\\n';\nreturn [{ json: {\n  owner: 'techsaluent',\n  repo: 'RBPAYS',\n  base: 'main',\n  branch,\n  ticket,\n  prTitle: '[' + (data.kind || 'task') + '] ' + (data.title || ticket) + ' (' + ticket + ')',\n  prBody,\n  specPath: 'docs/dev-agent/' + ticket + '.md',\n  specContentB64: Buffer.from(spec).toString('base64')\n} }];"
+      },
+      "id": "assemble",
+      "name": "Assemble PR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 320],
+      "notes": "Edit owner / repo / base here for your repository."
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{ $json.owner }}/{{ $json.repo }}/git/ref/heads/{{ $json.base }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Accept", "value": "application/vnd.github+json" } ] },
+        "options": {}
+      },
+      "id": "gh-base-ref",
+      "name": "GitHub: base ref",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 320],
+      "notes": "Add an httpHeaderAuth credential 'Authorization: Bearer <GitHub PAT>' (repo scope). Reused by every GitHub node."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Assemble PR').item.json.owner }}/{{ $('Assemble PR').item.json.repo }}/git/refs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Accept", "value": "application/vnd.github+json" } ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ref: 'refs/heads/' + $('Assemble PR').item.json.branch, sha: $json.object.sha }) }}",
+        "options": {}
+      },
+      "id": "gh-branch",
+      "name": "GitHub: create branch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 320]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://api.github.com/repos/{{ $('Assemble PR').item.json.owner }}/{{ $('Assemble PR').item.json.repo }}/contents/{{ $('Assemble PR').item.json.specPath }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Accept", "value": "application/vnd.github+json" } ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: 'chore: dev-agent spec for ' + $('Assemble PR').item.json.ticket, content: $('Assemble PR').item.json.specContentB64, branch: $('Assemble PR').item.json.branch }) }}",
+        "options": {}
+      },
+      "id": "gh-commit",
+      "name": "GitHub: commit spec",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 320],
+      "notes": "Commits a task spec so the branch has a diff and the PR can open. Replace/extend this with real generated code changes when your coding agent produces them."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Assemble PR').item.json.owner }}/{{ $('Assemble PR').item.json.repo }}/pulls",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [ { "name": "Accept", "value": "application/vnd.github+json" } ] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ title: $('Assemble PR').item.json.prTitle, head: $('Assemble PR').item.json.branch, base: $('Assemble PR').item.json.base, body: $('Assemble PR').item.json.prBody, draft: true }) }}",
+        "options": {}
+      },
+      "id": "gh-pr",
+      "name": "GitHub: open draft PR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 320]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, pr_url: $json.html_url }) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Return PR URL",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1980, 320]
+    }
+  ],
+  "connections": {
+    "Dev Desk Webhook": { "main": [[{ "node": "Only devdesk.approved", "type": "main", "index": 0 }]] },
+    "Only devdesk.approved": { "main": [[{ "node": "Free AI: implementation notes", "type": "main", "index": 0 }]] },
+    "Free AI: implementation notes": { "main": [[{ "node": "Assemble PR", "type": "main", "index": 0 }]] },
+    "Assemble PR": { "main": [[{ "node": "GitHub: base ref", "type": "main", "index": 0 }]] },
+    "GitHub: base ref": { "main": [[{ "node": "GitHub: create branch", "type": "main", "index": 0 }]] },
+    "GitHub: create branch": { "main": [[{ "node": "GitHub: commit spec", "type": "main", "index": 0 }]] },
+    "GitHub: commit spec": { "main": [[{ "node": "GitHub: open draft PR", "type": "main", "index": 0 }]] },
+    "GitHub: open draft PR": { "main": [[{ "node": "Return PR URL", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "meta": {
+    "description": "Receives devdesk.approved from the TutiPays AI Dev Desk, asks a free AI for implementation notes, then creates a branch, commits a task spec, and opens a DRAFT PR built from the approved plan. Setup: (1) add an httpHeaderAuth credential 'Authorization: Bearer <GitHub PAT with repo scope>' and select it on every GitHub node; (2) set the AI URL/model + its Authorization credential; (3) edit owner/repo/base in the 'Assemble PR' node; (4) activate and paste this webhook's Production URL into TutiPays -> Website -> Automation webhook. The PR is a draft on purpose: a human reviews and completes the code before merge."
+  }
+}
