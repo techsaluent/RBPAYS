@@ -86,6 +86,23 @@ async function guardDuplicate(
   }
 }
 
+/**
+ * KYC gate: when the admin has switched on "require KYC to transact"
+ * (site setting security_require_kyc), a member must be KYC-verified before any
+ * money-movement transaction. Off by default so nothing changes unless enabled.
+ */
+async function guardKyc(userId: string): Promise<void> {
+  const { rows } = await query<{ require_kyc: string | null; kyc_status: string }>(
+    `SELECT (SELECT value FROM site_settings WHERE key = 'security_require_kyc') AS require_kyc,
+            (SELECT kyc_status FROM users WHERE id = $1) AS kyc_status`,
+    [userId],
+  );
+  const r = rows[0];
+  if (r?.require_kyc === 'true' && r.kyc_status !== 'verified') {
+    throw ApiError.forbidden('Complete your KYC verification before transacting.');
+  }
+}
+
 async function loadExisting(reference: string, table: string): Promise<RunResult | null> {
   const master = await query('SELECT * FROM transactions WHERE reference = $1', [reference]);
   if (!master.rows[0]) return null;
@@ -122,6 +139,9 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
     )
     .digest('hex');
   await guardDuplicate(opts.userId, opts.serviceCode, dedupeHash);
+
+  // 1a-ii) KYC gate (opt-in): block un-verified members when the admin requires it.
+  await guardKyc(opts.userId);
 
   // 1b) Risk / AML pre-check (throws 422 when the action is 'block').
   await assessTransaction({

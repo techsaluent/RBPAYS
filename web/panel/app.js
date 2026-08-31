@@ -1342,6 +1342,8 @@ const Screens = {
         <p class="muted">When on, retailers must enter their MPIN (set in Security) to complete each money transaction. They'll be prompted automatically.</p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_signup_otp" ${s.security_require_signup_otp==='true'?'checked':''}> Require mobile OTP verification at sign-up</label></div>
         <p class="muted">When on, new users must verify their mobile with an OTP before their account is created. Configure the SMS/OTP gateway in <b>Integrations</b> first.</p>
+        <div class="field"><label><input type="checkbox" id="ws_security_require_kyc" ${s.security_require_kyc==='true'?'checked':''}> Require KYC verification before a member can transact</label></div>
+        <p class="muted">When on, any member whose KYC is not <b>verified</b> is blocked from every money transaction (they'll be told to complete KYC). Review submissions under <a href="#/kycreview">KYC Review</a>.</p>
         ${field('security_admin_ip_allowlist','Admin login IP allowlist','1.2.3.4, 10.0.0.0/24 — blank = any')}
         <p class="muted">Restrict super-admin logins to these IPs/CIDRs (comma-separated). Leave blank to allow admin login from anywhere. The admin portal lives at a separate URL (<code>/admin</code>); this allowlist is the real lock behind it.</p>
         <h2 class="mt">Transaction safety</h2>
@@ -1355,7 +1357,20 @@ const Screens = {
         <h2 class="mt">Automation (n8n / AI agent)</h2>
         <p class="muted">Platform events (disputes, etc.) are POSTed to this URL as <code>{event, at, data}</code> — wire it to an n8n workflow or an AI-agent that acts as staff.</p>
         ${field('automation_webhook_url','Automation / n8n webhook URL','https://n8n.yourhost/webhook/…')}
-        <button class="btn mt" onclick="Actions.saveSite()">Save branding</button></div>
+        <h2 class="mt">SEO &amp; Analytics</h2>
+        <p class="muted">Search-engine defaults for the public site and your analytics tag. These apply on every marketing page.</p>
+        ${field('meta_description','Meta description (search snippet)','TutiPays — one wallet for recharge, AEPS, money transfer, bills and more.')}
+        ${field('meta_keywords','Meta keywords (comma separated)','AEPS, DMT, recharge, BBPS, payout, retailer')}
+        ${field('og_image_url','Social share image URL (1200×630)','https://tutipays.com/og-image.svg')}
+        ${field('google_analytics_id','Google Analytics ID (GA4, e.g. G-XXXXXXX)','')}
+        <h2 class="mt">Social links</h2>
+        <p class="muted">Shown in the site footer when set.</p>
+        ${field('social_facebook','Facebook URL','https://facebook.com/…')}
+        ${field('social_instagram','Instagram URL','https://instagram.com/…')}
+        ${field('social_twitter','X / Twitter URL','https://x.com/…')}
+        ${field('social_youtube','YouTube URL','https://youtube.com/@…')}
+        ${field('social_whatsapp','WhatsApp number (with country code)','9198xxxxxxx')}
+        <button class="btn mt" onclick="Actions.saveSite()">Save settings</button></div>
       <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Custom pages</h2>
         <button class="btn sm" onclick="Actions.editPage()">+ New page</button></div>
         <p class="muted">Author extra pages (e.g. Careers, Offers). They render at <code>/page.html?slug=…</code>.</p>
@@ -2065,11 +2080,12 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
-    try { await Api.put('/admin/site/settings', { values }); UI.toast('Branding saved'); App.applyBranding(); App.route(); }
+    values['security_require_kyc'] = $('ws_security_require_kyc').checked ? 'true' : 'false';
+    try { await Api.put('/admin/site/settings', { values }); UI.toast('Settings saved'); App.applyBranding(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async editPage(slug) {
