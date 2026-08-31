@@ -1537,13 +1537,21 @@ const SERVICES = [
     ['category', 'Category (motor/health/life/travel)', 'text'], ['insurer', 'Insurer', 'text'],
     ['customer_name', 'Customer', 'text'], ['amount', 'Premium', 'number'] ],
     build: v => ({ category: v.category || 'health', insurer: v.insurer, customer_name: v.customer_name, amount: +v.amount }) },
+  { key: 'loan', label: 'Loan Repayment', path: '/loan/pay', provider: true, fields: [
+    ['lender', 'Lender / NBFC', 'text'], ['loan_account_no', 'Loan account number', 'text'],
+    ['customer_name', 'Customer', 'text'], ['amount', 'Amount', 'number'] ],
+    build: v => ({ lender: v.lender, loan_account_no: v.loan_account_no, customer_name: v.customer_name, amount: +v.amount }) },
+  { key: 'credit_card', label: 'Credit Card Bill', path: '/credit-card/pay', provider: true, fields: [
+    ['issuer', 'Card-issuing bank', 'text'], ['card_number', 'Card number', 'text'],
+    ['customer_name', 'Card holder', 'text'], ['amount', 'Amount', 'number'] ],
+    build: v => ({ issuer: v.issuer, card_number: v.card_number, customer_name: v.customer_name, amount: +v.amount }) },
 ];
 
 // ---------------- Dashboard helpers ----------------
 const SVC_ICON = {
   recharge:'📱', dmt:'🏦', payout:'💸', upi:'🔷', bbps:'🧾', aeps:'👆', matm:'🏧',
   aadhaar_pay:'🪪', card_swipe:'💳', cms:'💵', pan_card:'🆔', travel:'✈️', insurance:'🛡️',
-  wallet_transfer:'🔁', payment_gateway:'💳',
+  wallet_transfer:'🔁', payment_gateway:'💳', loan:'🏦', credit_card:'💳',
 };
 const svcIcon = (k) => SVC_ICON[k] || '💠';
 const svcLabel = (k) => (SERVICES.find(s => s.key === k)?.label) || String(k || '').replace(/_/g,' ');
