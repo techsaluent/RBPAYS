@@ -6,15 +6,32 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <title>TutiPays Panel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <style>
     :root {
-      --bg:#f4f6fb; --card:#ffffff; --ink:#1a2233; --muted:#6b7488; --line:#e5e9f2;
-      --brand:#2b57ff; --brand-ink:#fff; --ok:#137333; --warn:#b06000; --err:#c5221f;
-      --radius:12px; --shadow:0 1px 3px rgba(20,30,60,.08),0 8px 24px rgba(20,30,60,.06);
+      --bg:#eef1f8; --card:#ffffff; --ink:#141a2e; --ink-soft:#3b4a63; --muted:#697089; --line:#e5e9f2; --line-soft:#eef1f7;
+      --brand:#3d43e0; --brand-2:#6a52ff; --brand-ink:#fff; --brand-soft:#edecfd;
+      --ok:#12855a; --ok-soft:#e4f4ec; --warn:#b0730a; --warn-soft:#faf2df; --err:#c5342b; --err-soft:#fbe9e7;
+      --radius:14px; --radius-sm:10px;
+      --shadow:0 1px 2px rgba(20,26,46,.05), 0 6px 20px rgba(20,26,46,.06);
+      --shadow-lg:0 12px 40px rgba(20,26,46,.14);
+      --side:#0f1430; --side-2:#161c3e; --side-ink:#c3c9e6; --side-mut:#7982ac; --side-active:#232a52;
+      --font:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      --mono:'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    :root[data-theme="dark"] {
+      --bg:#0b0e1a; --card:#151a2c; --ink:#eef1ff; --ink-soft:#c4cbe4; --muted:#8b93b2; --line:#252b42; --line-soft:#1d2338;
+      --brand:#7b7dff; --brand-2:#9a7bff; --brand-soft:#20204a;
+      --ok:#5fd39b; --ok-soft:#123027; --warn:#e6b45c; --warn-soft:#33280f; --err:#f0857c; --err-soft:#361d1b;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 26px rgba(0,0,0,.45);
+      --shadow-lg:0 16px 44px rgba(0,0,0,.55);
+      --side:#080b16; --side-2:#0d1120; --side-ink:#c3c9e6; --side-mut:#727aa0; --side-active:#1a2140;
     }
     * { box-sizing:border-box; }
-    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
-      background:var(--bg); color:var(--ink); font-size:14px; }
+    body { margin:0; font-family:var(--font);
+      background:var(--bg); color:var(--ink); font-size:14px; -webkit-font-smoothing:antialiased; }
     a { color:var(--brand); text-decoration:none; }
     button { font:inherit; cursor:pointer; }
     input,select { font:inherit; }
@@ -143,6 +160,107 @@
     .modal h3 { margin:0 0 16px; font-size:16px; }
     .modal .foot { display:flex; gap:10px; margin-top:18px; }
     @media (max-width:720px){ #app{grid-template-columns:1fr} aside{display:none} }
+
+    /* ===================== UI 2.0 upgrade ===================== */
+    h1,h2,h3 { letter-spacing:-.01em; }
+    ::selection { background:color-mix(in srgb,var(--brand) 22%, transparent); }
+    :focus-visible { outline:2px solid var(--brand); outline-offset:2px; border-radius:6px; }
+    ::-webkit-scrollbar { width:10px; height:10px; }
+    ::-webkit-scrollbar-thumb { background:color-mix(in srgb,var(--muted) 40%, transparent); border-radius:8px; border:2px solid transparent; background-clip:content-box; }
+
+    /* Sidebar */
+    #app { grid-template-columns:246px 1fr; }
+    aside { background:linear-gradient(180deg,var(--side),var(--side-2)); padding:20px 14px;
+      position:sticky; top:0; height:100vh; overflow-y:auto; border-right:1px solid rgba(255,255,255,.04); }
+    aside .brand { color:#fff; font-size:21px; font-weight:800; padding:2px 8px 4px; display:flex; align-items:center; gap:9px; }
+    aside .brand a { color:#fff; display:flex; align-items:center; gap:9px; }
+    aside .brand a::before { content:'₹'; width:30px; height:30px; border-radius:9px; display:inline-grid; place-items:center;
+      background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff; font-size:17px; font-weight:800; }
+    nav { margin-top:18px; gap:3px; }
+    nav a { color:var(--side-ink); padding:9px 12px; border-radius:10px; font-size:13.5px; font-weight:500;
+      display:flex; align-items:center; gap:9px; transition:background .12s,color .12s; }
+    nav a:hover { background:var(--side-active); color:#fff; }
+    nav a.on { background:linear-gradient(90deg,var(--brand),var(--brand-2)); color:#fff;
+      box-shadow:0 6px 18px color-mix(in srgb,var(--brand) 45%, transparent); }
+    .nav-sec { color:var(--side-mut); padding:16px 12px 6px; font-size:10px; letter-spacing:.12em; }
+
+    /* Topbar */
+    main { padding:20px 26px 46px; }
+    .topbar { position:sticky; top:0; z-index:9; margin:-20px -26px 20px; padding:14px 26px;
+      background:color-mix(in srgb,var(--bg) 86%, transparent); backdrop-filter:saturate(1.2) blur(8px);
+      border-bottom:1px solid var(--line); }
+    .topbar h1 { font-size:19px; font-weight:700; }
+    .pill { background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow); color:var(--ink); border-radius:999px; padding:6px 13px; }
+    .pill.bal { background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff; border:none; }
+    #theme-toggle { width:34px; height:34px; padding:0; display:inline-grid; place-items:center; font-size:15px; border-radius:9px; }
+
+    /* Cards & panels */
+    .card, .panel, .rail-card, .stat { border:1px solid var(--line); }
+    .card { padding:16px 18px; transition:box-shadow .14s, transform .1s; }
+    .card .k { text-transform:uppercase; letter-spacing:.04em; font-weight:600; }
+    .card .v { letter-spacing:-.02em; }
+    .panel h2 { font-size:15.5px; font-weight:700; }
+    .sechead { font-size:11.5px; letter-spacing:.08em; }
+
+    /* Stat tiles */
+    .stat { padding:16px 18px; transition:box-shadow .14s, transform .1s; }
+    .stat:hover { box-shadow:var(--shadow-lg); transform:translateY(-2px); }
+    .stat::before { width:4px; background:linear-gradient(180deg,var(--accent,var(--brand)),color-mix(in srgb,var(--accent,var(--brand)) 55%, var(--brand-2))); }
+    .stat .ico { border-radius:11px; }
+    .stat .v { font-size:25px; letter-spacing:-.02em; }
+
+    /* Buttons */
+    .btn { border-radius:10px; font-weight:600; transition:filter .12s, box-shadow .12s, transform .05s;
+      background:linear-gradient(135deg,var(--brand),var(--brand-2)); box-shadow:0 4px 14px color-mix(in srgb,var(--brand) 32%, transparent); }
+    .btn:hover:not(:disabled) { filter:brightness(1.06); }
+    .btn:active:not(:disabled) { transform:translateY(1px); }
+    .btn.sm { border-radius:9px; font-size:13px; }
+    .btn.ghost { background:var(--card); color:var(--brand); border:1px solid var(--line); box-shadow:var(--shadow); }
+    .btn.ghost:hover { border-color:var(--brand); background:var(--brand-soft); }
+
+    /* Inputs */
+    .field label { font-weight:600; letter-spacing:.01em; }
+    .field input,.field select,textarea { background:var(--card); color:var(--ink); border:1px solid var(--line);
+      border-radius:10px; transition:border-color .12s, box-shadow .12s; }
+    textarea { width:100%; padding:10px 12px; font:inherit; }
+    .field input:focus,.field select:focus,textarea:focus { outline:none; border-color:var(--brand);
+      box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 18%, transparent); }
+
+    /* Tables */
+    th { text-transform:uppercase; letter-spacing:.05em; font-size:11px; color:var(--muted); padding:11px 12px;
+      background:var(--line-soft); position:sticky; top:0; }
+    td { padding:11px 12px; }
+    tbody tr { transition:background .1s; }
+    tbody tr:hover { background:color-mix(in srgb,var(--brand) 4%, transparent); }
+    .tbl-wrap { border:1px solid var(--line); border-radius:var(--radius); overflow:auto; background:var(--card); box-shadow:var(--shadow); }
+    .panel .tbl-wrap { box-shadow:none; }
+
+    /* Tags — theme-aware via semantic tokens */
+    .tag { letter-spacing:.03em; }
+    .tag.success,.tag.active,.tag.resolved { background:var(--ok-soft); color:var(--ok); }
+    .tag.pending,.tag.suspended,.tag.open,.tag.in_review { background:var(--warn-soft); color:var(--warn); }
+    .tag.failed,.tag.blocked,.tag.rejected { background:var(--err-soft); color:var(--err); }
+    .tag.refunded { background:var(--line-soft); color:var(--muted); }
+
+    /* Dashboard widgets, modal, messages */
+    .svc-tile { background:var(--card); }
+    .svc-tile:hover { box-shadow:var(--shadow-lg); }
+    .svc-tile .si, .mini .mi { background:var(--brand-soft); color:var(--brand); }
+    .modal { background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow-lg); border-radius:16px; }
+    .modal-bg { background:color-mix(in srgb, #0a0e1c 55%, transparent); backdrop-filter:blur(3px); }
+    .msg { background:var(--brand-soft); color:var(--ink); border:1px solid color-mix(in srgb,var(--brand) 20%, transparent); }
+    .msg.err { background:var(--err-soft); color:var(--err); border-color:transparent; }
+    .msg.ok { background:var(--ok-soft); color:var(--ok); border-color:transparent; }
+    .mono { font-family:var(--mono); }
+
+    /* Auth screen */
+    .auth-poster { background:linear-gradient(150deg,#161550,var(--brand) 70%,var(--brand-2)); }
+    .auth-card { border:1px solid var(--line); border-radius:18px; }
+    .brand { font-weight:800; }
+    .tabs button { border-radius:9px; font-weight:600; background:var(--card); color:var(--muted); border-color:var(--line); }
+    .tabs button.on { background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff; border-color:transparent; }
+
+    @media (max-width:720px){ .topbar{ position:static; margin:-20px -20px 16px; } main{ padding:20px; } }
   </style>
 </head>
 <body>
@@ -211,6 +329,7 @@
           <span class="pill bal" id="wallet-pill">₹0.00</span>
           <span id="who-name"></span>
           <span class="pill" id="who-role"></span>
+          <button class="btn ghost sm" id="theme-toggle" title="Toggle light / dark">◐</button>
           <button class="btn ghost sm" onclick="Auth.logout()">Logout</button>
         </div>
       </div>
@@ -219,6 +338,20 @@
   </div>
 
   <div id="modal-root"></div>
+  <!-- Theme: remember the viewer's light/dark choice. -->
+  <script>
+    (function () {
+      var r = document.documentElement;
+      try { var t = localStorage.getItem('tp-theme'); if (t) r.setAttribute('data-theme', t); } catch (e) {}
+      document.addEventListener('click', function (e) {
+        if (e.target && e.target.id === 'theme-toggle') {
+          var next = r.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+          r.setAttribute('data-theme', next);
+          try { localStorage.setItem('tp-theme', next); } catch (e) {}
+        }
+      });
+    })();
+  </script>
   <!-- Cache-busting loader: always pull the latest panel assets after a deploy,
        so the UI is never stale. Order is preserved by sequential document.write. -->
   <script>
