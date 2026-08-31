@@ -46,6 +46,18 @@ const slaBadge = (x) => {
   if (h < 2) return `<span class="tag" style="background:#fef7e0;color:#b26a00">due in ${Math.round(h*10)/10}h</span>`;
   return `<span class="tag">due in ${Math.round(h)}h</span>`;
 };
+// Financial-year <option>s (current + 3 prior), value = FY start year.
+const taxFyOptions = () => {
+  const now = new Date();
+  const cur = now.getUTCMonth() + 1 >= 4 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+  let o = '';
+  for (let y = cur; y >= cur - 3; y--) o += `<option value="${y}">FY ${y}-${String(y + 1).slice(-2)}</option>`;
+  return o;
+};
+// Inline From/To date inputs (ids <pfx>_from / <pfx>_to) for use with Actions._range.
+const _rangeCtl = (pfx) => `<div class="row" style="gap:6px;align-items:end">
+  <div class="field" style="margin:0"><label>From</label><input id="${pfx}_from" type="date"></div>
+  <div class="field" style="margin:0"><label>To</label><input id="${pfx}_to" type="date"></div></div>`;
 const $ = (id) => document.getElementById(id);
 
 // ---------------- API client ----------------
@@ -751,7 +763,14 @@ const Screens = {
         <div class="field"><label>GSTIN (optional)</label><input id="tx_gst" value="${esc(pr.gstin||'')}"></div>
         <div class="field"><label>State code</label><input id="tx_state" value="${esc(pr.state_code||'')}" placeholder="27"></div>
         <button class="btn" onclick="Actions.saveTaxProfile()">Save</button></div>
-      <div class="panel mt"><h2>My TDS statement</h2><div class="tbl-wrap"><table>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">My TDS statement</h2>
+        <div class="row" style="gap:6px">
+          <select id="tx_fy" style="max-width:150px">${taxFyOptions()}</select>
+          <button class="btn sm ghost" onclick="Actions.openDoc('/tax/tds/statement?format=html&fy='+val('tx_fy'))">🧾 Certificate</button>
+          <button class="btn sm" onclick="Actions.dl('/tax/tds/statement?format=csv&fy='+val('tx_fy'),'tds_'+val('tx_fy')+'.csv')">⬇ CSV</button>
+        </div></div>
+        <div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th class="right">Net</th><th>When</th></tr></thead>
         <tbody>${rows || '<tr><td colspan=7 class=muted>No TDS yet</td></tr>'}</tbody></table></div></div>`;
   },
@@ -1217,12 +1236,20 @@ const Screens = {
         <thead><tr><th>Tax</th><th>Rate</th><th>Max per txn</th><th>On</th></tr></thead>
         <tbody data-codes='${cfgCodes}'>${crows}</tbody></table></div>
         <button class="btn sm mt" onclick='Actions.saveTaxConfig(${cfgCodes})'>Save tax rates</button></div>
-      <div class="panel mt"><h2>TDS records (Section 194H / 194N)</h2><div class="tbl-wrap"><table>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <h2 style="margin:0">TDS records (Section 194H / 194N)</h2>
+          ${_rangeCtl('tx')}
+          <button class="btn sm" onclick="Actions.dl('/admin/tds?format=csv&'+Actions._range('tx'),'tds_26q.csv')">⬇ 26Q CSV</button></div>
+        <div class="tbl-wrap"><table>
         <thead><tr><th>Member</th><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th>When</th></tr></thead>
         <tbody>${trows || '<tr><td colspan=7 class=muted>No TDS yet</td></tr>'}</tbody></table></div></div>
-      <div class="panel mt"><h2>GST invoices (18% on platform margin)</h2><div class="tbl-wrap"><table>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <h2 style="margin:0">GST invoices (18% on platform margin)</h2>
+          <button class="btn sm" onclick="Actions.dl('/admin/gst?format=csv&'+Actions._range('tx'),'gst.csv')">⬇ GST CSV</button></div>
+        <div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th class="right">Base</th><th class="right">CGST</th><th class="right">SGST</th><th class="right">IGST</th><th>PoS</th></tr></thead>
-        <tbody>${grows || '<tr><td colspan=6 class=muted>No GST yet</td></tr>'}</tbody></table></div></div>`;
+        <tbody>${grows || '<tr><td colspan=6 class=muted>No GST yet</td></tr>'}</tbody></table></div>
+        <p class="muted" style="font-size:12px;margin-top:8px">Both exports honour the date range above. Leave dates blank for all-time.</p></div>`;
   },
 
   // Admin: reconciliation batches (upload MIS -> match + auto force-settle).
