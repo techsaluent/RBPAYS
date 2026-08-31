@@ -580,6 +580,26 @@ const Screens = {
       <div class="panel mt"><h2>Required for your role (${esc(reqs.role||State.user.role)})</h2>
         <div class="tbl-wrap"><table><thead><tr><th></th><th>Document</th><th></th></tr></thead>
         <tbody>${reqRows || '<tr><td colspan=3 class=muted>—</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt" style="max-width:560px"><h2>⚡ Instant verification</h2>
+        <p class="muted">Verify PAN and Aadhaar digitally — your KYC is approved automatically on a match.</p>
+        <div class="sechead" style="margin-top:6px">PAN</div>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0"><label>PAN</label><input id="vp_pan" placeholder="ABCDE1234F" maxlength="10" style="text-transform:uppercase"></div>
+          <div class="field" style="margin:0;flex:1"><label>Name as on PAN</label><input id="vp_name"></div>
+          <button class="btn sm" onclick="Actions.verifyPanNow()">Verify PAN</button>
+        </div>
+        <div id="vp_out" class="muted" style="font-size:12px;margin-top:6px"></div>
+        <div class="sechead" style="margin-top:14px">Aadhaar (OTP)</div>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0"><label>Aadhaar (12 digit)</label><input id="va_num" inputmode="numeric" maxlength="12"></div>
+          <button class="btn sm ghost" onclick="Actions.aadhaarSendOtpNow()">Send OTP</button>
+        </div>
+        <div id="va_otpbox" class="row hidden" style="gap:8px;align-items:end;margin-top:8px">
+          <div class="field" style="margin:0"><label>Enter OTP</label><input id="va_otp" inputmode="numeric" maxlength="8" placeholder="6-digit"></div>
+          <button class="btn sm" onclick="Actions.aadhaarVerifyOtpNow()">Verify OTP</button>
+        </div>
+        <div id="va_out" class="muted" style="font-size:12px;margin-top:6px"></div>
+      </div>
       <div class="panel mt" style="max-width:520px"><h2>Submit a document</h2>
         <div class="field"><label>Document type</label>
           <select id="k_type"><option value="aadhaar">Aadhaar</option><option value="pan">PAN</option>
@@ -2231,6 +2251,33 @@ const Actions = {
     if (val('k_url')) body.file_url = val('k_url');
     try { await Api.post('/kyc', body); UI.toast('Document submitted for review'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async verifyPanNow() {
+    const pan = (val('vp_pan')||'').toUpperCase(), name = val('vp_name');
+    if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(pan)) return UI.toast('Enter a valid PAN', 'err');
+    $('vp_out').textContent = 'Verifying…';
+    try {
+      const r = await Api.post('/kyc/verify/pan', { pan, name });
+      $('vp_out').innerHTML = r.verified ? `<span style="color:#12a35a">✅ ${esc(r.message)}${r.sandbox?' (sandbox)':''}</span>` : `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
+      if (r.verified) { UI.toast('PAN verified'); setTimeout(() => App.route(), 900); }
+    } catch (err) { $('vp_out').textContent = ''; UI.toast(err.message, 'err'); }
+  },
+  async aadhaarSendOtpNow() {
+    const aadhaar = val('va_num');
+    if (!/^\d{12}$/.test(aadhaar)) return UI.toast('Enter a 12-digit Aadhaar', 'err');
+    try {
+      const r = await Api.post('/kyc/verify/aadhaar/send-otp', { aadhaar });
+      Actions._aadhaarRef = r.ref; $('va_otpbox').classList.remove('hidden');
+      $('va_out').textContent = r.message + (r.sandbox ? '' : '');
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async aadhaarVerifyOtpNow() {
+    const aadhaar = val('va_num'), otp = val('va_otp');
+    try {
+      const r = await Api.post('/kyc/verify/aadhaar/verify-otp', { aadhaar, ref: Actions._aadhaarRef || '', otp });
+      $('va_out').innerHTML = r.verified ? `<span style="color:#12a35a">✅ ${esc(r.message)}</span>` : `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
+      if (r.verified) { UI.toast('Aadhaar verified'); setTimeout(() => App.route(), 900); }
+    } catch (err) { UI.toast(err.message, 'err'); }
   },
   async toggleService(code, enabled) {
     try { await Api.patch(`/admin/services/${code}`, { enabled }); App.route(); }
