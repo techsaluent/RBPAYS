@@ -625,6 +625,49 @@ router.post(
   }),
 );
 
+// Rename a plan and/or make it the default (unsets any other default).
+const planUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(120).optional(),
+  description: z.string().trim().max(300).optional(),
+  is_default: z.boolean().optional(),
+});
+router.patch(
+  '/commission-plans/:id',
+  validate(planUpdateSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof planUpdateSchema>;
+    const plan = await withTransaction(async (client) => {
+      const cur = await client.query('SELECT 1 FROM commission_plans WHERE id = $1', [req.params.id]);
+      if (!cur.rowCount) throw ApiError.notFound('Plan not found');
+      if (b.is_default === true) {
+        await client.query('UPDATE commission_plans SET is_default = false WHERE is_default = true AND id <> $1', [req.params.id]);
+      }
+      const { rows } = await client.query(
+        `UPDATE commission_plans SET
+            name = COALESCE($1, name), description = COALESCE($2, description),
+            is_default = COALESCE($3, is_default), updated_at = now()
+          WHERE id = $4 RETURNING *`,
+        [b.name ?? null, b.description ?? null, b.is_default ?? null, req.params.id],
+      );
+      return rows[0];
+    });
+    res.json({ plan });
+  }),
+);
+
+// Delete a plan (not the default). Members on it fall back to the default
+// (users.commission_plan_id is ON DELETE SET NULL); its rules cascade.
+router.delete(
+  '/commission-plans/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const cur = await query<{ is_default: boolean }>('SELECT is_default FROM commission_plans WHERE id = $1', [req.params.id]);
+    if (!cur.rows[0]) throw ApiError.notFound('Plan not found');
+    if (cur.rows[0].is_default) throw ApiError.badRequest('Cannot delete the default plan — set another as default first.');
+    await query('DELETE FROM commission_plans WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  }),
+);
+
 router.get(
   '/commission-plans/:id',
   asyncHandler(async (req: Request, res: Response) => {
