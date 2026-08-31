@@ -192,6 +192,8 @@ export function receiptHtml(
   .divider td { border-top:1px dashed var(--line); padding:0; height:9px; }
   .total td { font-weight:800; font-size:15px; border-top:2px solid var(--line); padding-top:8px; color:var(--brand); }
   .total td:first-child { color:var(--ink); }
+  .credit td:last-child { color:#12a35a; }
+  .charge td:last-child { color:#c5342b; }
   .foot { text-align:center; font-size:10.5px; color:var(--muted); padding:12px 18px 18px; line-height:1.5; }
   .btns { padding:0 18px 18px; }
   .btn { display:block; width:100%; padding:11px; font-size:13.5px; font-weight:700; cursor:pointer; border:none; border-radius:10px;
@@ -217,8 +219,8 @@ export function receiptHtml(
       ${rows}
       <tr class="divider"><td colspan="2"></td></tr>
       ${money('Amount', r.amount)}
-      ${Number(r.charge) > 0 ? money('Charge', r.charge) : ''}
-      ${Number(r.commission) > 0 ? money('Commission', r.commission) : ''}
+      ${Number(r.charge) > 0 ? `<tr class="charge"><td>Service charge</td><td>+₹${r.charge}</td></tr>` : ''}
+      ${Number(r.commission) > 0 ? `<tr class="credit"><td>Commission earned</td><td>+₹${r.commission}</td></tr>` : ''}
       ${taxRows ? `<tr class="divider"><td colspan="2"></td></tr>${taxRows}` : ''}
       ${money(r.direction === 'credit' ? 'Credited' : 'Net Paid', r.net_paid, true)}
     </table>
