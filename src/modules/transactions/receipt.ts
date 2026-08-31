@@ -76,6 +76,10 @@ function detailRows(service: string, d: Detail): [string, string][] {
       return [['Type', s(d.booking_type)], ['Operator', s(d.operator)], ['Route', `${s(d.from_location)} → ${s(d.to_location)}`], ['Passenger', s(d.passenger_name)], ['PNR', s(d.pnr)]];
     case 'insurance':
       return [['Category', s(d.category)], ['Insurer', s(d.insurer)], ['Customer', s(d.customer_name)], ['Policy No.', s(d.policy_number)]];
+    case 'loan':
+      return [['Lender', s(d.lender)], ['Loan A/C', s(d.loan_account_no)], ['Customer', s(d.customer_name)], ['UTR', s(d.utr)]];
+    case 'credit_card':
+      return [['Issuer', s(d.issuer)], ['Card', s(d.card_number)], ['Customer', s(d.customer_name)], ['UTR', s(d.utr)]];
     case 'payment_gateway':
       return [['Purpose', 'Wallet top-up']];
     default:
@@ -98,6 +102,8 @@ const SERVICE_TITLE: Record<string, string> = {
   wallet_transfer: 'Wallet Transfer',
   travel: 'Travel Booking',
   insurance: 'Insurance',
+  loan: 'Loan Repayment',
+  credit_card: 'Credit Card Bill',
   payment_gateway: 'Wallet Top-up',
 };
 

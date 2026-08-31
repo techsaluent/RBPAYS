@@ -26,6 +26,8 @@ const SERVICE_TABLE: Record<string, { table: string; utr?: boolean; rrn?: boolea
   pan_card: { table: 'pan_card_transactions' },
   travel: { table: 'travel_transactions' },
   insurance: { table: 'insurance_transactions' },
+  loan: { table: 'loan_transactions', utr: true },
+  credit_card: { table: 'credit_card_transactions', utr: true },
 };
 
 interface TxnRow {
