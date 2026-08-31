@@ -296,25 +296,63 @@ router.get(
 );
 
 // ---- Disputes / complaints desk -------------------------------------------
+// Ops summary: live counts by status, overdue count, and average resolution
+// time — the numbers the disputes desk needs at a glance.
+router.get(
+  '/disputes-summary',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query<{
+      open: string; in_review: string; resolved: string; rejected: string;
+      overdue: string; due_soon: string; oldest_open_hours: string | null; avg_resolution_hours: string | null;
+    }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'open')        AS open,
+         COUNT(*) FILTER (WHERE status = 'in_review')   AS in_review,
+         COUNT(*) FILTER (WHERE status = 'resolved')    AS resolved,
+         COUNT(*) FILTER (WHERE status = 'rejected')    AS rejected,
+         COUNT(*) FILTER (WHERE status IN ('open','in_review') AND sla_due_at < now())                          AS overdue,
+         COUNT(*) FILTER (WHERE status IN ('open','in_review') AND sla_due_at >= now() AND sla_due_at < now() + interval '2 hours') AS due_soon,
+         MAX(EXTRACT(EPOCH FROM (now() - created_at)) / 3600) FILTER (WHERE status IN ('open','in_review'))       AS oldest_open_hours,
+         AVG(EXTRACT(EPOCH FROM (resolved_at - created_at)) / 3600) FILTER (WHERE resolved_at IS NOT NULL)        AS avg_resolution_hours
+       FROM disputes`,
+    );
+    const r = rows[0];
+    res.json({
+      open: Number(r.open), in_review: Number(r.in_review), resolved: Number(r.resolved), rejected: Number(r.rejected),
+      overdue: Number(r.overdue), due_soon: Number(r.due_soon),
+      oldest_open_hours: r.oldest_open_hours != null ? Math.round(Number(r.oldest_open_hours) * 10) / 10 : null,
+      avg_resolution_hours: r.avg_resolution_hours != null ? Math.round(Number(r.avg_resolution_hours) * 10) / 10 : null,
+    });
+  }),
+);
+
 router.get(
   '/disputes',
   validate(z.object({
     status: z.enum(['open', 'in_review', 'resolved', 'rejected']).optional(),
     q: z.string().trim().max(64).optional(), // search by reference or ticket no
+    overdue: z.coerce.boolean().optional(),  // only past-SLA, still-open disputes
     limit: z.coerce.number().int().min(1).max(200).default(50),
   }), 'query'),
   asyncHandler(async (req: Request, res: Response) => {
-    const p = req.query as unknown as { status?: string; q?: string; limit: number };
+    const p = req.query as unknown as { status?: string; q?: string; overdue?: boolean; limit: number };
     const { rows } = await query(
       `SELECT d.*, u.full_name AS raised_by_name, u.phone AS raised_by_phone,
-              t.service AS txn_service, t.amount_paise AS txn_amount_paise, t.status AS txn_status
+              t.service AS txn_service, t.amount_paise AS txn_amount_paise, t.status AS txn_status,
+              (d.status IN ('open','in_review') AND d.sla_due_at < now()) AS overdue,
+              EXTRACT(EPOCH FROM (d.sla_due_at - now())) / 3600 AS sla_hours_left
          FROM disputes d
          JOIN users u ON u.id = d.raised_by
          LEFT JOIN transactions t ON t.id = d.transaction_id
         WHERE ($1::text IS NULL OR d.status = $1)
           AND ($2::text IS NULL OR d.reference ILIKE '%' || $2 || '%' OR d.ticket_no ILIKE '%' || $2 || '%')
-        ORDER BY d.created_at DESC LIMIT $3`,
-      [p.status ?? null, p.q ?? null, p.limit],
+          AND ($3::boolean IS NOT TRUE OR (d.status IN ('open','in_review') AND d.sla_due_at < now()))
+        -- Unresolved first, then most-overdue first, then newest.
+        ORDER BY (d.status IN ('open','in_review')) DESC,
+                 CASE WHEN d.status IN ('open','in_review') THEN d.sla_due_at END ASC NULLS LAST,
+                 d.created_at DESC
+        LIMIT $4`,
+      [p.status ?? null, p.q ?? null, p.overdue ?? null, p.limit],
     );
     res.json({ items: rows });
   }),

@@ -29,6 +29,19 @@ function ticketNo(): string {
   return 'DSP-' + randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
 }
 
+/**
+ * Resolution SLA (hours) for a dispute. Money-stuck categories get a tighter
+ * deadline; everything else uses the admin-configurable default (dispute_sla_hours).
+ */
+async function slaHoursFor(category: string): Promise<number> {
+  const { rows } = await query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = 'dispute_sla_hours'",
+  );
+  const base = Number(rows[0]?.value) || 24;
+  const fast: Record<string, number> = { not_credited: 12, double_charge: 12, wrong_amount: 12 };
+  return fast[category] ?? base;
+}
+
 // Raise a dispute on one of my transactions.
 router.post(
   '/',
@@ -55,10 +68,11 @@ router.post(
     );
     if (existing.rowCount) throw ApiError.conflict('An open dispute already exists for this transaction');
 
+    const slaHours = await slaHoursFor(b.category);
     const { rows } = await query(
-      `INSERT INTO disputes (ticket_no, reference, transaction_id, raised_by, category, description, customer_ref)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [ticketNo(), t.reference, t.id, req.user.id, b.category, b.description, b.customer_ref ?? null],
+      `INSERT INTO disputes (ticket_no, reference, transaction_id, raised_by, category, description, customer_ref, sla_due_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7, now() + ($8 || ' hours')::interval) RETURNING *`,
+      [ticketNo(), t.reference, t.id, req.user.id, b.category, b.description, b.customer_ref ?? null, String(slaHours)],
     );
     const dispute = rows[0];
     await addMessage(dispute.id, req.user.id, 'retailer', 'comment', b.description);

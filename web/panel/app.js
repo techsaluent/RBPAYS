@@ -37,6 +37,15 @@ const uaShort = (ua) => {
   const br = /Edg\//i.test(ua) ? 'Edge' : /Chrome\//i.test(ua) ? 'Chrome' : /Firefox\//i.test(ua) ? 'Firefox' : /Safari\//i.test(ua) ? 'Safari' : /curl|PostmanRuntime|okhttp|Dart|python|node/i.test(ua) ? 'API client' : 'Browser';
   return [br, os].filter(Boolean).join(' · ') || ua.slice(0, 40);
 };
+// SLA badge for a dispute row (terminal disputes show nothing).
+const slaBadge = (x) => {
+  if (x.status === 'resolved' || x.status === 'rejected') return '<span class="muted">—</span>';
+  const h = x.sla_hours_left;
+  if (h == null) return '<span class="muted">—</span>';
+  if (h < 0) return `<span class="tag" style="background:#fce8e6;color:#c5221f">⏰ ${Math.abs(Math.round(h*10)/10)}h overdue</span>`;
+  if (h < 2) return `<span class="tag" style="background:#fef7e0;color:#b26a00">due in ${Math.round(h*10)/10}h</span>`;
+  return `<span class="tag">due in ${Math.round(h)}h</span>`;
+};
 const $ = (id) => document.getElementById(id);
 
 // ---------------- API client ----------------
@@ -910,23 +919,39 @@ const Screens = {
   async disputes() {
     const q = Actions._dispSearch || '';
     const st = Actions._dispStatus || '';
-    const d = await Api.get(`/admin/disputes?limit=100${q?'&q='+encodeURIComponent(q):''}${st?'&status='+st:''}`);
-    const rows = (d.items || []).map(x => `<tr>
+    const ov = Actions._dispOverdue ? '&overdue=true' : '';
+    const [d, sum] = await Promise.all([
+      Api.get(`/admin/disputes?limit=100${q?'&q='+encodeURIComponent(q):''}${st?'&status='+st:''}${ov}`),
+      Api.get('/admin/disputes-summary').catch(() => null),
+    ]);
+    const rows = (d.items || []).map(x => `<tr${x.overdue?' style="background:#fff5f5"':''}>
       <td class="mono">${esc(x.ticket_no||'')}</td>
       <td class="muted">${esc(x.reference||'')}<div style="font-size:11px">${esc(x.txn_service||'')} ${x.txn_amount_paise?money(x.txn_amount_paise/100):''}</div></td>
       <td>${esc(x.raised_by_name||'')}<div class="muted" style="font-size:11px">${esc(x.raised_by_phone||'')}</div></td>
       <td>${esc((x.category||'').replace(/_/g,' '))}<div class="muted" style="font-size:11px;max-width:220px;white-space:normal">${esc(x.description||'')}</div></td>
       <td>${UI.statusTag(x.status)}</td>
+      <td>${slaBadge(x)}</td>
       <td><button class="btn sm" onclick="Actions.viewDispute('${x.id}',true)">Open</button></td></tr>`).join('');
+    const stat = (label, val, cls) => `<div class="card"><div class="k">${label}</div><div class="v" style="font-size:20px;${cls||''}">${val}</div></div>`;
+    const summary = sum ? `<div class="grid cards" style="margin-bottom:14px">
+      ${stat('Open', sum.open)}
+      ${stat('In review', sum.in_review)}
+      ${stat('⏰ Overdue', sum.overdue, sum.overdue>0?'color:#c5221f':'')}
+      ${stat('Due &lt; 2h', sum.due_soon, sum.due_soon>0?'color:#b26a00':'')}
+      ${stat('Oldest open', sum.oldest_open_hours!=null?sum.oldest_open_hours+'h':'—')}
+      ${stat('Avg resolve', sum.avg_resolution_hours!=null?sum.avg_resolution_hours+'h':'—')}
+    </div>` : '';
     $('view').innerHTML = `<div class="panel"><h2>Disputes / complaints desk</h2>
+      ${summary}
       <div class="row" style="gap:8px;margin-bottom:12px">
         <input id="disp_q" placeholder="Search by reference or ticket…" value="${esc(q)}" style="max-width:280px" onkeydown="if(event.key==='Enter')Actions.disputeSearch()">
         <select id="disp_status" onchange="Actions._dispStatus=this.value;Actions.disputeSearch()">
           <option value="">All statuses</option>
           ${['open','in_review','resolved','rejected'].map(s=>`<option value="${s}" ${st===s?'selected':''}>${s}</option>`).join('')}</select>
+        <label class="row" style="gap:6px;align-items:center;font-size:13px"><input type="checkbox" ${Actions._dispOverdue?'checked':''} onchange="Actions._dispOverdue=this.checked;Actions.disputeSearch()"> Overdue only</label>
         <button class="btn sm" onclick="Actions.disputeSearch()">Search</button></div>
-      <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Txn / ref</th><th>Raised by</th><th>Complaint</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows || '<tr><td colspan=6 class=muted>No disputes found.</td></tr>'}</tbody></table></div></div>`;
+      <div class="tbl-wrap"><table><thead><tr><th>Ticket</th><th>Txn / ref</th><th>Raised by</th><th>Complaint</th><th>Status</th><th>SLA</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=7 class=muted>No disputes found.</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Incoming provider callbacks / webhooks log.
@@ -1459,6 +1484,8 @@ const Screens = {
         <h2 class="mt">Transaction safety</h2>
         <p class="muted">Block an accidental <b>duplicate</b> transaction — the same member sending the same service, amount and details (account / VPA / consumer no.) again within this window. Set the minutes below; <b>0</b> turns the guard off. A previous <i>failed</i> attempt never blocks a retry.</p>
         ${field('duplicate_txn_window_minutes','Duplicate-block window (minutes)','5')}
+        <p class="muted mt">Default resolution <b>SLA</b> for disputes (hours). The desk flags anything past its deadline as overdue. Money-stuck complaints (not credited / double charge / wrong amount) auto-use a tighter 12h target.</p>
+        ${field('dispute_sla_hours','Dispute SLA (hours)','24')}
         <h2 class="mt">Webhooks &amp; callbacks</h2>
         <p class="muted">Give these callback URLs to your payout / DMT / recharge provider. The aggregator secret below signs incoming callbacks (HMAC-SHA256).</p>
         <div class="field"><label>Aggregator callback URL</label><input value="${esc(location.origin)}/api/v1/webhooks/aggregator" readonly onclick="this.select()"></div>
@@ -2283,7 +2310,7 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
