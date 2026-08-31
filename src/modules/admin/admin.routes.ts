@@ -19,7 +19,8 @@ import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
 import { refreshProviderRegistry } from '../../providers/registry';
 import { dryRunDynamic, liveTestDynamic } from '../../providers/dynamic';
-import { draftProviderConfig } from '../ai/ai.service';
+import { draftProviderConfig, analyzeDevRequest } from '../ai/ai.service';
+import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } from '../devdesk/devdesk.service';
 import { postJournal } from '../_shared/ledger';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
@@ -1650,6 +1651,91 @@ router.post(
     }
     const result = await liveTestDynamic(cred, b.service, sample);
     res.json({ live: true, request: { url: dry.url, method: dry.method }, result });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// AI Dev Desk — feature / bug / UI requests: file -> AI plan -> approve ->
+// dispatch to automation (the free-AI coding agent) which opens a PR.
+// ---------------------------------------------------------------------
+const devReqSchema = z.object({
+  kind: z.enum(['feature', 'bug', 'ui']).default('feature'),
+  title: z.string().trim().min(3).max(200),
+  description: z.string().trim().max(8000).default(''),
+  area: z.string().trim().max(80).optional(),
+  priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+});
+router.get(
+  '/devdesk',
+  asyncHandler(async (req: Request, res: Response) => {
+    const items = await listDevRequests({
+      status: typeof req.query.status === 'string' ? req.query.status : undefined,
+      kind: typeof req.query.kind === 'string' ? req.query.kind : undefined,
+    });
+    res.json({ items });
+  }),
+);
+router.post(
+  '/devdesk',
+  validate(devReqSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof devReqSchema>;
+    const item = await createDevRequest(req.user?.id ?? null, b);
+    res.status(201).json({ request: item });
+  }),
+);
+// Ask the AI to draft the build/fix plan (the "box").
+router.post(
+  '/devdesk/:id/triage',
+  asyncHandler(async (req: Request, res: Response) => {
+    const dr = await getDevRequest(req.params.id);
+    if (!dr) throw ApiError.notFound('Request not found');
+    const draft = await analyzeDevRequest(String(dr.kind), String(dr.title), String(dr.description ?? ''));
+    const updated = await setPlan(req.params.id, { ...draft.plan, _source: draft.source, _model: draft.model });
+    if (req.user) await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'devdesk.triage',
+      targetType: 'dev_request', targetId: req.params.id, detail: { source: draft.source } });
+    res.json({ request: updated, source: draft.source });
+  }),
+);
+const decideSchema = z.object({ remark: z.string().trim().max(2000).optional() });
+// Approve -> dispatch to automation (n8n / coding agent) via emitEvent.
+router.post(
+  '/devdesk/:id/approve',
+  validate(decideSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof decideSchema>;
+    const dr = await getDevRequest(req.params.id);
+    if (!dr) throw ApiError.notFound('Request not found');
+    const updated = await setStatus(req.params.id, 'approved', b.remark);
+    emitEvent('devdesk.approved', {
+      ticket_no: dr.ticket_no, kind: dr.kind, title: dr.title, description: dr.description,
+      plan: dr.ai_plan, approved_by: req.user?.id, remark: b.remark ?? null,
+    });
+    if (req.user) await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'devdesk.approve',
+      targetType: 'dev_request', targetId: req.params.id, detail: { ticket_no: dr.ticket_no } });
+    res.json({ request: updated });
+  }),
+);
+router.post(
+  '/devdesk/:id/reject',
+  validate(decideSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof decideSchema>;
+    const updated = await setStatus(req.params.id, 'rejected', b.remark);
+    if (!updated) throw ApiError.notFound('Request not found');
+    res.json({ request: updated });
+  }),
+);
+// Mark progress (dispatched / done) — e.g. once the agent opens/merges a PR.
+const devStatusSchema = z.object({ status: z.enum(['dispatched', 'done']), remark: z.string().trim().max(2000).optional() });
+router.post(
+  '/devdesk/:id/status',
+  validate(devStatusSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof devStatusSchema>;
+    const updated = await setStatus(req.params.id, b.status, b.remark);
+    if (!updated) throw ApiError.notFound('Request not found');
+    res.json({ request: updated });
   }),
 );
 

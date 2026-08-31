@@ -160,6 +160,68 @@ async function draftViaN8n(cfg: AiConfig, docs: string, services: string[]): Pro
   }
 }
 
+// ---------------------------------------------------------------------
+// AI Dev Desk: analyse a feature/bug request into a build/fix plan (the "box").
+// ---------------------------------------------------------------------
+const DEV_SYSTEM = `You are a senior engineer triaging a change request for TutiPays, an Indian B2B fintech aggregator (Node/TypeScript/Express/Postgres backend, a vanilla-JS admin+partner panel). Turn the request into a concise, actionable plan. Output ONLY JSON:
+{
+  "summary": "one-line restatement of what to build or fix",
+  "type": "feature" | "bug" | "ui",
+  "areas": ["files or modules likely involved"],
+  "changes": ["concrete steps to build/fix, in order"],
+  "risks": ["what could break or needs care (money movement, migrations, auth)"],
+  "tests": ["how to verify it works"],
+  "effort": "small" | "medium" | "large"
+}
+Be specific and realistic. Never invent that money can be auto-deployed; changes ship as a reviewed PR.`;
+
+export interface DevPlan {
+  source: 'ai' | 'template';
+  model?: string;
+  plan: Record<string, unknown>;
+}
+
+/** Draft the "what to build / fix" plan for a dev request. */
+export async function analyzeDevRequest(kind: string, title: string, description: string): Promise<DevPlan> {
+  const cfg = await aiConfig();
+  const user = `Request type: ${kind}\nTitle: ${title}\n\nDetails:\n${(description || '').slice(0, 12000)}`;
+  if (cfg) {
+    const parsed =
+      cfg.mode === 'n8n'
+        ? await (async () => {
+            try {
+              const res = await httpJson<Record<string, unknown>>(cfg.baseUrl, {
+                method: 'POST',
+                headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
+                body: { task: 'analyze_dev_request', kind, title, description: (description || '').slice(0, 12000), schema_prompt: DEV_SYSTEM },
+                timeoutMs: 60000,
+              });
+              const raw = res.plan ?? res.output ?? res;
+              if (raw && typeof raw === 'object' && (raw as Record<string, unknown>).summary) return raw as Record<string, unknown>;
+              return typeof raw === 'string' ? extractJson(raw) : null;
+            } catch (err) {
+              logger.warn({ err: (err as Error).message }, 'ai devdesk n8n failed');
+              return null;
+            }
+          })()
+        : extractJson((await aiChat(DEV_SYSTEM, user)) ?? '');
+    if (parsed && parsed.summary) return { source: 'ai', model: cfg.mode === 'n8n' ? 'n8n' : cfg.model, plan: parsed };
+  }
+  // Template fallback so the desk works with no AI configured.
+  return {
+    source: 'template',
+    plan: {
+      summary: title,
+      type: kind,
+      areas: ['(to be identified)'],
+      changes: ['Break the request into concrete steps.', 'Implement behind review.', 'Add/adjust tests.'],
+      risks: kind === 'bug' ? ['Confirm the reproduction first.'] : ['Scope creep; keep the change minimal.'],
+      tests: ['Manual walkthrough of the affected screen/flow.'],
+      effort: 'medium',
+    },
+  };
+}
+
 /** Draft a dynamic-driver config for the given services from pasted docs. */
 export async function draftProviderConfig(docs: string, services: string[]): Promise<DraftResult> {
   const svc = services.length ? services : ['payout'];
