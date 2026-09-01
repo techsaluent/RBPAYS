@@ -1614,6 +1614,23 @@ const Screens = {
     $('view').innerHTML = `
       <div class="panel"><h2>🤖 AI model</h2>
         <p class="muted">Point this at any OpenAI-compatible endpoint <b>or</b> an n8n webhook that runs a free model. The model name is just text — when your free model updates, change it here. In n8n mode the model lives in your workflow.</p>
+        <div class="field" style="max-width:460px"><label>AI provider preset</label>
+          <select id="ai_preset" onchange="Actions.aiPreset()">
+            <option value="">— pick a provider to auto-fill endpoint + model —</option>
+            <option value="gemini">Google Gemini — Flash (free tier)</option>
+            <option value="groq">Groq — Llama 3.3 70B (FREE, fast)</option>
+            <option value="openrouter">OpenRouter — free models</option>
+            <option value="cerebras">Cerebras — Llama 3.3 (FREE, fastest)</option>
+            <option value="mistral">Mistral — Small (FREE tier)</option>
+            <option value="together">Together AI — Llama 3.3 70B (FREE)</option>
+            <option value="github">GitHub Models — GPT-4o (FREE)</option>
+            <option value="sambanova">SambaNova — Llama 3.3 70B (FREE)</option>
+            <option value="ollama">Ollama — self-hosted (FREE, local)</option>
+            <option value="openai">OpenAI — GPT-4o mini</option>
+            <option value="anthropic">Anthropic — Claude</option>
+            <option value="n8n">n8n webhook (your own free-AI workflow)</option>
+          </select>
+          <p class="muted" id="ai_preset_note" style="font-size:12px;margin:4px 0 0"></p></div>
         <div class="row">
           <div class="field"><label>Mode</label><select id="ai_mode">
             <option value="openai" ${ai&&ai.provider==='n8n'?'':'selected'}>OpenAI-compatible</option>
@@ -2785,6 +2802,31 @@ const Actions = {
     if (key) body.api_key = key;
     try { await Api.put('/admin/integrations/ai_coder', body); UI.toast('AI settings saved'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // AI provider presets — fill endpoint + sample model + key page from a pick.
+  aiPreset() {
+    const P = {
+      gemini:    ['openai', 'https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-2.0-flash', 'https://aistudio.google.com/apikey', 'Free tier. Powers translation, OCR & blog AI.'],
+      groq:      ['openai', 'https://api.groq.com/openai/v1', 'llama-3.3-70b-versatile', 'https://console.groq.com/keys', 'FREE + very fast Llama 3.3 70B.'],
+      openrouter:['openai', 'https://openrouter.ai/api/v1', 'meta-llama/llama-3.3-70b-instruct:free', 'https://openrouter.ai/keys', 'Free Llama models.'],
+      cerebras:  ['openai', 'https://api.cerebras.ai/v1', 'llama-3.3-70b', 'https://cloud.cerebras.ai', 'FREE, fastest Llama 3.3.'],
+      mistral:   ['openai', 'https://api.mistral.ai/v1', 'mistral-small-latest', 'https://console.mistral.ai/api-keys', 'Free Mistral Small.'],
+      together:  ['openai', 'https://api.together.xyz/v1', 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free', 'https://api.together.ai/settings/api-keys', 'Free Llama 3.3 70B Turbo.'],
+      github:    ['openai', 'https://models.inference.ai.azure.com', 'gpt-4o', 'https://github.com/marketplace/models', 'FREE GPT-4o / Llama with a GitHub token.'],
+      sambanova: ['openai', 'https://api.sambanova.ai/v1', 'Meta-Llama-3.3-70B-Instruct', 'https://cloud.sambanova.ai/apis', 'FREE, very fast Llama 3.3 70B.'],
+      ollama:    ['openai', 'http://localhost:11434/v1', 'llama3.1', '', 'Self-hosted, private. Any non-empty token works.'],
+      openai:    ['openai', 'https://api.openai.com/v1', 'gpt-4o-mini', 'https://platform.openai.com/api-keys', 'GPT-4o / Whisper.'],
+      anthropic: ['openai', 'https://api.anthropic.com/v1', 'claude-3-5-haiku-latest', 'https://console.anthropic.com', 'Claude — use via an OpenAI-compatible gateway.'],
+      n8n:       ['n8n', '', '', '', 'Point at your n8n Production webhook running a free model.'],
+    };
+    const p = P[val('ai_preset')];
+    const note = $('ai_preset_note');
+    if (!p) { if (note) note.textContent = ''; return; }
+    const [mode, url, model, keyUrl, desc] = p;
+    if ($('ai_mode')) $('ai_mode').value = mode;
+    if ($('ai_url')) $('ai_url').value = url;
+    if ($('ai_model') && model) $('ai_model').value = model;
+    if (note) note.innerHTML = esc(desc) + (keyUrl ? ` <a href="${esc(keyUrl)}" target="_blank" rel="noopener">Get a key →</a>` : '');
   },
   async aiDraft() {
     const services = [...document.querySelectorAll('.ai_svc:checked')].map(x => x.value);
