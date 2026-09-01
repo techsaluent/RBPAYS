@@ -2188,6 +2188,18 @@ router.delete(
   }),
 );
 
+// Known-provider directory — quick-pick starting points for adding a provider.
+// Carries no credentials; the admin supplies real base URL + keys, then Tests.
+router.get(
+  '/provider-directory',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      'SELECT key, name, website, services, suggested_driver, notes FROM provider_directory WHERE enabled = true ORDER BY sort_order, name',
+    );
+    res.json({ items: rows });
+  }),
+);
+
 // Go-live pre-flight: verify a saved provider's config + endpoint reachability
 // WITHOUT running a real transaction. Safe to run before activating live keys.
 router.post(
