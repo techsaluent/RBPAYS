@@ -11,7 +11,7 @@ import {
 } from '../../utils/jwt';
 import { hashPassword, verifyPassword } from '../../utils/password';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../../utils/totp';
-import { sendSms } from '../notify/notify.service';
+import { dispatch } from '../notify/notify.service';
 import { LoginInput, SignupInput } from './auth.schemas';
 
 export interface PublicUser {
@@ -98,7 +98,11 @@ export async function requestSignupOtp(
     'INSERT INTO signup_otps (phone, email, code_hash, expires_at) VALUES ($1,$2,$3,$4)',
     [phone, email ?? null, codeHash, expiresAt],
   );
-  const delivered = await sendSms(phone, `Your TutiPays verification code is ${code}. It expires in 15 minutes.`);
+  // Deliver the OTP over every configured messaging channel (SMS / WhatsApp /
+  // Email); each no-ops if its integration is inactive.
+  const text = `Your TutiPays verification code is ${code}. It expires in 15 minutes.`;
+  const sent = await dispatch({ phone, email, text, subject: 'TutiPays verification code', channels: ['sms', 'whatsapp', 'email'] });
+  const delivered = sent.sms || sent.whatsapp || sent.email;
   if (!env.isProd) logger.info({ phone, code }, 'signup OTP generated');
   return { requested: true, delivered, dev_code: env.isProd ? undefined : code };
 }
@@ -428,10 +432,12 @@ export async function forgotPassword(identifier: string): Promise<{ delivered: b
     'INSERT INTO password_resets (user_id, code_hash, expires_at) VALUES ($1,$2,$3)',
     [user.id, codeHash, expiresAt],
   );
-  // Delivery goes through the configured SMS/email integration once wired.
-  // Until then the code is logged; in non-production it is also returned.
+  // Deliver over every configured channel (SMS / WhatsApp / Email).
+  const text = `Your TutiPays password reset code is ${realCode}. It expires in 15 minutes. If you did not request this, ignore this message.`;
+  const sent = await dispatch({ phone: user.phone, email: user.email, text, subject: 'TutiPays password reset code', channels: ['sms', 'whatsapp', 'email'] });
+  const delivered = sent.sms || sent.whatsapp || sent.email;
   logger.info({ userId: user.id, code: env.isProd ? undefined : realCode }, 'password reset code generated');
-  return { delivered: false, dev_code: env.isProd ? undefined : realCode };
+  return { delivered, dev_code: env.isProd ? undefined : realCode };
 }
 
 export async function resetPassword(identifier: string, code: string, newPassword: string): Promise<void> {

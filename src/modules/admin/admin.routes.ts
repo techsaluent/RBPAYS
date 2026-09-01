@@ -1391,6 +1391,31 @@ router.put(
   }),
 );
 
+// Send a test message through a messaging integration to confirm it works.
+const testMsgSchema = z.object({
+  key: z.enum(['sms', 'otp', 'whatsapp', 'email']),
+  to: z.string().trim().min(3).max(200), // phone for sms/whatsapp, email for email
+});
+router.post(
+  '/integrations/test',
+  validate(testMsgSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof testMsgSchema>;
+    const { sendSms, sendWhatsApp, sendEmail } = await import('../notify/notify.service');
+    const text = 'TutiPays test message — your integration is working. 🎉';
+    let ok = false;
+    if (b.key === 'sms' || b.key === 'otp') ok = await sendSms(b.to, text);
+    else if (b.key === 'whatsapp') ok = await sendWhatsApp(b.to, text);
+    else ok = await sendEmail(b.to, 'TutiPays test message', text);
+    res.json({
+      ok,
+      message: ok
+        ? 'Sent — check the destination. (A tolerant gateway may report success even on a bad number; confirm receipt.)'
+        : 'Not sent — the integration is inactive or misconfigured. Set base URL + keys and mark it active, then retry.',
+    });
+  }),
+);
+
 // ---------------------------------------------------------------------
 // Statutory tax — verify PANs, view TDS (194H/194N) and GST records
 // ---------------------------------------------------------------------
