@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 220" width="940" height="220">
+  <defs>
+    <linearGradient id="tp-bg" x1="0" y1="0" x2="220" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#C026D3"/>
+    </linearGradient>
+    <linearGradient id="tp-text" x1="270" y1="0" x2="900" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5B21B6"/>
+      <stop offset="1" stop-color="#A21CAF"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="220" height="220" rx="50" ry="50" fill="url(#tp-bg)"/>
+  <rect x="35.23" y="56.72" width="141.80" height="98.83" rx="12.89" fill="#FFFFFF" opacity="0.42"/>
+  <rect x="98.83" y="62.73" width="22.34" height="14.61" rx="5.16" fill="#FFFFFF"/>
+  <rect x="44.69" y="72.19" width="130.62" height="91.09" rx="12.03" fill="#FFFFFF"/>
+  <rect x="44.69" y="85.94" width="130.62" height="3.44" fill="#7C3AED" opacity="0.14"/>
+  <path fill="url(#tp-bg)" d="M127.3314625 101.33722499999999V107.1307875H135.539009375V117.1729625H126.75210625Q125.20715625 125.766746875 119.220475 130.25675781249998Q113.23379375 134.74676875 101.743228125 134.74676875V138.60914375Q101.743228125 142.374959375 103.19161875 144.4509859375Q104.640009375 146.5270125 108.21270625 146.5270125Q111.592284375 146.5270125 113.040675 144.49926562500002Q114.489065625 142.47151875 114.489065625 138.416025H129.745446875Q129.359209375 148.168521875 124.0001640625 153.57584687500002Q118.64111875 158.983171875 108.59894375 158.983171875Q97.78429375 158.983171875 92.0390109375 153.3344484375Q86.293728125 147.685725 86.293728125 136.388278125V123.93211875Q96.335903125 123.93211875 101.1155921875 123.4976015625Q105.89528125000001 123.063084375 108.26098593750001 121.6629734375Q110.62669062500001 120.2628625 111.399165625 117.1729625H84.4591V107.1307875H111.8819625V101.33722499999999H84.4591V90.232896875H135.539009375V101.33722499999999Z"/>
+
+  <text x="270" y="145" font-family="'Poppins', 'Plus Jakarta Sans', 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="108" letter-spacing="-2" fill="url(#tp-text)">Tuti<tspan fill="#18181B">pays</tspan></text>
+</svg>

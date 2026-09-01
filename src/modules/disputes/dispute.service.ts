@@ -55,7 +55,7 @@ export function disputeReceiptHtml(
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
     <style>
-    :root{--brand:#3d43e0;--brand2:#6a52ff;--ink:#14162e;--muted:#6b7488;--line:#e7e9f4}
+    :root{--brand:#7C3AED;--brand2:#C026D3;--ink:#14162e;--muted:#6b7488;--line:#e7e9f4}
     *{box-sizing:border-box}
     body{font-family:'Plus Jakarta Sans',-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink);background:#eef1f8;margin:0;padding:24px 16px;-webkit-font-smoothing:antialiased}
     .sheet{max-width:760px;margin:0 auto;background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 10px 34px rgba(30,34,90,.10)}

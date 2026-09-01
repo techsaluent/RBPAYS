@@ -181,7 +181,7 @@ export function receiptHtml(
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <style>
-  :root { color-scheme: light; --brand:#3d43e0; --brand2:#6a52ff; --ink:#14162e; --muted:#6b7488; --line:#e7e9f4; }
+  :root { color-scheme: light; --brand:#7C3AED; --brand2:#C026D3; --ink:#14162e; --muted:#6b7488; --line:#e7e9f4; }
   * { box-sizing: border-box; }
   body { font-family:'Plus Jakarta Sans',-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:#eef1f8; margin:0; padding:18px; color:var(--ink); -webkit-font-smoothing:antialiased; }
   .receipt { max-width:350px; margin:0 auto; background:#fff; border:1px solid var(--line); border-radius:16px; overflow:hidden; box-shadow:0 10px 34px rgba(30,34,90,.10); }
