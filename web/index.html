@@ -45,8 +45,8 @@
     .wrap{max-width:1160px;margin:0 auto;padding:0 20px}
     .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:999px;font-weight:700;font-size:15px;cursor:pointer;border:1px solid transparent;transition:transform .1s, box-shadow .15s, filter .15s}
     .btn:active{transform:translateY(1px)}
-    .btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;box-shadow:0 8px 22px rgba(61,67,224,.34)}
-    .btn.primary:hover{filter:brightness(1.06);box-shadow:0 12px 30px rgba(61,67,224,.42)}
+    .btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;box-shadow:0 8px 22px rgba(124,58,237,.34)}
+    .btn.primary:hover{filter:brightness(1.06);box-shadow:0 12px 30px rgba(124,58,237,.42)}
     .btn.accent{background:linear-gradient(135deg,#ff8a2b,var(--accent));color:#fff;box-shadow:0 8px 22px rgba(255,122,26,.34)}
     .btn.ghost{background:#fff;color:var(--brand);border-color:#dcdef4}
     .btn.ghost:hover{border-color:var(--brand);background:var(--brand-soft)}
@@ -67,7 +67,8 @@
     header.stuck{border-color:var(--line);box-shadow:0 6px 24px rgba(20,22,46,.06)}
     .nav{display:flex;align-items:center;justify-content:space-between;height:70px}
     .logo{display:flex;align-items:center;gap:11px;font-weight:800;font-size:22px}
-    .logo .dot{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));display:grid;place-items:center;color:#fff;font-size:18px;box-shadow:0 6px 16px rgba(61,67,224,.4)}
+    .logo img{height:40px;width:auto;display:block}
+    .logo .dot{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--brand),var(--brand2));display:grid;place-items:center;color:#fff;font-size:18px;box-shadow:0 6px 16px rgba(124,58,237,.4)}
     .logo b{color:var(--brand)}
     nav.links{display:flex;gap:28px;align-items:center;font-size:15px;color:var(--muted);font-weight:500}
     nav.links a{position:relative}
@@ -102,8 +103,8 @@
     .mini .m .i{font-size:22px}.mini .m .t{font-weight:600;margin-top:6px;font-size:12px}
     .float{position:absolute;z-index:3;background:#fff;color:var(--ink);border-radius:14px;box-shadow:0 16px 40px rgba(10,10,40,.28);padding:10px 14px;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px;white-space:nowrap;animation:floaty 5s ease-in-out infinite}
     .float .em{font-size:18px}
-    .float.f1{top:-16px;right:-8px;animation-delay:.2s}
-    .float.f2{bottom:22px;left:-10px;animation-delay:1.4s}
+    .float.f1{top:-18px;right:-14px;animation-delay:.2s}
+    .float.f2{bottom:-18px;left:-16px;animation-delay:1.4s}
     .float .up{color:var(--green);font-weight:800}
     @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
     @media(max-width:920px){ .hero .grid{grid-template-columns:1fr;gap:30px;padding:48px 0 70px} .float.f1{right:0} .float.f2{left:0;bottom:-14px} }
@@ -129,7 +130,7 @@
     /* Service tabs + grid */
     .tabs{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:28px}
     .tabs button{border:1px solid var(--line);background:#fff;color:var(--muted);padding:9px 16px;border-radius:999px;font-weight:700;font-size:13.5px;cursor:pointer;transition:.15s}
-    .tabs button.on{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-color:transparent;box-shadow:0 8px 20px rgba(61,67,224,.3)}
+    .tabs button.on{background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;border-color:transparent;box-shadow:0 8px 20px rgba(124,58,237,.3)}
     .services{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
     .svc{border:1px solid var(--line);border-radius:var(--radius);padding:22px;background:#fff;transition:transform .15s,box-shadow .15s,border-color .15s}
     .svc:hover{transform:translateY(-5px);box-shadow:var(--shadow);border-color:transparent}
@@ -170,7 +171,7 @@
     /* Steps */
     .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
     .step{text-align:center;padding:10px}
-    .step .num{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;display:grid;place-items:center;font-family:var(--disp);font-size:22px;font-weight:800;margin:0 auto 14px;box-shadow:0 10px 24px rgba(61,67,224,.34)}
+    .step .num{width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;display:grid;place-items:center;font-family:var(--disp);font-size:22px;font-weight:800;margin:0 auto 14px;box-shadow:0 10px 24px rgba(124,58,237,.34)}
     .step h3{margin:0 0 6px;font-size:17px;font-weight:700} .step p{margin:0;color:var(--muted);font-size:14px}
     @media(max-width:860px){ .steps{grid-template-columns:1fr} }
 
@@ -217,7 +218,7 @@
 
   <header id="hdr">
     <div class="wrap nav">
-      <div class="logo"><span class="dot">₹</span> Tuti<b>Pays</b></div>
+      <a class="logo" href="/" aria-label="Tutipays home"><img src="/logo.svg" alt="Tutipays" /></a>
       <nav class="links">
         <a href="#services">Services</a>
         <a href="#why">Why us</a>
@@ -392,7 +393,7 @@
     <div class="wrap">
       <div class="fgrid">
         <div>
-          <div class="logo" style="color:#fff"><span class="dot">₹</span> Tuti<b style="color:#fff">Pays</b></div>
+          <div class="logo" style="color:#fff"><img src="/logo-icon.svg" alt="" style="width:34px;height:34px;border-radius:9px" /> <b style="color:#fff">Tutipays</b></div>
           <p class="addr" style="margin-top:12px">
             <b>REAL BROTHERS TECHNOLOGY SERVICES LLP</b><br>
             Unnati Gupta, H7 Room No., Santosh Nagar,<br>
