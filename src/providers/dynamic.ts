@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import { httpJson, HttpError } from './http';
 import { activeConfig, ActiveProvider } from './registry';
 import {
@@ -257,7 +256,3 @@ export function dryRunDynamic(
     body: resolve(svc.request ?? {}, vars),
   };
 }
-
-// re-export for callers that build an eko-style signed header outside config
-export const _dynamicHmac = (secret: string, msg: string): string =>
-  crypto.createHmac('sha256', Buffer.from(secret).toString('base64')).update(msg).digest('base64');

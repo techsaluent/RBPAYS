@@ -31,7 +31,6 @@ export interface ActiveProvider {
 // a caller can route to a specific chosen provider.
 const activeByService = new Map<string, ActiveProvider[]>();
 const activeById = new Map<string, ActiveProvider>();
-let loaded = false;
 
 export async function refreshProviderRegistry(): Promise<void> {
   try {
@@ -71,7 +70,6 @@ export async function refreshProviderRegistry(): Promise<void> {
       (activeByService.get(r.service_code) ?? activeByService.set(r.service_code, []).get(r.service_code)!).push(p);
       activeById.set(r.id, p);
     }
-    loaded = true;
     logger.info({ services: [...activeByService.keys()] }, 'provider registry refreshed');
   } catch (err) {
     // Table may not exist yet (before migration) — degrade to env defaults.
@@ -111,6 +109,3 @@ export function listActiveProviders(serviceCode: string): Array<{ id: string; la
   return (activeByService.get(serviceCode) ?? []).map((p) => ({ id: p.id, label: p.label, driver: p.driver }));
 }
 
-export function registryLoaded(): boolean {
-  return loaded;
-}

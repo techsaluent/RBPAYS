@@ -10,8 +10,6 @@ export const ROLE_RANK: Record<string, number> = {
   admin: 4,
 };
 
-export const MEMBER_ROLES = ['retailer', 'distributor', 'master_distributor'] as const;
-
 const PUBLIC_COLUMNS =
   'id, full_name, username, email, phone, role, status, kyc_status, parent_id, commission_plan_id, created_at';
 
