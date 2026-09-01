@@ -1534,8 +1534,13 @@ const Screens = {
         <p class="muted">When on, any member whose KYC is not <b>verified</b> is blocked from every money transaction (they'll be told to complete KYC). Review submissions under <a href="#/kycreview">KYC Review</a>.</p>
         ${field('security_admin_ip_allowlist','Admin login IP allowlist','1.2.3.4, 10.0.0.0/24 — blank = any')}
         <p class="muted">Restrict super-admin logins to these IPs/CIDRs (comma-separated). Leave blank to allow admin login from anywhere. The admin portal lives at a separate URL (<code>/admin</code>); this allowlist is the real lock behind it.</p>
-        <h2 class="mt">Member notifications (SMS)</h2>
-        <p class="muted">Send members an SMS on key events. Requires an active SMS gateway under <a href="#/integrations">Integrations</a>.</p>
+        <h2 class="mt">Member notifications</h2>
+        <p class="muted">Send members alerts on key events over the channels below. Each channel needs its integration active under <a href="#/integrations">Integrations</a> (SMS gateway / WhatsApp Business / Email). OTP &amp; password-reset codes automatically use every active channel.</p>
+        <div class="field"><label>Delivery channels</label>
+          <label style="display:inline-flex;gap:6px;margin-right:16px"><input type="checkbox" id="ws_notify_sms" ${s.notify_sms!=='false'?'checked':''}> SMS</label>
+          <label style="display:inline-flex;gap:6px;margin-right:16px"><input type="checkbox" id="ws_notify_whatsapp" ${s.notify_whatsapp==='true'?'checked':''}> WhatsApp</label>
+          <label style="display:inline-flex;gap:6px"><input type="checkbox" id="ws_notify_email" ${s.notify_email==='true'?'checked':''}> Email</label></div>
+        <p class="muted" style="font-size:12px;margin:0 0 8px">Events to send:</p>
         <div class="field"><label><input type="checkbox" id="ws_notify_txn_sms" ${s.notify_txn_sms==='true'?'checked':''}> Transaction alerts (success / failed) with reference</label></div>
         <div class="field"><label><input type="checkbox" id="ws_notify_low_balance" ${s.notify_low_balance==='true'?'checked':''}> Low wallet-balance alert (once, when it drops below the threshold)</label></div>
         ${field('low_balance_threshold','Low-balance threshold (₹)','500')}
@@ -1583,7 +1588,8 @@ const Screens = {
       <td>${esc(i.label)}</td><td class="muted">${esc(i.category)}</td><td>${esc(i.provider||'')}</td>
       <td>${i.has_key ? '🔑' : '<span class="muted">no key</span>'}</td>
       <td>${i.is_active ? '<span class="tag active">active</span>' : '<span class="tag blocked">off</span>'}</td>
-      <td><button class="btn sm" onclick="Actions.editIntegration('${i.key}','${esc(i.label)}','${esc(i.provider||'')}','${esc(i.base_url||'')}','${esc(i.sender_id||'')}',${i.is_active})">Configure</button></td></tr>`).join('');
+      <td><button class="btn sm" onclick="Actions.editIntegration('${i.key}','${esc(i.label)}','${esc(i.provider||'')}','${esc(i.base_url||'')}','${esc(i.sender_id||'')}',${i.is_active})">Configure</button>
+        ${['sms','otp','whatsapp','email'].includes(i.key) ? `<button class="btn sm ghost" onclick="Actions.testIntegration('${i.key}')">Send test</button>` : ''}</td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><h2>Platform integrations</h2>
       <p class="muted">Paste API keys for messaging &amp; identity services. Keys are write-only (shown masked). Mark active to enable.</p>
       <div class="tbl-wrap"><table>
@@ -2530,6 +2536,9 @@ const Actions = {
     values['notify_txn_sms'] = $('ws_notify_txn_sms').checked ? 'true' : 'false';
     values['notify_low_balance'] = $('ws_notify_low_balance').checked ? 'true' : 'false';
     values['notify_kyc'] = $('ws_notify_kyc').checked ? 'true' : 'false';
+    values['notify_sms'] = $('ws_notify_sms').checked ? 'true' : 'false';
+    values['notify_whatsapp'] = $('ws_notify_whatsapp').checked ? 'true' : 'false';
+    values['notify_email'] = $('ws_notify_email').checked ? 'true' : 'false';
     try { await Api.put('/admin/site/settings', { values }); UI.toast('Settings saved'); App.applyBranding(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
@@ -2564,6 +2573,15 @@ const Actions = {
     if (val('ig_sender')) body.sender_id = val('ig_sender');
     try { await Api.put(`/admin/integrations/${key}`, body); UI.closeModal(); UI.toast('Integration saved'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async testIntegration(key) {
+    const isEmail = key === 'email';
+    const to = prompt(isEmail ? 'Send a test email to (address):' : 'Send a test message to (10-digit mobile):');
+    if (!to) return;
+    try {
+      const r = await Api.post('/admin/integrations/test', { key, to: to.trim() });
+      UI.toast(r.message, r.ok ? 'ok' : 'err');
+    } catch (err) { UI.toast(err.message, 'err'); }
   },
   async reviewKyc(id, status) {
     // Every approval / rejection must carry a remark for the audit trail.
