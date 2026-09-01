@@ -15,7 +15,7 @@ INSERT INTO site_settings (key, value) VALUES
     ('logo_url',        ''),
     ('logo_emoji',      '₹'),
     ('tagline',         'One platform for every payment & recharge.'),
-    ('primary_color',   '#3b39e4'),
+    ('primary_color',   '#7C3AED'),
     ('support_email',   'support@tutipays.com'),
     ('admin_email',     'admin@tutipays.com'),
     ('phone',           ''),

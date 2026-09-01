@@ -3,7 +3,7 @@
 
 :root{
   --ink:#14162e; --muted:#5b6379; --line:#e7e9f4; --bg:#ffffff; --soft:#f4f6fd;
-  --brand:#3d43e0; --brand2:#6a52ff; --brand-soft:#eeecfe;
+  --brand:#7C3AED; --brand2:#C026D3; --brand-soft:#f3e8ff;
   --accent:#ff7a1a; --accent-soft:#fff0e4; --green:#12a35a; --warn:#ff8a00;
   --radius:18px; --radius-sm:12px;
   --shadow:0 10px 34px rgba(30,34,90,.10); --shadow-sm:0 4px 16px rgba(30,34,90,.08);
@@ -50,9 +50,9 @@ nav.links a:hover{color:var(--ink);text-decoration:none} nav.links a:hover::afte
 
 /* Content page hero — animated gradient, matches the home hero */
 .page-hero{position:relative;overflow:hidden;color:#fff;padding:56px 0;
-  background:radial-gradient(900px 420px at 84% -20%,rgba(122,92,255,.5),transparent),
+  background:radial-gradient(900px 420px at 84% -20%,rgba(192,38,211,.45),transparent),
              radial-gradient(700px 400px at 0% 130%,rgba(255,122,26,.24),transparent),
-             linear-gradient(150deg,#191746,#3d43e0 66%,#5a45e6);
+             linear-gradient(150deg,#2a1258,#7C3AED 62%,#C026D3);
   background-size:160% 160%,160% 160%,200% 200%;animation:heroPan 18s ease-in-out infinite}
 @keyframes heroPan{0%,100%{background-position:84% -20%,0% 130%,0% 50%}50%{background-position:70% 0%,10% 100%,100% 50%}}
 .page-hero::before{content:'';position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.09) 1px,transparent 1px);background-size:26px 26px;opacity:.5;mask-image:linear-gradient(180deg,#000,transparent)}

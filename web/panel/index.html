@@ -6,13 +6,16 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <title>TutiPays Panel</title>
+  <link rel="icon" href="logo-icon.svg" />
+  <link rel="apple-touch-icon" href="logo-icon.svg" />
+  <meta name="theme-color" content="#7C3AED" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <style>
     :root {
       --bg:#eef1f8; --card:#ffffff; --ink:#141a2e; --ink-soft:#3b4a63; --muted:#697089; --line:#e5e9f2; --line-soft:#eef1f7;
-      --brand:#3d43e0; --brand-2:#6a52ff; --brand-ink:#fff; --brand-soft:#edecfd;
+      --brand:#7C3AED; --brand-2:#C026D3; --brand-ink:#fff; --brand-soft:#f3e8ff;
       --ok:#12855a; --ok-soft:#e4f4ec; --warn:#b0730a; --warn-soft:#faf2df; --err:#c5342b; --err-soft:#fbe9e7;
       --radius:14px; --radius-sm:10px;
       --shadow:0 1px 2px rgba(20,26,46,.05), 0 6px 20px rgba(20,26,46,.06);
@@ -23,7 +26,7 @@
     }
     :root[data-theme="dark"] {
       --bg:#0b0e1a; --card:#151a2c; --ink:#eef1ff; --ink-soft:#c4cbe4; --muted:#8b93b2; --line:#252b42; --line-soft:#1d2338;
-      --brand:#7b7dff; --brand-2:#9a7bff; --brand-soft:#20204a;
+      --brand:#a78bfa; --brand-2:#e879f9; --brand-soft:#2a1a4a;
       --ok:#5fd39b; --ok-soft:#123027; --warn:#e6b45c; --warn-soft:#33280f; --err:#f0857c; --err-soft:#361d1b;
       --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 26px rgba(0,0,0,.45);
       --shadow-lg:0 16px 44px rgba(0,0,0,.55);
@@ -48,6 +51,7 @@
     .auth-poster p { margin:0; color:#eef; font-size:14px; }
     .auth-card { width:100%; max-width:400px; background:var(--card); border-radius:var(--radius);
       box-shadow:var(--shadow); padding:30px 28px; }
+    .auth-logo { display:block; margin:0 auto 4px; max-width:210px; height:auto; }
     .brand { font-size:26px; font-weight:800; letter-spacing:1px; color:var(--brand); text-align:center; }
     .brand small { display:block; font-size:12px; font-weight:500; color:var(--muted); letter-spacing:.5px; margin-top:4px; }
     .back-home { text-align:center; margin:10px 0 0; }
@@ -174,8 +178,8 @@
       position:sticky; top:0; height:100vh; overflow-y:auto; border-right:1px solid rgba(255,255,255,.04); }
     aside .brand { color:#fff; font-size:21px; font-weight:800; padding:2px 8px 4px; display:flex; align-items:center; gap:9px; }
     aside .brand a { color:#fff; display:flex; align-items:center; gap:9px; }
-    aside .brand a::before { content:'₹'; width:30px; height:30px; border-radius:9px; display:inline-grid; place-items:center;
-      background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff; font-size:17px; font-weight:800; }
+    aside .brand a::before { content:''; width:32px; height:32px; border-radius:9px; flex:0 0 auto;
+      background:var(--logo-icon, url('logo-icon.svg')) center/contain no-repeat; }
     nav { margin-top:18px; gap:3px; }
     nav a { color:var(--side-ink); padding:9px 12px; border-radius:10px; font-size:13.5px; font-weight:500;
       display:flex; align-items:center; gap:9px; transition:background .12s,color .12s; }
@@ -274,7 +278,8 @@
         </div>
       </a>
     <div class="auth-card">
-      <div class="brand">TutiPays <small>Partner &amp; Admin Panel</small></div>
+      <img class="auth-logo" src="logo.svg" alt="TutiPays" />
+      <div class="brand"><small>Partner &amp; Admin Panel</small></div>
       <div class="back-home"><a href="../">← Back to home</a></div>
       <div class="tabs">
         <button id="tab-login" class="on" onclick="UI.authTab('login')">Login</button>

@@ -54,7 +54,7 @@
     if (s.logo_url || !document.head.querySelector('link[rel="icon"]')) {
       const l = document.head.querySelector('link[rel="icon"]') || document.createElement('link');
       l.rel = 'icon';
-      l.href = s.logo_url || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%233d43e0'/%3E%3Cstop offset='1' stop-color='%236a52ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='44' font-size='38' font-family='Arial' font-weight='bold' fill='%23fff' text-anchor='middle'%3E%E2%82%B9%3C/text%3E%3C/svg%3E";
+      l.href = s.logo_url || "/logo-icon.svg";
       document.head.appendChild(l);
     }
     // Google Analytics (GA4).

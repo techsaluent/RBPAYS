@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tp-bg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#C026D3"/>
+    </linearGradient>
+    <linearGradient id="tp-body" x1="106" y1="150" x2="406" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F3E8FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="512" height="512" rx="118" ry="118" fill="url(#tp-bg)"/>
+  <path d="M0 118 C0 52.8 52.8 0 118 0 L394 0 C459.2 0 512 52.8 512 118 L512 210 C300 150 170 150 0 210 Z" fill="#FFFFFF" opacity="0.06"/>
+
+  <rect x="82" y="132" width="330" height="230" rx="30" fill="#FFFFFF" opacity="0.42"/>
+  <rect x="230" y="146" width="52" height="34" rx="12" fill="url(#tp-body)"/>
+  <rect x="104" y="168" width="304" height="212" rx="28" fill="url(#tp-body)"/>
+  <rect x="104" y="200" width="304" height="8" fill="#7C3AED" opacity="0.14"/>
+
+  <path transform="translate(188.02 367.75) scale(0.22472 -0.22472)" fill="url(#tp-bg)" d="M482 587V527H567V423H476Q460 334 398.0 287.5Q336 241 217 241V201Q217 162 232.0 140.5Q247 119 284 119Q319 119 334.0 140.0Q349 161 349 203H507Q503 102 447.5 46.0Q392 -10 288 -10Q176 -10 116.5 48.5Q57 107 57 224V353Q161 353 210.5 357.5Q260 362 284.5 376.5Q309 391 317 423H38V527H322V587H38V702H567V587Z"/>
+</svg>

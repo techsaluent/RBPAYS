@@ -70,7 +70,7 @@ const barChart = (values, labels, fmt) => {
     const h = Math.round((v / max) * (H - pad * 2));
     const x = pad + i * bw, y = H - pad - h;
     const lbl = labels && labels[i] ? labels[i] : '';
-    return `<rect x="${x + bw * 0.15}" y="${y}" width="${bw * 0.7}" height="${h}" rx="2" fill="#3d43e0" opacity="0.85">
+    return `<rect x="${x + bw * 0.15}" y="${y}" width="${bw * 0.7}" height="${h}" rx="2" fill="#7C3AED" opacity="0.85">
       <title>${esc(lbl)}: ${esc(f(v))}</title></rect>`;
   }).join('');
   // sparse x labels (first, mid, last)
@@ -321,11 +321,16 @@ const App = {
       if (otpBox) otpBox.classList.toggle('hidden', s.security_require_signup_otp !== 'true');
       if (s.primary_color) document.documentElement.style.setProperty('--brand', s.primary_color);
       const brand = s.brand_name || 'TutiPays';
+      // Admin-uploaded logo overrides the bundled Tutipays mark (login + sidebar).
+      if (s.logo_url) {
+        document.querySelectorAll('.auth-logo').forEach(i => { i.src = s.logo_url; });
+        document.documentElement.style.setProperty('--logo-icon', `url('${s.logo_url}')`);
+      }
       document.querySelectorAll('.brand').forEach(el => {
         const a = el.querySelector('a');
         if (a) a.textContent = brand;
-        else if (el.querySelector('small')) el.childNodes[0].nodeValue = brand + ' ';
-        else el.textContent = brand;
+        else if (el.querySelector('small') && el.childNodes[0].nodeType === 3) el.childNodes[0].nodeValue = brand + ' ';
+        else if (!el.querySelector('small') && !el.querySelector('img')) el.textContent = brand;
       });
       if (/TutiPays/.test(document.title)) document.title = document.title.replace(/TutiPays/g, brand);
       // Login/signup offer poster (super-admin configurable).
@@ -1511,7 +1516,7 @@ const Screens = {
         ${field('brand_name','Brand name','TutiPays')}
         ${field('logo_emoji','Logo emoji','₹')}
         ${imgField('logo_url','Logo image (URL or upload)','https://…')}
-        ${field('primary_color','Primary colour (hex)','#3b39e4')}
+        ${field('primary_color','Primary colour (hex)','#7C3AED')}
         ${field('tagline','Tagline')}
         ${field('support_email','Support email')}
         ${field('admin_email','Admin email')}
@@ -1755,7 +1760,7 @@ const Screens = {
         <thead><tr><th>Service</th><th class="right">Txns</th><th class="right">GTV</th><th>Share</th></tr></thead>
         <tbody>${d.service_mix.map(s => `<tr><td>${esc(s.service)}</td><td class="right">${s.count}</td>
           <td class="right">${money(s.gtv_paise/100)}</td>
-          <td><div style="background:#eef1f8;border-radius:4px;height:10px;width:120px;overflow:hidden"><div style="background:#3d43e0;height:10px;width:${Math.round(s.gtv_paise/mixTotal*100)}%"></div></div></td></tr>`).join('') || '<tr><td colspan=4 class=muted>No data</td></tr>'}</tbody></table></div></div>
+          <td><div style="background:#eef1f8;border-radius:4px;height:10px;width:120px;overflow:hidden"><div style="background:#7C3AED;height:10px;width:${Math.round(s.gtv_paise/mixTotal*100)}%"></div></div></td></tr>`).join('') || '<tr><td colspan=4 class=muted>No data</td></tr>'}</tbody></table></div></div>
       <div class="panel mt"><h2>Top members by GTV</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Member</th><th>Role</th><th class="right">Txns</th><th class="right">GTV</th></tr></thead>
         <tbody>${d.top_members.map(m => `<tr><td>${esc(m.full_name)}</td><td>${esc((m.role||'').replace(/_/g,' '))}</td>
@@ -1784,7 +1789,7 @@ const Screens = {
         <thead><tr><th>Service</th><th class="right">Txns</th><th class="right">Volume</th><th>Share</th></tr></thead>
         <tbody>${d.service_mix.map(s => `<tr><td>${esc(s.service)}</td><td class="right">${s.count}</td>
           <td class="right">${money(s.gtv_paise/100)}</td>
-          <td><div style="background:#eef1f8;border-radius:4px;height:10px;width:120px;overflow:hidden"><div style="background:#3d43e0;height:10px;width:${Math.round(s.gtv_paise/mixTotal*100)}%"></div></div></td></tr>`).join('') || '<tr><td colspan=4 class=muted>No activity yet</td></tr>'}</tbody></table></div></div>`;
+          <td><div style="background:#eef1f8;border-radius:4px;height:10px;width:120px;overflow:hidden"><div style="background:#7C3AED;height:10px;width:${Math.round(s.gtv_paise/mixTotal*100)}%"></div></div></td></tr>`).join('') || '<tr><td colspan=4 class=muted>No activity yet</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Admin: recharge operator + BBPS biller catalog. Members' dropdowns read
