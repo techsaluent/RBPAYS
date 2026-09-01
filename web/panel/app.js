@@ -2965,10 +2965,31 @@ const Actions = {
     if (i === '') { if (note) note.textContent = ''; return; }
     const p = (Actions._provDir || [])[Number(i)];
     if (!p) return;
+    // Built-in-driver providers ship a working config — pre-fill the base URL +
+    // paths so ONLY the API credentials are left to enter.
+    const PRECONF = {
+      eko: {
+        base: 'https://api.eko.in/ekoicici/v3',
+        extra: '{"user_code":""}',
+        creds: 'developer_key → <b>API key</b> · access_key → <b>API secret</b> · initiator_id → <b>Partner ID</b> · user_code → <b>Advanced config</b>',
+      },
+      aeronpay: {
+        base: 'https://api.aeronpay.in/api/serviceapi-prod/api',
+        extra: '',
+        creds: 'client-id → <b>API key</b> · client-secret → <b>API secret</b>',
+      },
+    };
     $('p_label').value = p.name;
     if (p.suggested_driver) { $('p_driver').value = p.suggested_driver; Actions.providerDriverHint(); }
-    if (note) note.innerHTML = `${esc(p.notes || '')} ${p.website ? `· <a href="${esc(p.website)}" target="_blank">website</a>` : ''}
-      <br>For a config-driven (dynamic) provider, build the request/response mapping in <a href="#/aistudio">🤖 AI Integration Studio</a> from ${esc(p.name)}'s API docs, then paste it into Advanced config below.`;
+    const pc = PRECONF[p.key];
+    if (pc) {
+      if ($('p_url')) $('p_url').value = pc.base;
+      if ($('p_extra') && pc.extra) $('p_extra').value = pc.extra;
+      if (note) note.innerHTML = `✅ <b>${esc(p.name)}</b> is pre-configured — just enter the API credentials, then <b>Test</b> &amp; <b>Activate</b>.<br>Map: ${pc.creds}. ${p.website ? `· <a href="${esc(p.website)}" target="_blank">get keys</a>` : ''}`;
+    } else if (note) {
+      note.innerHTML = `${esc(p.notes || '')} ${p.website ? `· <a href="${esc(p.website)}" target="_blank">website</a>` : ''}
+        <br>Build the request/response mapping in <a href="#/aistudio">🤖 AI Integration Studio</a> from ${esc(p.name)}'s API docs, then paste it into Advanced config below.`;
+    }
   },
   providerDriverHint() {
     const d = val('p_driver');
