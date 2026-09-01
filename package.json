@@ -14,7 +14,9 @@
     "migrate:status": "ts-node db/migrate.ts status",
     "seed:admin": "ts-node db/seed-admin.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint \"src/**/*.ts\" \"db/**/*.ts\""
+    "lint": "eslint \"src/**/*.ts\" \"db/**/*.ts\"",
+    "dead-exports": "npx --yes ts-prune@0.10.3 -p tsconfig.json | grep -v \"(used in module)\" || true",
+    "deps:check": "npx --yes depcheck --ignores=pino-pretty"
   },
   "keywords": [
     "fintech",
