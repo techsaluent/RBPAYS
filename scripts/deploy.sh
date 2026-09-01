@@ -20,8 +20,14 @@ APP_DIR="${APP_DIR:-/opt/rbpays-api}"
 WEB_DIR="${WEB_DIR:-/home/tutipays/htdocs/tutipays.com}"
 SERVICE="${SERVICE:-rbpays-api}"
 BRANCH="${BRANCH:-main}"
-PORT="${PORT:-8080}"
 HEALTH_PATH="${HEALTH_PATH:-/health}"
+
+# Health-check port: an explicit PORT env wins; otherwise read it from the app's
+# .env (the source of truth for what the service actually binds); else 8080.
+if [ -z "${PORT:-}" ] && [ -f "$APP_DIR/.env" ]; then
+  PORT="$(grep -E '^PORT=' "$APP_DIR/.env" | tail -1 | cut -d= -f2 | tr -d '[:space:]\"'"'"'')"
+fi
+PORT="${PORT:-8080}"
 
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[1;31mDEPLOY FAILED: %s\033[0m\n' "$*" >&2; exit 1; }
