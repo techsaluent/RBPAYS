@@ -2850,10 +2850,19 @@ const Actions = {
   },
 
   _provService: null,
-  addProvider(code) {
+  async addProvider(code) {
+    // Load the known-provider directory for a quick-pick that pre-fills the form.
+    const dir = await Api.get('/admin/provider-directory').catch(() => ({ items: [] }));
+    Actions._provDir = dir.items || [];
+    const dirOpts = ['<option value="">— pick a known provider (optional) —</option>']
+      .concat(Actions._provDir.map((p, i) => `<option value="${i}">${esc(p.name)} · ${esc(p.services || '')}</option>`)).join('');
     UI.modal(`<h3>Add provider — ${esc(code)}</h3>
+      <div class="field"><label>Known provider</label>
+        <select id="p_known" onchange="Actions.pickKnownProvider()">${dirOpts}</select></div>
+      <p class="muted" id="p_known_note" style="font-size:12px;margin:2px 0 8px"></p>
       <div class="field"><label>Label</label><input id="p_label" placeholder="Paysprint / RazorpayX"></div>
       <div class="field"><label>Driver</label><select id="p_driver" onchange="Actions.providerDriverHint()">
+        <option value="dynamic">dynamic (config-driven — build in AI Integration Studio)</option>
         <option value="sandbox">sandbox (test)</option><option value="aggregator">aggregator (generic DMT/BBPS/recharge switch)</option>
         <option value="aeronpay">AeronPay (payout, recharge, BBPS, DMT)</option>
         <option value="eko">Eko (DMT, AEPS, BBPS, recharge)</option>
@@ -2883,6 +2892,18 @@ const Actions = {
     if (ex) { try { body.extra = JSON.parse(ex); } catch { return UI.toast('Advanced config must be valid JSON', 'err'); } }
     try { await Api.post(`/admin/services/${code}/providers`, body); UI.closeModal(); UI.toast('Provider added'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Quick-pick from the known-provider directory: pre-fill label + driver + note.
+  pickKnownProvider() {
+    const i = val('p_known');
+    const note = $('p_known_note');
+    if (i === '') { if (note) note.textContent = ''; return; }
+    const p = (Actions._provDir || [])[Number(i)];
+    if (!p) return;
+    $('p_label').value = p.name;
+    if (p.suggested_driver) { $('p_driver').value = p.suggested_driver; Actions.providerDriverHint(); }
+    if (note) note.innerHTML = `${esc(p.notes || '')} ${p.website ? `· <a href="${esc(p.website)}" target="_blank">website</a>` : ''}
+      <br>For a config-driven (dynamic) provider, build the request/response mapping in <a href="#/aistudio">🤖 AI Integration Studio</a> from ${esc(p.name)}'s API docs, then paste it into Advanced config below.`;
   },
   providerDriverHint() {
     const d = val('p_driver');
