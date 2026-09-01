@@ -32,9 +32,6 @@ export async function commissionTds(userId: string, grossPaise: number): Promise
   return { code, rateBps: taxRate(code).rateBps, tdsPaise: computeTax(code, grossPaise) };
 }
 
-export function applyBps(amountPaise: number, bps: number): number {
-  return Math.round((amountPaise * bps) / 10000);
-}
 
 /** Split a GST-inclusive amount into taxable base + tax at the configured rate (with cap). */
 export function splitGstInclusive(inclusivePaise: number): { basePaise: number; gstPaise: number } {

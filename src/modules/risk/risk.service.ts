@@ -1,4 +1,3 @@
-import { PoolClient } from 'pg';
 import { query } from '../../../db';
 import { env } from '../../config/env';
 import { ApiError } from '../../utils/ApiError';
@@ -203,14 +202,3 @@ export async function assertNotDmtStructuring(p: {
   }
 }
 
-/** Log a generic risk flag (used by callers that detect their own signals). */
-export async function logRisk(
-  client: PoolClient,
-  p: { userId?: string; service?: string; kind: string; score: number; action: RiskAction; detail?: unknown },
-): Promise<void> {
-  await client.query(
-    `INSERT INTO risk_events (user_id, service_code, kind, score, action, detail)
-     VALUES ($1,$2,$3,$4,$5,$6)`,
-    [p.userId ?? null, p.service ?? null, p.kind, p.score, p.action, JSON.stringify(p.detail ?? {})],
-  );
-}
