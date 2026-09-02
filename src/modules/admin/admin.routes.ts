@@ -2136,6 +2136,44 @@ router.delete(
   }),
 );
 
+// ---- Admin broadcast: message a member audience over SMS/WhatsApp/Email ----
+const broadcastSchema = z.object({
+  subject: z.string().trim().max(120).optional(),
+  message: z.string().trim().min(3).max(1000),
+  channels: z.array(z.enum(['sms', 'whatsapp', 'email'])).min(1),
+  audience: z.enum(['all', 'retailer', 'distributor', 'master_distributor']).default('all'),
+});
+// Preview the recipient count for an audience before sending.
+router.get(
+  '/broadcasts/recipients',
+  validate(z.object({ audience: z.enum(['all', 'retailer', 'distributor', 'master_distributor']).default('all') }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { audience } = req.query as unknown as { audience: 'all' | 'retailer' | 'distributor' | 'master_distributor' };
+    const { countRecipients } = await import('../broadcast/broadcast.service');
+    res.json({ audience, count: await countRecipients(audience) });
+  }),
+);
+router.get(
+  '/broadcasts',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { listBroadcasts } = await import('../broadcast/broadcast.service');
+    res.json({ items: await listBroadcasts() });
+  }),
+);
+router.post(
+  '/broadcasts',
+  validate(broadcastSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof broadcastSchema>;
+    const { createBroadcast } = await import('../broadcast/broadcast.service');
+    const broadcast = await createBroadcast({ ...b, createdBy: req.user.id });
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'broadcast.send',
+      targetType: 'broadcast', targetId: broadcast.id, detail: { audience: b.audience, channels: b.channels, total: broadcast.total } });
+    res.status(201).json({ broadcast });
+  }),
+);
+
 // ---- Catalog: recharge operators + BBPS billers ---------------------------
 // Admin manages the recharge operator list and the biller directory without a
 // deploy; members' dropdowns read the enabled rows.

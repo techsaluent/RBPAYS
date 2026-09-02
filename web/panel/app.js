@@ -291,6 +291,7 @@ const NAV = [
   { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
   { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
   { key: 'disputes', label: 'Disputes', roles: ['admin', 'staff'], perm: 'disputes.manage', section: 'Risk & Ops' },
+  { key: 'broadcast', label: '📣 Broadcast', roles: ['admin', 'staff'], perm: 'broadcast.manage', section: 'Risk & Ops' },
   { key: 'audit', label: 'Audit Log', roles: ['admin'], section: 'Risk & Ops' },
   { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'staff', label: 'Staff & Roles', roles: ['admin'], section: 'Settings' },
@@ -1003,6 +1004,40 @@ const Screens = {
       <tbody>${rows || '<tr><td colspan=7 class=muted>No disputes found.</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Admin: broadcast a message to a member audience over SMS/WhatsApp/Email.
+  async broadcast() {
+    const hist = await Api.get('/admin/broadcasts').catch(() => ({ items: [] }));
+    const rows = (hist.items || []).map(b => `<tr>
+      <td class="muted" style="white-space:nowrap">${new Date(b.created_at).toLocaleString('en-IN')}</td>
+      <td>${esc((b.audience||'').replace(/_/g,' '))}</td>
+      <td>${(b.channels||[]).join(', ')}</td>
+      <td class="muted" style="max-width:280px;white-space:normal">${esc((b.subject?b.subject+' — ':'')+(b.message||'').slice(0,80))}</td>
+      <td class="right">${b.sent||0}/${b.total||0}${b.failed?` <span style="color:#c5221f">(${b.failed} failed)</span>`:''}</td>
+      <td>${UI.statusTag(b.status)}</td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel" style="max-width:640px"><h2>📣 Broadcast to members</h2>
+        <p class="muted">Send one message to a member audience over the channels you pick. Each channel needs its integration active under <a href="#/integrations">Integrations</a>. Sending runs in the background; counts update as it goes.</p>
+        <div class="field"><label>Audience</label>
+          <select id="bc_aud" onchange="Actions.bcCount()">
+            <option value="all">All members</option>
+            <option value="retailer">Retailers</option>
+            <option value="distributor">Distributors</option>
+            <option value="master_distributor">Master distributors</option>
+          </select>
+          <span class="muted" id="bc_count" style="font-size:12px;margin-left:8px"></span></div>
+        <div class="field"><label>Channels</label>
+          <label style="display:inline-flex;gap:6px;margin-right:16px"><input type="checkbox" id="bc_sms" checked> SMS</label>
+          <label style="display:inline-flex;gap:6px;margin-right:16px"><input type="checkbox" id="bc_wa"> WhatsApp</label>
+          <label style="display:inline-flex;gap:6px"><input type="checkbox" id="bc_email"> Email</label></div>
+        <div class="field"><label>Subject <span class="muted">(email only)</span></label><input id="bc_subject" maxlength="120" placeholder="e.g. Scheduled maintenance tonight"></div>
+        <div class="field"><label>Message</label><textarea id="bc_msg" rows="4" maxlength="1000" placeholder="Your message to members…"></textarea></div>
+        <button class="btn" onclick="Actions.sendBroadcast()">Send broadcast</button></div>
+      <div class="panel mt"><h2>Recent broadcasts</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>When</th><th>Audience</th><th>Channels</th><th>Message</th><th class="right">Sent</th><th>Status</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=6 class=muted>No broadcasts yet</td></tr>'}</tbody></table></div></div>`;
+    Actions.bcCount();
+  },
+
   // Incoming provider callbacks / webhooks log.
   async webhooks() {
     const d = await Api.get('/admin/provider-events?limit=100');
@@ -1412,6 +1447,27 @@ const Screens = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   disputeSearch() { Actions._dispSearch = ($('disp_q')||{}).value || ''; App.route(); },
+  async bcCount() {
+    const el = $('bc_count'); if (!el) return;
+    try { const d = await Api.get('/admin/broadcasts/recipients?audience=' + val('bc_aud')); el.textContent = `→ ${d.count} active member(s)`; }
+    catch { el.textContent = ''; }
+  },
+  async sendBroadcast() {
+    const channels = [];
+    if ($('bc_sms').checked) channels.push('sms');
+    if ($('bc_wa').checked) channels.push('whatsapp');
+    if ($('bc_email').checked) channels.push('email');
+    const message = val('bc_msg').trim();
+    if (!channels.length) return UI.toast('Pick at least one channel', 'err');
+    if (message.length < 3) return UI.toast('Enter a message', 'err');
+    const aud = val('bc_aud');
+    if (!confirm(`Send this message to the "${aud.replace(/_/g,' ')}" audience over ${channels.join(', ')}? This messages real members.`)) return;
+    try {
+      const d = await Api.post('/admin/broadcasts', { audience: aud, channels, subject: val('bc_subject').trim() || undefined, message });
+      UI.toast(`Broadcast queued to ${d.broadcast.total} member(s) — sending in the background`);
+      App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
   // Full dispute detail: thread + reply (+ resolve/refund/print for staff).
   async viewDispute(id, isAdmin) {
     Actions._dispCtx = { id, isAdmin };
