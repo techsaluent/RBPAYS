@@ -84,6 +84,15 @@
     main { padding:22px 26px; }
     .topbar { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; gap:12px; flex-wrap:wrap; }
     .topbar h1 { font-size:20px; margin:0; }
+    .nbell { position:relative; }
+    .nbadge { position:absolute; top:-6px; right:-6px; min-width:17px; height:17px; padding:0 4px; border-radius:9px;
+      background:var(--err); color:#fff; font-size:10px; font-weight:800; display:grid; place-items:center; line-height:1; }
+    .ninbox { display:flex; flex-direction:column; gap:8px; max-height:60vh; overflow:auto; }
+    .nitem { border:1px solid var(--line); border-radius:10px; padding:11px 13px; background:var(--card); }
+    .nitem.unread { border-left:3px solid var(--brand); background:color-mix(in srgb,var(--brand) 5%, var(--card)); }
+    .nitem .nt { font-weight:700; font-size:13.5px; display:flex; justify-content:space-between; gap:10px; }
+    .nitem .nb { color:var(--muted); font-size:13px; margin-top:3px; }
+    .nitem .nw { color:var(--muted); font-size:11px; white-space:nowrap; font-weight:500; }
     .who { display:flex; align-items:center; gap:14px; font-size:13px; color:var(--muted); }
     .pill { background:#eef1f8; border-radius:999px; padding:5px 12px; font-weight:600; color:var(--ink); }
     .pill.bal { background:#e6f0ff; color:var(--brand); }
@@ -335,6 +344,7 @@
           <span class="pill bal" id="wallet-pill">₹0.00</span>
           <span id="who-name"></span>
           <span class="pill" id="who-role"></span>
+          <button class="btn ghost sm nbell" id="notif-bell" title="Notifications" onclick="Actions.openInbox()">🔔<span id="notif-badge" class="nbadge" hidden></span></button>
           <button class="btn ghost sm" id="theme-toggle" title="Toggle light / dark">◐</button>
           <button class="btn ghost sm" onclick="Auth.logout()">Logout</button>
         </div>

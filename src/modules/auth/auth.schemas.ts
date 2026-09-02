@@ -30,6 +30,8 @@ export const signupSchema = z.object({
   sponsor: z.string().trim().max(120).optional(),
   // 6-digit mobile OTP; required only when signup OTP is enabled by the admin.
   otp: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit OTP').optional(),
+  // Optional referral code (Refer & Earn).
+  ref: z.string().trim().max(16).optional(),
 });
 
 // Step 1 of OTP signup: request a code for a mobile (email optional).

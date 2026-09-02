@@ -129,6 +129,25 @@ export async function sendEmail(to: string, subject: string, text: string): Prom
  * channels reported success. Missing recipient / inactive integration for a
  * channel is silently skipped. Never throws.
  */
+/**
+ * Record an in-app notification for a member's inbox. Best-effort — a logging
+ * failure must never affect the caller (a transaction, KYC review, etc.).
+ */
+export async function addNotification(
+  userId: string,
+  type: 'txn' | 'kyc' | 'balance' | 'broadcast' | 'info',
+  title: string,
+  body?: string,
+): Promise<void> {
+  try {
+    await query('INSERT INTO notifications (user_id, type, title, body) VALUES ($1,$2,$3,$4)', [
+      userId, type, title, body ?? null,
+    ]);
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'addNotification failed');
+  }
+}
+
 export async function dispatch(opts: {
   phone?: string | null;
   email?: string | null;

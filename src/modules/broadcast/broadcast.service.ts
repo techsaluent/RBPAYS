@@ -51,6 +51,13 @@ export async function createBroadcast(input: BroadcastInput) {
 export async function runBroadcast(id: string, input: BroadcastInput): Promise<void> {
   try {
     await query("UPDATE broadcasts SET status = 'sending' WHERE id = $1", [id]);
+    // In-app inbox: one entry per targeted member (independent of channels).
+    await query(
+      `INSERT INTO notifications (user_id, type, title, body)
+         SELECT id, 'broadcast', COALESCE($2,'Announcement'), $3
+           FROM users WHERE status = 'active' AND role = ANY($1)`,
+      [audienceRoles(input.audience), input.subject ?? null, input.message],
+    ).catch((err) => logger.warn({ err: (err as Error).message }, 'broadcast inbox insert failed'));
     const { rows } = await query<{ phone: string | null; email: string | null }>(
       "SELECT phone, email FROM users WHERE status = 'active' AND role = ANY($1)",
       [audienceRoles(input.audience)],

@@ -12,6 +12,7 @@ import {
 import { hashPassword, verifyPassword } from '../../utils/password';
 import { generateTotpSecret, otpauthUri, verifyTotp } from '../../utils/totp';
 import { dispatch } from '../notify/notify.service';
+import { generateReferralCode, resolveReferrer, linkReferral } from '../rewards/referral.service';
 import { LoginInput, SignupInput } from './auth.schemas';
 
 export interface PublicUser {
@@ -175,8 +176,16 @@ export async function signup(input: SignupInput) {
     );
     const user = rows[0];
 
-    // Every user gets a wallet on signup.
+    // Every user gets a wallet + a referral code on signup.
     await client.query('INSERT INTO wallets (user_id) VALUES ($1)', [user.id]);
+    await client.query('UPDATE users SET referral_code = $2 WHERE id = $1', [user.id, generateReferralCode()]);
+
+    // Referral link: if a valid referral code was supplied, open a pending
+    // referral so the referrer earns a bonus on this member's first success.
+    if (input.ref) {
+      const referrerId = await resolveReferrer(input.ref);
+      if (referrerId) await linkReferral(client, user.id, referrerId);
+    }
 
     const refresh_token = await issueRefreshToken(client, user.id);
     return { user, ...toTokens(user), refresh_token };
