@@ -2174,6 +2174,78 @@ router.post(
   }),
 );
 
+// ---- Rewards: referral report + milestone/prize-draw campaigns -------------
+router.get(
+  '/referrals',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      `SELECT r.id, r.status, r.bonus_paise, r.created_at, r.rewarded_at,
+              ru.full_name AS referrer_name, ru.phone AS referrer_phone,
+              nu.full_name AS referred_name, nu.phone AS referred_phone
+         FROM referrals r
+         JOIN users ru ON ru.id = r.referrer_id
+         JOIN users nu ON nu.id = r.referred_id
+        ORDER BY r.created_at DESC LIMIT 200`,
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const campaignSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  metric: z.enum(['count', 'gtv']),
+  target: z.coerce.number().positive(),                 // count, or rupees for gtv
+  from_date: z.string().trim(),
+  to_date: z.string().trim(),
+  reward_type: z.enum(['cashback', 'draw']),
+  reward: z.coerce.number().min(0),                     // rupees per qualifier / winner
+  winners: z.coerce.number().int().min(1).max(1000).default(1),
+});
+router.get(
+  '/campaigns',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { listCampaigns } = await import('../rewards/campaign.service');
+    res.json({ items: await listCampaigns() });
+  }),
+);
+router.post(
+  '/campaigns',
+  validate(campaignSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof campaignSchema>;
+    const { createCampaign } = await import('../rewards/campaign.service');
+    // gtv target + rewards are entered in rupees; store paise.
+    const c = await createCampaign({
+      name: b.name, metric: b.metric,
+      target: b.metric === 'gtv' ? Math.round(b.target * 100) : Math.round(b.target),
+      from_date: b.from_date, to_date: b.to_date,
+      reward_type: b.reward_type, reward_paise: Math.round(b.reward * 100), winners: b.winners,
+      createdBy: req.user.id,
+    });
+    res.status(201).json({ campaign: c });
+  }),
+);
+router.get(
+  '/campaigns/:id/eligible',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { qualifiers } = await import('../rewards/campaign.service');
+    const items = await qualifiers(req.params.id);
+    res.json({ count: items.length, items });
+  }),
+);
+router.post(
+  '/campaigns/:id/award',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { awardCampaign } = await import('../rewards/campaign.service');
+    const winners = await awardCampaign(req.params.id);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'campaign.award',
+      targetType: 'campaign', targetId: req.params.id, detail: { winners: winners.length } });
+    res.json({ winners });
+  }),
+);
+
 // ---- Catalog: recharge operators + BBPS billers ---------------------------
 // Admin manages the recharge operator list and the biller directory without a
 // deploy; members' dropdowns read the enabled rows.

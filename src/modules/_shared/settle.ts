@@ -7,6 +7,8 @@ import { apply194N } from '../tax/tax.service';
 import { postJournal, JournalLine } from './ledger';
 import { ProviderResult } from '../../providers/types';
 import { notifyTxn } from '../notify/alerts';
+import { addNotification } from '../notify/notify.service';
+import { rewardReferralOnFirstSuccess } from '../rewards/referral.service';
 
 // Cash-out inflow services accumulate in the retailer's AePS Settlement
 // wallet (per the multi-wallet model), not the pre-funded Main wallet.
@@ -60,6 +62,7 @@ export async function settleByReference(
   result: ProviderResult,
 ): Promise<boolean> {
   let notify = null as null | { userId: string; service: string; status: string; amountPaise: number };
+  let referralReward = null as null | { referrerId: string; bonusPaise: number };
   const ok = await withTransaction(async (client) => {
     const { rows } = await client.query<TxnRow>(
       'SELECT * FROM transactions WHERE reference = $1 FOR UPDATE',
@@ -160,6 +163,8 @@ export async function settleByReference(
           entries: txn.commission_breakdown,
         });
       }
+      // Referral: reward the referrer on this member's first successful txn.
+      referralReward = await rewardReferralOnFirstSuccess(client, txn.user_id);
     }
 
     if (result.status === 'success' || result.status === 'failed') {
@@ -170,5 +175,10 @@ export async function settleByReference(
 
   // Member SMS alert (best-effort, after commit) for a terminal outcome.
   if (notify) void notifyTxn(notify.userId, { ...notify, reference });
+  // Referral bonus notification to the referrer (best-effort, after commit).
+  if (referralReward) {
+    void addNotification(referralReward.referrerId, 'info', 'Referral bonus earned! 🎁',
+      `You earned ₹${(referralReward.bonusPaise / 100).toFixed(2)} — your referral just made their first transaction.`);
+  }
   return ok;
 }

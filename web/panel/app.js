@@ -261,6 +261,7 @@ const NAV = [
   { key: 'addmoney', label: 'Add Money', roles: NETWORK_ROLES },
   { key: 'txns', label: 'Transactions', roles: NETWORK_ROLES },
   { key: 'myearnings', label: 'My Earnings', roles: NETWORK_ROLES },
+  { key: 'rewards', label: '🎁 Refer & Earn', roles: NETWORK_ROLES },
   { key: 'mydisputes', label: 'My Disputes', roles: NETWORK_ROLES },
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
@@ -292,6 +293,7 @@ const NAV = [
   { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
   { key: 'disputes', label: 'Disputes', roles: ['admin', 'staff'], perm: 'disputes.manage', section: 'Risk & Ops' },
   { key: 'broadcast', label: '📣 Broadcast', roles: ['admin', 'staff'], perm: 'broadcast.manage', section: 'Risk & Ops' },
+  { key: 'adminrewards', label: '🎁 Rewards', roles: ['admin', 'staff'], perm: 'rewards.manage', section: 'Risk & Ops' },
   { key: 'audit', label: 'Audit Log', roles: ['admin'], section: 'Risk & Ops' },
   { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'staff', label: 'Staff & Roles', roles: ['admin'], section: 'Settings' },
@@ -1479,6 +1481,38 @@ const Screens = {
       App.route();
     } catch (err) { UI.toast(err.message, 'err'); }
   },
+  // ----- reward campaigns -----
+  async createCampaign() {
+    const body = {
+      name: val('cm_name').trim(), metric: val('cm_metric'),
+      target: +val('cm_target'), from_date: val('cm_from'), to_date: val('cm_to'),
+      reward_type: val('cm_type'), reward: +val('cm_reward'), winners: +val('cm_winners') || 1,
+    };
+    if (!body.name || !(body.target > 0)) return UI.toast('Enter a name and a positive target', 'err');
+    try { await Api.post('/admin/campaigns', body); UI.toast('Campaign created'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async campEligible(id) {
+    try {
+      const d = await Api.get(`/admin/campaigns/${id}/eligible`);
+      const rows = d.items.slice(0, 60).map(x => `<tr><td>${esc(x.full_name)}</td><td class="right">${x.value.toLocaleString('en-IN')}</td></tr>`).join('');
+      UI.modal(`<h3>Eligible members (${d.count})</h3>
+        <div class="tbl-wrap" style="max-height:50vh;overflow:auto"><table><thead><tr><th>Member</th><th class="right">Value</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=2 class=muted>None qualified yet</td></tr>'}</tbody></table></div>
+        <div class="row mt" style="justify-content:flex-end"><button class="btn sm" onclick="UI.closeModal()">Close</button></div>`);
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async awardCampaign(id, type) {
+    if (!confirm(type==='draw' ? 'Run the lucky draw and credit the winners now?' : 'Pay cashback to every qualifier now? This credits real wallets.')) return;
+    try {
+      const d = await Api.post(`/admin/campaigns/${id}/award`, {});
+      UI.toast(`Awarded ${d.winners.length} member(s)`);
+      UI.modal(`<h3>🎉 ${type==='draw'?'Draw winners':'Cashback paid'}</h3>
+        <div class="tbl-wrap" style="max-height:50vh;overflow:auto"><table><thead><tr><th>Member</th><th class="right">Reward</th></tr></thead>
+        <tbody>${d.winners.map(w=>`<tr><td>${esc(w.full_name)}</td><td class="right">${money(w.reward_paise/100)}</td></tr>`).join('')}</tbody></table></div>
+        <div class="row mt" style="justify-content:flex-end"><button class="btn sm" onclick="UI.closeModal();App.route()">Done</button></div>`);
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
   // Full dispute detail: thread + reply (+ resolve/refund/print for staff).
   async viewDispute(id, isAdmin) {
     Actions._dispCtx = { id, isAdmin };
@@ -1624,6 +1658,9 @@ const Screens = {
         ${field('dispute_sla_hours','Dispute SLA (hours)','24')}
         <p class="muted mt"><b>Auto-reconciliation</b> — automatically fail &amp; refund transactions stuck in <i>pending</i> for this many hours (the provider never sent a final status). <b>0</b> = off. Runs in the background; you can also sweep manually under Reconciliation.</p>
         ${field('auto_recon_hours','Auto-recon after (hours, 0 = off)','0')}
+        <p class="muted mt"><b>Refer &amp; Earn</b> — bonus (₹) credited to a member when someone they referred makes their first successful transaction.</p>
+        <div class="field"><label><input type="checkbox" id="ws_referral_enabled" ${s.referral_enabled!=='false'?'checked':''}> Referral program enabled</label></div>
+        ${field('referral_bonus','Referral bonus (₹)','50')}
         <h2 class="mt">Webhooks &amp; callbacks</h2>
         <p class="muted">Give these callback URLs to your payout / DMT / recharge provider. The aggregator secret below signs incoming callbacks (HMAC-SHA256).</p>
         <div class="field"><label>Aggregator callback URL</label><input value="${esc(location.origin)}/api/v1/webhooks/aggregator" readonly onclick="this.select()"></div>
@@ -1852,6 +1889,93 @@ const Screens = {
   },
 
   // Member: my earnings + activity analytics.
+  // Member: Refer & Earn — referral code/link + active reward campaigns.
+  async rewards() {
+    const [r, camps] = await Promise.all([
+      Api.get('/rewards/referral').catch(() => null),
+      Api.get('/rewards/campaigns').catch(() => ({ items: [] })),
+    ]);
+    const link = r && r.code ? `${location.origin}/panel/?signup=1&ref=${encodeURIComponent(r.code)}` : '';
+    const refRows = r && r.items.length ? r.items.map(x => `<tr>
+      <td>${esc(x.full_name)}</td><td>${UI.statusTag(x.status)}</td>
+      <td class="right">${x.bonus_paise?money(x.bonus_paise/100):'—'}</td>
+      <td class="muted">${new Date(x.created_at).toLocaleDateString('en-IN')}</td></tr>`).join('') : '';
+    const campRows = (camps.items || []).map(c => {
+      const goal = c.metric === 'gtv' ? c.target/100 : c.target;
+      const mine = c.metric === 'gtv' ? c.my_value/100 : c.my_value;
+      const pct = Math.min(100, Math.round((mine/goal)*100) || 0);
+      const unit = c.metric === 'gtv' ? '₹' : '';
+      return `<div class="panel mt"><div class="row" style="justify-content:space-between"><b>${esc(c.name)}</b>
+        <span class="tag ${c.reward_type==='draw'?'':'active'}">${c.reward_type==='draw'?'🎲 lucky draw':'💸 cashback'} ${money(c.reward_paise/100)}</span></div>
+        <p class="muted" style="font-size:13px;margin:6px 0">Target: ${c.metric==='gtv'?'volume':'transactions'} ${unit}${goal.toLocaleString('en-IN')} · by ${c.to_date}</p>
+        <div style="background:#eef1f8;border-radius:6px;height:12px;overflow:hidden"><div style="background:linear-gradient(90deg,var(--brand),var(--brand-2));height:12px;width:${pct}%"></div></div>
+        <p class="muted" style="font-size:12px;margin-top:5px">You: ${unit}${mine.toLocaleString('en-IN')} / ${unit}${goal.toLocaleString('en-IN')} (${pct}%)${pct>=100?' — 🎉 qualified!':''}</p></div>`;
+    }).join('');
+    $('view').innerHTML = `
+      <div class="panel"><h2>🎁 Refer &amp; Earn</h2>
+        ${r ? `<p class="muted">Share your code — when someone signs up with it and makes their first transaction, you earn <b>${money(r.bonus_paise/100)}</b> in your wallet.</p>
+        <div class="grid cards">
+          <div class="card"><div class="k">Your referral code</div><div class="v" style="font-size:22px;letter-spacing:2px">${esc(r.code||'—')}</div></div>
+          <div class="card"><div class="k">Referred</div><div class="v">${r.total}</div></div>
+          <div class="card"><div class="k">Earned</div><div class="v">${money(r.earned_paise/100)}</div></div>
+        </div>
+        <div class="field mt"><label>Your invite link</label>
+          <div class="row" style="gap:8px"><input value="${esc(link)}" readonly onclick="this.select()" style="flex:1">
+          <button class="btn sm" onclick="Actions.copyText('${esc(link)}')">Copy</button></div></div>
+        <div class="tbl-wrap mt"><table><thead><tr><th>Referred member</th><th>Status</th><th class="right">Bonus</th><th>When</th></tr></thead>
+        <tbody>${refRows || '<tr><td colspan=4 class=muted>No referrals yet — share your link!</td></tr>'}</tbody></table></div>`
+        : '<p class="muted">Referral program unavailable.</p>'}
+      </div>
+      ${(camps.items||[]).length ? `<h2 class="mt" style="font-size:16px">🏆 Active reward campaigns</h2>${campRows}` : ''}`;
+  },
+
+  // Admin: rewards desk — referral report + reward campaigns (cashback / draw).
+  async adminrewards() {
+    const [refs, camps] = await Promise.all([
+      Api.get('/admin/referrals').catch(() => ({ items: [] })),
+      Api.get('/admin/campaigns').catch(() => ({ items: [] })),
+    ]);
+    const rr = (refs.items || []).slice(0, 50).map(x => `<tr>
+      <td>${esc(x.referrer_name)}<div class="muted" style="font-size:11px">${esc(x.referrer_phone||'')}</div></td>
+      <td>${esc(x.referred_name)}<div class="muted" style="font-size:11px">${esc(x.referred_phone||'')}</div></td>
+      <td>${UI.statusTag(x.status)}</td><td class="right">${x.bonus_paise?money(x.bonus_paise/100):'—'}</td>
+      <td class="muted">${new Date(x.created_at).toLocaleDateString('en-IN')}</td></tr>`).join('');
+    const cr = (camps.items || []).map(c => `<tr>
+      <td>${esc(c.name)}</td>
+      <td>${c.metric==='gtv'?'GTV ₹'+(c.target/100).toLocaleString('en-IN'):c.target+' txns'}</td>
+      <td>${c.reward_type==='draw'?'🎲 draw ×'+c.winners:'💸 cashback'} ${money(c.reward_paise/100)}</td>
+      <td class="muted">${c.from_date} → ${c.to_date}</td>
+      <td>${UI.statusTag(c.status)}</td>
+      <td>${c.status==='active'
+        ? `<button class="btn sm ghost" onclick="Actions.campEligible('${c.id}')">Eligible</button>
+           <button class="btn sm" onclick="Actions.awardCampaign('${c.id}','${c.reward_type}')">${c.reward_type==='draw'?'Draw winners':'Pay cashback'}</button>`
+        : `${c.awarded_count||0} awarded`}</td></tr>`).join('');
+    const today = new Date().toISOString().slice(0,10);
+    $('view').innerHTML = `
+      <div class="panel"><h2>🎁 Rewards</h2>
+        <p class="muted">Referral bonus is set under <a href="#/website">Website settings</a>. Create milestone or lucky-draw campaigns below.</p></div>
+      <div class="panel mt"><h2>Create reward campaign</h2>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <div class="field" style="flex:2;min-width:200px"><label>Name</label><input id="cm_name" placeholder="Diwali top retailers"></div>
+          <div class="field"><label>Metric</label><select id="cm_metric"><option value="count">Txn count</option><option value="gtv">GTV (₹)</option></select></div>
+          <div class="field"><label>Target</label><input id="cm_target" type="number" min="1" placeholder="100"></div>
+        </div>
+        <div class="row" style="gap:10px;flex-wrap:wrap">
+          <div class="field"><label>From</label><input id="cm_from" type="date" value="${today}"></div>
+          <div class="field"><label>To</label><input id="cm_to" type="date" value="${today}"></div>
+          <div class="field"><label>Reward type</label><select id="cm_type" onchange="document.getElementById('cm_winwrap').style.display=this.value==='draw'?'':'none'"><option value="cashback">Cashback (all qualifiers)</option><option value="draw">Lucky draw</option></select></div>
+          <div class="field"><label>Reward (₹)</label><input id="cm_reward" type="number" min="0" placeholder="500"></div>
+          <div class="field" id="cm_winwrap" style="display:none"><label>Winners</label><input id="cm_winners" type="number" min="1" value="1"></div>
+        </div>
+        <button class="btn" onclick="Actions.createCampaign()">Create campaign</button></div>
+      <div class="panel mt"><h2>Campaigns</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Name</th><th>Target</th><th>Reward</th><th>Window</th><th>Status</th><th></th></tr></thead>
+        <tbody>${cr || '<tr><td colspan=6 class=muted>No campaigns yet</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><h2>Referrals</h2><div class="tbl-wrap"><table>
+        <thead><tr><th>Referrer</th><th>Referred</th><th>Status</th><th class="right">Bonus</th><th>When</th></tr></thead>
+        <tbody>${rr || '<tr><td colspan=5 class=muted>No referrals yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
   async myearnings() {
     const days = Actions._anDays || 30;
     const d = await Api.get('/analytics/me?days=' + days);
@@ -2640,7 +2764,7 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours','referral_bonus'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
@@ -2648,6 +2772,7 @@ const Actions = {
     values['notify_txn_sms'] = $('ws_notify_txn_sms').checked ? 'true' : 'false';
     values['notify_low_balance'] = $('ws_notify_low_balance').checked ? 'true' : 'false';
     values['notify_kyc'] = $('ws_notify_kyc').checked ? 'true' : 'false';
+    values['referral_enabled'] = $('ws_referral_enabled').checked ? 'true' : 'false';
     values['notify_sms'] = $('ws_notify_sms').checked ? 'true' : 'false';
     values['notify_whatsapp'] = $('ws_notify_whatsapp').checked ? 'true' : 'false';
     values['notify_email'] = $('ws_notify_email').checked ? 'true' : 'false';
