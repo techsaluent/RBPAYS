@@ -1,5 +1,5 @@
 import { query } from '../../../db';
-import { dispatch, Channel } from './notify.service';
+import { dispatch, addNotification, Channel } from './notify.service';
 import { logger } from '../../config/logger';
 
 /**
@@ -59,13 +59,15 @@ export async function notifyTxn(
 ): Promise<void> {
   try {
     if (opts.status !== 'success' && opts.status !== 'failed') return;
-    if (!(await settingOn('notify_txn_sms'))) return;
     const brand = await brandName();
     const svc = opts.service.replace(/_/g, ' ');
     const text =
       opts.status === 'success'
         ? `${brand}: ${svc} of ${rupees(opts.amountPaise)} SUCCESS. Ref ${opts.reference}.`
         : `${brand}: ${svc} of ${rupees(opts.amountPaise)} FAILED and refunded. Ref ${opts.reference}.`;
+    // In-app inbox entry always; external channels only if the event is enabled.
+    await addNotification(userId, 'txn', `${svc} ${opts.status}`, text);
+    if (!(await settingOn('notify_txn_sms'))) return;
     await alert(userId, `${brand} transaction ${opts.status}`, text);
   } catch (err) {
     logger.warn({ err: (err as Error).message }, 'notifyTxn failed');
@@ -75,11 +77,13 @@ export async function notifyTxn(
 /** Notify the member once when a debit takes their balance below the threshold. */
 export async function notifyLowBalance(userId: string, balanceBeforePaise: number, balanceAfterPaise: number): Promise<void> {
   try {
-    if (!(await settingOn('notify_low_balance'))) return;
     const threshold = (await settingNum('low_balance_threshold', 500)) * 100;
     if (!(balanceBeforePaise >= threshold && balanceAfterPaise < threshold)) return; // only on crossing
     const brand = await brandName();
-    await alert(userId, `${brand} low balance`, `${brand}: Low wallet balance ${rupees(balanceAfterPaise)}. Please top up to keep transacting.`);
+    const text = `${brand}: Low wallet balance ${rupees(balanceAfterPaise)}. Please top up to keep transacting.`;
+    await addNotification(userId, 'balance', 'Low wallet balance', text);
+    if (!(await settingOn('notify_low_balance'))) return;
+    await alert(userId, `${brand} low balance`, text);
   } catch (err) {
     logger.warn({ err: (err as Error).message }, 'notifyLowBalance failed');
   }
@@ -88,7 +92,6 @@ export async function notifyLowBalance(userId: string, balanceBeforePaise: numbe
 /** Notify the member when their KYC status changes (verified / rejected). */
 export async function notifyKyc(userId: string, status: string): Promise<void> {
   try {
-    if (!(await settingOn('notify_kyc'))) return;
     const brand = await brandName();
     const msg =
       status === 'verified'
@@ -96,6 +99,8 @@ export async function notifyKyc(userId: string, status: string): Promise<void> {
         : status === 'rejected'
           ? 'Your KYC was REJECTED. Please re-submit correct documents.'
           : `Your KYC status is now ${status}.`;
+    await addNotification(userId, 'kyc', `KYC ${status}`, msg);
+    if (!(await settingOn('notify_kyc'))) return;
     await alert(userId, `${brand} KYC ${status}`, `${brand}: ${msg}`);
   } catch (err) {
     logger.warn({ err: (err as Error).message }, 'notifyKyc failed');

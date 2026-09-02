@@ -377,6 +377,8 @@ const App = {
       return `${head}<a href="#/${i.key}" data-k="${i.key}">${i.label}</a>`;
     }).join('');
     await App.refreshWallet();
+    App.refreshNotifBadge();
+    if (!App._notifTimer) App._notifTimer = setInterval(App.refreshNotifBadge, 60000);
     window.onhashchange = App.route;
     if (!location.hash) location.hash = '#/dashboard';
     App.route();
@@ -384,6 +386,15 @@ const App = {
   async refreshWallet() {
     try { const w = await Api.get('/wallet'); $('wallet-pill').textContent = money(w.wallet.balance); }
     catch { $('wallet-pill').textContent = '—'; }
+  },
+  async refreshNotifBadge() {
+    const badge = $('notif-badge'); if (!badge) return;
+    try {
+      const d = await Api.get('/notifications/unread-count');
+      const n = d.count || 0;
+      badge.textContent = n > 99 ? '99+' : String(n);
+      badge.hidden = n === 0;
+    } catch { badge.hidden = true; }
   },
   route() {
     const key = (location.hash.replace('#/', '') || 'dashboard');
@@ -2171,6 +2182,29 @@ const Actions = {
     } catch (err) { UI.toast(err.message, 'err'); }
   },
   // Open an authed HTML document (statement / passbook) in a new window.
+  // Notification inbox (bell dropdown as a modal).
+  async openInbox() {
+    UI.modal(`<div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">🔔 Notifications</h3>
+      <button class="btn sm ghost" onclick="Actions.markAllNotifs()">Mark all read</button></div>
+      <div id="ninbox_body" class="ninbox mt"><p class="muted">Loading…</p></div>
+      <div class="row mt" style="justify-content:flex-end"><button class="btn sm" onclick="UI.closeModal()">Close</button></div>`);
+    try {
+      const d = await Api.get('/notifications?limit=40');
+      const body = $('ninbox_body'); if (!body) return;
+      if (!d.items.length) { body.innerHTML = '<p class="muted">No notifications yet.</p>'; return; }
+      const ico = { txn:'💳', kyc:'🪪', balance:'⚠️', broadcast:'📣', info:'🔔' };
+      body.innerHTML = d.items.map(n => `<div class="nitem ${n.read_at?'':'unread'}">
+        <div class="nt"><span>${ico[n.type]||'🔔'} ${esc(n.title)}</span><span class="nw">${new Date(n.created_at).toLocaleString('en-IN')}</span></div>
+        ${n.body?`<div class="nb">${esc(n.body)}</div>`:''}</div>`).join('');
+      // Opening the inbox marks everything read.
+      Actions.markAllNotifs(true);
+    } catch (err) { const b=$('ninbox_body'); if (b) b.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
+  },
+  async markAllNotifs(silent) {
+    try { await Api.post('/notifications/read-all', {}); App.refreshNotifBadge();
+      if (!silent) { document.querySelectorAll('#ninbox_body .nitem').forEach(x=>x.classList.remove('unread')); UI.toast('All marked read'); } }
+    catch (err) { if (!silent) UI.toast(err.message, 'err'); }
+  },
   async openDoc(path) {
     try { const res = await Api.raw(path); const html = await res.text(); const w = window.open('', '_blank'); w.document.write(html); w.document.close(); }
     catch (err) { UI.toast(err.message, 'err'); }
