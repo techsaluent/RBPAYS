@@ -3532,7 +3532,7 @@ const Actions = {
     if (id) { const d = await Api.get('/admin/provider-connections'); c = (d.items || []).find(x => x.connection_id === id) || c; }
     const activeCodes = new Set((c.services || []).map(s => s.service_code));
     const dopt = ['sandbox', 'eko', 'aeronpay', 'razorpay', 'aggregator', 'generic', 'dynamic'].map(dv => `<option ${c.driver === dv ? 'selected' : ''}>${dv}</option>`).join('');
-    const diropt = ['<option value="">— start from a known provider —</option>'].concat(dir.map(p => `<option value="${esc(p.suggested_driver || '')}" data-label="${esc(p.name)}">${esc(p.name)}${p.services ? ' (' + esc(p.services) + ')' : ''}</option>`)).join('');
+    const diropt = ['<option value="">— start from a known provider —</option>'].concat(dir.map(p => `<option value="${esc(p.key)}">${esc(p.name)}${p.services ? ' — ' + esc(p.services) : ''}</option>`)).join('');
     const svcBoxes = svcList.map(s => `<label style="display:inline-flex;gap:6px;align-items:center;margin:3px 12px 3px 0;font-size:13px"><input type="checkbox" id="pc_svc_${s.code}" ${activeCodes.has(s.code) ? 'checked' : ''}> ${esc(s.code)}</label>`).join('');
     const keepPh = id ? 'leave blank to keep' : '';
     UI.modal(`<h3>${id ? 'Edit' : 'New'} provider connection</h3>
@@ -3552,11 +3552,15 @@ const Actions = {
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
   },
   pcPrefill() {
-    const sel = $('pc_dir'); if (!sel) return;
-    const opt = sel.options[sel.selectedIndex];
-    if (sel.value && $('pc_driver')) { try { $('pc_driver').value = sel.value; } catch (e) { /* driver not in list */ } }
-    const label = opt ? opt.getAttribute('data-label') : '';
-    if (label && $('pc_label') && !$('pc_label').value) $('pc_label').value = label;
+    const sel = $('pc_dir'); if (!sel || !sel.value) return;
+    const p = (Actions._pcDir || []).find(x => x.key === sel.value);
+    if (!p) return;
+    if ($('pc_label')) $('pc_label').value = p.name || '';
+    if ($('pc_driver') && p.suggested_driver) { try { $('pc_driver').value = p.suggested_driver; } catch (e) { /* driver not in list */ } }
+    if ($('pc_base_url') && p.base_url) $('pc_base_url').value = p.base_url;
+    // Auto-tick the services this provider powers.
+    (Actions._pcServices || []).forEach(s => { const el = $('pc_svc_' + s.code); if (el) el.checked = false; });
+    (p.default_services || []).forEach(code => { const el = $('pc_svc_' + code); if (el) el.checked = true; });
   },
   async saveConnection(id) {
     const codes = (Actions._pcServices || []).map(s => s.code).filter(code => { const el = $('pc_svc_' + code); return el && el.checked; });
