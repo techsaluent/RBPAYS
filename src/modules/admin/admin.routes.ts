@@ -1401,6 +1401,48 @@ router.delete(
 );
 
 // ---------------------------------------------------------------------
+// Account deletion requests (self-serve, actioned by an admin)
+// ---------------------------------------------------------------------
+router.get(
+  '/deletion-requests',
+  asyncHandler(async (req: Request, res: Response) => {
+    const status = typeof req.query.status === 'string' ? req.query.status : 'pending';
+    const { rows } = await query(
+      `SELECT d.id, d.user_id, d.reason, d.status, d.admin_note, d.created_at, d.processed_at,
+              u.full_name, u.email, u.phone, u.username, u.role
+         FROM account_deletion_requests d JOIN users u ON u.id = d.user_id
+        WHERE ($1 = 'all' OR d.status = $1)
+        ORDER BY d.created_at DESC LIMIT 200`,
+      [status],
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const processDeletionSchema = z.object({
+  action: z.enum(['processed', 'rejected']),
+  note: z.string().trim().max(1000).optional(),
+});
+
+router.post(
+  '/deletion-requests/:id/process',
+  validate(processDeletionSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof processDeletionSchema>;
+    const adminId = req.user?.id ?? null;
+    const { rows } = await query(
+      `UPDATE account_deletion_requests
+          SET status = $1, admin_note = $2, processed_at = now(), processed_by = $3
+        WHERE id = $4 AND status = 'pending'
+       RETURNING id, status, admin_note, processed_at`,
+      [b.action, b.note ?? '', adminId, req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Request not found or already processed');
+    res.json({ request: rows[0] });
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop)
 // ---------------------------------------------------------------------
 router.get(

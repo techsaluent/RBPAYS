@@ -34,6 +34,18 @@ export async function updateMe(req: Request, res: Response): Promise<void> {
   res.status(200).json({ user });
 }
 
+export async function myDeletionRequest(req: Request, res: Response): Promise<void> {
+  if (!req.user) throw ApiError.unauthorized();
+  const request = await authService.myDeletionRequest(req.user.id);
+  res.status(200).json({ request });
+}
+
+export async function requestAccountDeletion(req: Request, res: Response): Promise<void> {
+  if (!req.user) throw ApiError.unauthorized();
+  const { request, alreadyOpen } = await authService.createDeletionRequest(req.user.id, req.body.reason ?? '');
+  res.status(alreadyOpen ? 200 : 201).json({ request, alreadyOpen });
+}
+
 export async function me(req: Request, res: Response): Promise<void> {
   if (!req.user) throw ApiError.unauthorized();
   const user = await authService.getUserById(req.user.id);

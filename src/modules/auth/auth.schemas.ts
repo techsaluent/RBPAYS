@@ -94,5 +94,10 @@ export const refreshSchema = z.object({
   refresh_token: z.string().min(1),
 });
 
+// Self-serve account deletion request (optional reason).
+export const deletionRequestSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
+});
+
 export type SignupInput = z.infer<typeof signupSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
