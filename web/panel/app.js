@@ -1718,7 +1718,8 @@ const Screens = {
       ['vis_page_grievance', 'Grievance Redressal'], ['vis_page_faq', 'FAQ'],
       ['vis_page_developers', 'Developers / API'],
       ['vis_page_terms', 'Terms &amp; Conditions'], ['vis_page_privacy', 'Privacy Policy'],
-      ['vis_page_refund', 'Refund &amp; Cancellation'],
+      ['vis_page_data_policy', 'Data Policy'], ['vis_page_refund', 'Refund &amp; Cancellation'],
+      ['vis_page_delete_account', 'Account &amp; Data Deletion'],
     ];
     $('view').innerHTML = `
       <style>
