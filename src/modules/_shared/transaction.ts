@@ -129,6 +129,24 @@ async function guardDuplicate(
 }
 
 /**
+ * Global service kill-switch. When the admin pauses a service
+ * (services.enabled = false) — e.g. a regulatory hold on DMT / money transfer —
+ * no member may start a NEW transaction on it, regardless of their per-user
+ * activation. A service with no catalog row is treated as enabled (fail-open)
+ * so an uncatalogued internal flow is never accidentally blocked. Exported for
+ * unit testing.
+ */
+export async function guardServiceEnabled(serviceCode: string): Promise<void> {
+  const { rows } = await query<{ enabled: boolean }>(
+    'SELECT enabled FROM services WHERE code = $1',
+    [serviceCode],
+  );
+  if (rows[0] && rows[0].enabled === false) {
+    throw ApiError.forbidden('This service is temporarily unavailable. Please try again later.');
+  }
+}
+
+/**
  * KYC gate: when the admin has switched on "require KYC to transact"
  * (site setting security_require_kyc), a member must be KYC-verified before any
  * money-movement transaction. Off by default so nothing changes unless enabled.
@@ -166,6 +184,10 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
   // 1) Idempotency: a used reference returns the original transaction.
   const existing = await loadExisting(reference, opts.table);
   if (existing) return existing;
+
+  // 1a-0) Global service kill-switch: an admin-paused service (regulatory
+  //       hold) blocks every new transaction, even for already-activated members.
+  await guardServiceEnabled(opts.serviceCode);
 
   // 1a) Duplicate-details guard: same member + service + amount + flow +
   //     details (account/VPA/consumer no…). Blocks an accidental re-submit

@@ -1211,15 +1211,16 @@ const Screens = {
     const d = await Api.get('/admin/services');
     const inf = 9223372036854775807;
     const rows = d.items.map(s => `<tr><td>${esc(s.code)}</td><td>${esc(s.name)}</td>
-      <td>${s.enabled ? '<span class="tag active">on</span>' : '<span class="tag blocked">off</span>'}</td>
+      <td>${s.enabled ? '<span class="tag active">live</span>' : '<span class="tag blocked">paused</span>'}</td>
       <td>${money((s.activation_charge_paise||0)/100)}</td>
       <td>${money((s.min_commission_paise||0)/100)} – ${(+s.max_commission_paise>=inf) ? '∞' : money((s.max_commission_paise||0)/100)}</td>
       <td>
-        <button class="btn sm ghost" onclick="Actions.toggleService('${s.code}',${!s.enabled})">${s.enabled ? 'Disable' : 'Enable'}</button>
+        <button class="btn sm ghost" onclick="Actions.toggleService('${s.code}',${!s.enabled})">${s.enabled ? 'Pause (block txns)' : 'Go live'}</button>
         <button class="btn sm ghost" onclick="Actions.setServiceLimits('${s.code}',${s.min_commission_paise||0},'${(+s.max_commission_paise>=inf)?'':((s.max_commission_paise||0)/100)}')">Limits</button>
         <button class="btn sm" onclick="location.hash='#/providers';Actions._provService='${s.code}'">Providers</button>
       </td></tr>`).join('');
     $('view').innerHTML = `<div class="panel"><h2>Services</h2>
+      <p class="muted"><b>Pause</b> is a hard kill-switch — a paused service blocks every new transaction platform-wide (even for members who already have it), returning “temporarily unavailable”. Use it for a regulatory hold; in-flight and settled transactions are unaffected. To also remove a service from the public marketing site, use <a href="#/frontend">Front-end Visibility</a>.</p>
       <p class="muted">Set the per-service commission floor/ceiling; commission rules must stay within these bounds. Manage upstream providers per service.</p>
       <div class="tbl-wrap"><table>
       <thead><tr><th>Code</th><th>Name</th><th>Status</th><th>Activation</th><th>Commission min–max</th><th></th></tr></thead>
