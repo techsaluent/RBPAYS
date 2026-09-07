@@ -272,6 +272,7 @@ const NAV = [
   { key: 'analytics', label: '📊 Analytics', roles: ['admin', 'staff'], section: 'Users & KYC' },
   { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review', section: 'Users & KYC' },
+  { key: 'deletionrequests', label: 'Deletion Requests', roles: ['admin', 'staff'], perm: 'users.manage', section: 'Users & KYC' },
   { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
   { key: 'withdrawals', label: 'Withdrawals', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
@@ -623,7 +624,24 @@ const Screens = {
         <div class="field"><label>Role</label><input value="${esc((u.role||'').replace(/_/g,' '))}" disabled></div>
         ${u.username ? `<div class="field"><label>Username</label><input value="${esc(u.username)}" disabled></div>` : ''}
         <button class="btn" onclick="Actions.saveProfile()">Save profile</button></div>
-      ${companyNote}`;
+      ${companyNote}
+      ${['admin','staff'].includes(u.role) ? '' : `
+      <div class="panel mt" style="max-width:520px;border:1px solid #f3c2c2">
+        <h2 style="color:#b42318">Delete my account</h2>
+        <p class="muted">Request permanent deletion of your account and personal data. Your wallet balance must be nil and there must be no pending transaction or dispute. Records we are legally required to keep (RBI / tax) are retained for the statutory period. See <a href="../delete-account.html" target="_blank">Account &amp; Data Deletion</a>.</p>
+        <div id="del-status"></div>
+        <button class="btn ghost" style="border-color:#e79c9c;color:#b42318" onclick="Actions.requestMyDeletion()">Request account deletion</button>
+      </div>`}`;
+    // Show any existing request status (members only).
+    if (!['admin','staff'].includes(u.role)) {
+      Api.get('/auth/me/deletion-request').then(d => {
+        if (d && d.request) {
+          const r = d.request;
+          const el = $('del-status');
+          if (el) el.innerHTML = `<p class="muted">Current request: <b>${esc(r.status)}</b> · raised ${new Date(r.created_at).toLocaleString('en-IN')}${r.admin_note ? ' · note: ' + esc(r.admin_note) : ''}</p>`;
+        }
+      }).catch(() => {});
+    }
   },
 
   // Account security: change password, set/remove login MPIN, authenticator
@@ -1766,6 +1784,26 @@ const Screens = {
       </div>`;
   },
 
+  // Admin: account & data deletion requests raised by members.
+  async deletionrequests() {
+    const d = await Api.get('/admin/deletion-requests?status=pending').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(r => `<tr>
+      <td>${esc(r.full_name || '')} <span class="muted">${esc(r.username || '')}</span></td>
+      <td>${esc(r.role || '')}</td>
+      <td class="muted">${esc(r.email || '')}<br>${esc(r.phone || '')}</td>
+      <td>${esc(r.reason || '') || '<span class="muted">—</span>'}</td>
+      <td>${new Date(r.created_at).toLocaleString('en-IN')}</td>
+      <td>
+        <button class="btn sm" onclick="Actions.processDeletion(${r.id},'processed')">Mark done</button>
+        <button class="btn sm ghost" onclick="Actions.processDeletion(${r.id},'rejected')">Reject</button>
+      </td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>Account deletion requests</h2>
+      <p class="muted">Members who requested account/data deletion (Profile → Delete my account). Verify identity and dues, delete or anonymise their personal data per the <a href="../delete-account.html" target="_blank">policy</a> (keep only records required by RBI/PMLA/tax), then mark done. This desk records the request; it does not itself hard-delete data.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Member</th><th>Role</th><th>Contact</th><th>Reason</th><th>Requested</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=6 class=muted>No pending requests</td></tr>'}</tbody></table></div></div>`;
+  },
+
   // Admin: manage the marketing service cards shown on the public home page.
   // Add / edit / reorder / show-hide / delete — the landing grid renders from
   // this list live (GET /site/services), no code change or redeploy.
@@ -2600,6 +2638,27 @@ const Actions = {
       $('who-name').textContent = State.user.full_name;
       UI.toast('Profile updated'); App.route();
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  requestMyDeletion() {
+    UI.modal(`<h3>Request account deletion</h3>
+      <p class="muted">This asks our team to permanently delete your account and personal data. It cannot be undone once processed. You can tell us why (optional).</p>
+      <div class="field"><label>Reason (optional)</label><textarea id="del_reason" rows="3" style="width:100%"></textarea></div>
+      <div class="foot"><button class="btn" style="background:#b42318" onclick="Actions.submitMyDeletion()">Submit request</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async submitMyDeletion() {
+    try {
+      const d = await Api.post('/auth/me/deletion-request', { reason: $('del_reason').value || '' });
+      UI.closeModal();
+      UI.toast(d.alreadyOpen ? 'You already have a pending request' : 'Deletion request submitted');
+      App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async processDeletion(id, action) {
+    const note = prompt(action === 'processed' ? 'Note (optional) — confirm the account/data has been deleted:' : 'Reason for rejecting this request:') ;
+    if (note === null) return;
+    try { await Api.post('/admin/deletion-requests/' + id + '/process', { action, note }); UI.toast('Request ' + action); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
   async changePassword() {
     const body = { current_password: val('cp_cur'), new_password: val('cp_new') };

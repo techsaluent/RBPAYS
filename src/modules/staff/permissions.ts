@@ -65,6 +65,7 @@ export function permissionForPath(path: string, method: string): string | null |
   if (/^\/users\/[^/]+\/tier\b/.test(path)) return 'risk.manage';
   if (/^\/users\/[^/]+\/(status|reset-password|plan|services)\b/.test(path)) return 'users.manage';
   if (/^\/users\b/.test(path)) return mutating ? 'users.manage' : 'users.view';
+  if (/^\/deletion-requests\b/.test(path)) return 'users.manage'; // account deletion desk
 
   if (/^\/onboarding\b/.test(path)) return 'risk.manage';
   if (/^\/risk-events\b/.test(path)) return 'risk.manage';

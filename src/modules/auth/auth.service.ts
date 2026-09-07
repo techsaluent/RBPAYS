@@ -640,3 +640,36 @@ export async function getUserById(id: string): Promise<PublicUser> {
   if (!rows[0]) throw ApiError.notFound('User not found');
   return rows[0];
 }
+
+// ---------------------------------------------------------------------
+// Self-serve account deletion requests
+// ---------------------------------------------------------------------
+/** The member's latest deletion request (or null). */
+export async function myDeletionRequest(userId: string) {
+  const { rows } = await query(
+    `SELECT id, status, reason, admin_note, created_at, processed_at
+       FROM account_deletion_requests
+      WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Record a deletion request. Only one open (pending) request per member — if
+ * one already exists it is returned instead of creating a duplicate.
+ */
+export async function createDeletionRequest(userId: string, reason: string) {
+  const existing = await query(
+    `SELECT id, status, reason, created_at FROM account_deletion_requests
+      WHERE user_id = $1 AND status = 'pending'`,
+    [userId],
+  );
+  if (existing.rows[0]) return { request: existing.rows[0], alreadyOpen: true };
+  const { rows } = await query(
+    `INSERT INTO account_deletion_requests (user_id, reason) VALUES ($1, $2)
+     RETURNING id, status, reason, created_at`,
+    [userId, reason],
+  );
+  return { request: rows[0], alreadyOpen: false };
+}

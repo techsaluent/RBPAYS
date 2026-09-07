@@ -3,7 +3,7 @@ import { requireAuth } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import * as controller from './auth.controller';
-import { loginSchema, refreshSchema, signupSchema, forgotPasswordSchema, resetPasswordSchema, requestSignupOtpSchema, updateProfileSchema } from './auth.schemas';
+import { loginSchema, refreshSchema, signupSchema, forgotPasswordSchema, resetPasswordSchema, requestSignupOtpSchema, updateProfileSchema, deletionRequestSchema } from './auth.schemas';
 
 const router = Router();
 
@@ -16,5 +16,7 @@ router.post('/forgot-password', validate(forgotPasswordSchema), asyncHandler(con
 router.post('/reset-password', validate(resetPasswordSchema), asyncHandler(controller.resetPassword));
 router.get('/me', requireAuth, asyncHandler(controller.me));
 router.patch('/me', requireAuth, validate(updateProfileSchema), asyncHandler(controller.updateMe));
+router.get('/me/deletion-request', requireAuth, asyncHandler(controller.myDeletionRequest));
+router.post('/me/deletion-request', requireAuth, validate(deletionRequestSchema), asyncHandler(controller.requestAccountDeletion));
 
 export default router;
