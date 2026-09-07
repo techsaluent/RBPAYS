@@ -2244,6 +2244,205 @@ router.delete(
   }),
 );
 
+// ---------------------------------------------------------------------
+// Provider Connections — configure ONE credential set once and fan it out
+// across many services (e.g. Eko → DMT + AEPS + BBPS + Recharge). Each
+// connection is a group of service_providers rows sharing a connection_id.
+// ---------------------------------------------------------------------
+router.get(
+  '/provider-connections',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      `SELECT connection_id,
+              max(connection_label) AS label,
+              max(driver) AS driver,
+              max(base_url) AS base_url,
+              max(partner_id) AS partner_id,
+              (array_agg(extra ORDER BY created_at))[1] AS extra,
+              bool_or(api_key IS NOT NULL AND api_key <> '') AS has_key,
+              bool_or(api_secret IS NOT NULL AND api_secret <> '') AS has_secret,
+              bool_or(auth_token IS NOT NULL AND auth_token <> '') AS has_token,
+              min(created_at) AS created_at,
+              json_agg(json_build_object('id', id, 'service_code', service_code, 'is_active', is_active) ORDER BY service_code) AS services
+         FROM service_providers
+        WHERE connection_id IS NOT NULL
+        GROUP BY connection_id
+        ORDER BY min(created_at) DESC`,
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const connectionSchema = z.object({
+  label: z.string().trim().min(2).max(120),
+  driver: z.enum(['sandbox', 'aggregator', 'razorpay', 'generic', 'aeronpay', 'eko', 'dynamic']).default('sandbox'),
+  base_url: z.string().trim().max(300).optional(),
+  api_key: z.string().trim().max(300).optional(),
+  api_secret: z.string().trim().max(300).optional(),
+  auth_token: z.string().trim().max(600).optional(),
+  partner_id: z.string().trim().max(120).optional(),
+  extra: z.record(z.any()).optional(),
+  service_codes: z.array(z.string().trim().min(1).max(40)).min(1),
+  activate: z.boolean().default(true),
+});
+
+router.post(
+  '/provider-connections',
+  validate(connectionSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof connectionSchema>;
+    const connId = await withTransaction(async (client) => {
+      const idr = await client.query<{ id: string }>('SELECT gen_random_uuid() AS id');
+      const id = idr.rows[0].id;
+      for (const code of b.service_codes) {
+        const svc = await client.query('SELECT 1 FROM services WHERE code = $1', [code]);
+        if (!svc.rowCount) throw ApiError.badRequest(`Unknown service: ${code}`);
+        if (b.activate) {
+          await client.query('UPDATE service_providers SET is_active = false WHERE service_code = $1 AND is_active = true', [code]);
+        }
+        await client.query(
+          `INSERT INTO service_providers
+             (service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, extra, is_active, connection_id, connection_label)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [code, b.label, b.driver, b.base_url ?? null, b.api_key ?? null, b.api_secret ?? null,
+           b.auth_token ?? null, b.partner_id ?? null, JSON.stringify(b.extra ?? {}), b.activate, id, b.label],
+        );
+      }
+      return id;
+    });
+    await refreshProviderRegistry();
+    if (req.user) await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'provider.connect',
+      targetType: 'provider_connection', targetId: connId, detail: { driver: b.driver, services: b.service_codes } });
+    res.status(201).json({ connection_id: connId });
+  }),
+);
+
+const connectionUpdateSchema = z.object({
+  label: z.string().trim().min(2).max(120).optional(),
+  base_url: z.string().trim().max(300).optional(),
+  api_key: z.string().trim().max(300).optional(),
+  api_secret: z.string().trim().max(300).optional(),
+  auth_token: z.string().trim().max(600).optional(),
+  partner_id: z.string().trim().max(120).optional(),
+  extra: z.record(z.any()).optional(),
+  service_codes: z.array(z.string().trim().min(1).max(40)).min(1).optional(),
+  activate: z.boolean().optional(),
+});
+
+router.put(
+  '/provider-connections/:id',
+  validate(connectionUpdateSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof connectionUpdateSchema>;
+    const connId = req.params.id;
+    // blank string / undefined = keep existing credential.
+    const keep = (v?: string) => (v === undefined || v === '' ? null : v);
+    await withTransaction(async (client) => {
+      const cur = await client.query<{ id: string; service_code: string; is_active: boolean }>(
+        'SELECT id, service_code, is_active FROM service_providers WHERE connection_id = $1', [connId]);
+      if (!cur.rows.length) throw ApiError.notFound('Connection not found');
+      await client.query(
+        `UPDATE service_providers SET
+            connection_label = COALESCE($1, connection_label),
+            label = COALESCE($1, label),
+            base_url = COALESCE($2, base_url),
+            api_key = COALESCE($3, api_key),
+            api_secret = COALESCE($4, api_secret),
+            auth_token = COALESCE($5, auth_token),
+            partner_id = COALESCE($6, partner_id),
+            extra = COALESCE($7, extra),
+            updated_at = now()
+          WHERE connection_id = $8`,
+        [keep(b.label), keep(b.base_url), keep(b.api_key), keep(b.api_secret), keep(b.auth_token),
+         keep(b.partner_id), b.extra === undefined ? null : JSON.stringify(b.extra), connId],
+      );
+      if (b.service_codes) {
+        const existing = new Set(cur.rows.map((r) => r.service_code));
+        const wanted = new Set(b.service_codes);
+        const protoId = cur.rows[0].id;
+        for (const code of b.service_codes) {
+          if (existing.has(code)) continue;
+          const svc = await client.query('SELECT 1 FROM services WHERE code = $1', [code]);
+          if (!svc.rowCount) throw ApiError.badRequest(`Unknown service: ${code}`);
+          const active = b.activate ?? cur.rows[0].is_active;
+          if (active) await client.query('UPDATE service_providers SET is_active=false WHERE service_code=$1 AND is_active=true', [code]);
+          await client.query(
+            `INSERT INTO service_providers (service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, extra, is_active, connection_id, connection_label)
+             SELECT $1, connection_label, driver, base_url, api_key, api_secret, auth_token, partner_id, extra, $2, connection_id, connection_label
+               FROM service_providers WHERE id = $3`,
+            [code, active, protoId],
+          );
+        }
+        for (const code of existing) {
+          if (!wanted.has(code)) await client.query('DELETE FROM service_providers WHERE connection_id=$1 AND service_code=$2', [connId, code]);
+        }
+      }
+      if (b.activate !== undefined) {
+        if (b.activate) {
+          const svcRows = await client.query<{ service_code: string }>('SELECT service_code FROM service_providers WHERE connection_id=$1', [connId]);
+          for (const r of svcRows.rows) {
+            await client.query('UPDATE service_providers SET is_active=false WHERE service_code=$1 AND is_active=true AND connection_id IS DISTINCT FROM $2', [r.service_code, connId]);
+          }
+        }
+        await client.query('UPDATE service_providers SET is_active=$1 WHERE connection_id=$2', [b.activate, connId]);
+      }
+    });
+    await refreshProviderRegistry();
+    res.json({ connection_id: connId });
+  }),
+);
+
+router.post(
+  '/provider-connections/:id/activate',
+  asyncHandler(async (req: Request, res: Response) => {
+    await withTransaction(async (client) => {
+      const svcRows = await client.query<{ service_code: string }>('SELECT service_code FROM service_providers WHERE connection_id=$1', [req.params.id]);
+      if (!svcRows.rows.length) throw ApiError.notFound('Connection not found');
+      for (const r of svcRows.rows) {
+        await client.query('UPDATE service_providers SET is_active=false WHERE service_code=$1 AND is_active=true AND connection_id IS DISTINCT FROM $2', [r.service_code, req.params.id]);
+      }
+      await client.query('UPDATE service_providers SET is_active=true WHERE connection_id=$1', [req.params.id]);
+    });
+    await refreshProviderRegistry();
+    res.json({ ok: true });
+  }),
+);
+
+router.post(
+  '/provider-connections/:id/deactivate',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('UPDATE service_providers SET is_active=false WHERE connection_id=$1', [req.params.id]);
+    if (!rowCount) throw ApiError.notFound('Connection not found');
+    await refreshProviderRegistry();
+    res.json({ ok: true });
+  }),
+);
+
+router.post(
+  '/provider-connections/:id/test',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query(
+      `SELECT id, service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, is_active
+         FROM service_providers WHERE connection_id=$1 ORDER BY created_at LIMIT 1`,
+      [req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Connection not found');
+    const { probeProvider } = await import('../../providers/health');
+    const result = await probeProvider(rows[0] as never);
+    res.json({ result });
+  }),
+);
+
+router.delete(
+  '/provider-connections/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('DELETE FROM service_providers WHERE connection_id=$1', [req.params.id]);
+    if (!rowCount) throw ApiError.notFound('Connection not found');
+    await refreshProviderRegistry();
+    res.status(204).send();
+  }),
+);
+
 // ---- Admin broadcast: message a member audience over SMS/WhatsApp/Email ----
 const broadcastSchema = z.object({
   subject: z.string().trim().max(120).optional(),
