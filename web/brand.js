@@ -8,6 +8,34 @@
     const { settings: s } = await res.json();
     if (!s) return;
 
+    // ---- Front-end visibility toggles (admin-managed, no redeploy) ----
+    // Standalone-page guard: if this page's flag is explicitly 'false', the
+    // admin has taken it down — replace the whole page with an "unavailable"
+    // notice so a direct link can't bypass the hide. Runs before anything else.
+    const pageFlag = document.body.getAttribute('data-page-flag');
+    if (pageFlag && s[pageFlag] === 'false') {
+      const bn = s.brand_name || 'TutiPays';
+      const accent = s.primary_color || '#7C3AED';
+      document.body.style.margin = '0';
+      document.body.innerHTML =
+        '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:40px;box-sizing:border-box;font-family:inherit">'
+        + '<div style="max-width:460px">'
+        + '<div style="font-size:46px;margin-bottom:14px">🔒</div>'
+        + '<h1 style="font-size:23px;margin:0 0 10px;color:#1a1633">This page is currently unavailable</h1>'
+        + '<p style="color:#6b7280;line-height:1.6;margin:0 0 24px">It has been temporarily taken down. Please check back later.</p>'
+        + '<a href="/" style="display:inline-block;background:' + accent + ';color:#fff;padding:12px 24px;border-radius:11px;text-decoration:none;font-weight:600">Back to ' + bn + '</a>'
+        + '</div></div>';
+      if (/TutiPays/.test(document.title)) document.title = document.title.replace(/TutiPays/g, bn);
+      return;
+    }
+    // Remove any element whose data-toggle setting is explicitly 'false'.
+    // Absent or any other value = visible (fail-open: if config is missing the
+    // marketing site still renders in full).
+    document.querySelectorAll('[data-toggle]').forEach((el) => {
+      const key = el.getAttribute('data-toggle');
+      if (key && s[key] === 'false') el.remove();
+    });
+
     if (s.primary_color) document.documentElement.style.setProperty('--brand', s.primary_color);
     const brand = s.brand_name || 'TutiPays';
 

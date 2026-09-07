@@ -227,7 +227,7 @@
     <div class="wrap nav">
       <a class="logo" href="/" aria-label="Tutipays home"><img src="/logo.svg" alt="Tutipays" /></a>
       <nav class="links">
-        <a href="#services">Services</a>
+        <a href="#services" data-toggle="vis_sec_services">Services</a>
         <a href="#why">Why us</a>
         <a href="#tiers">Earn</a>
         <a href="#how">How it works</a>
@@ -282,7 +282,7 @@
 
   <!-- Stats -->
   <div class="wrap">
-    <div class="stats reveal">
+    <div class="stats reveal" data-toggle="vis_sec_stats">
       <div class="stat"><div class="n" data-count="16" data-suffix="+">0</div><div class="l">Services</div></div>
       <div class="stat"><div class="n">Instant</div><div class="l">Settlement</div></div>
       <div class="stat"><div class="n" data-count="24" data-suffix="×7">0</div><div class="l">Availability</div></div>
@@ -291,7 +291,7 @@
   </div>
 
   <!-- Services -->
-  <section id="services" class="wrap">
+  <section id="services" class="wrap" data-toggle="vis_sec_services">
     <div class="eyebrow reveal">One login, every counter</div>
     <h2 class="h2 reveal">All your services in one place</h2>
     <p class="lead reveal">Offer a full suite of assisted financial services from your shop and earn on every transaction.</p>
@@ -303,25 +303,25 @@
       <button data-cat="more">Travel &amp; more</button>
     </div>
     <div class="services" id="svcgrid">
-      <div class="svc reveal" data-cat="bill"><div class="ic">📱</div><h3>Mobile &amp; DTH Recharge</h3><p>Prepaid, postpaid and DTH for every operator.</p></div>
-      <div class="svc reveal g" data-cat="bank"><div class="ic">🏧</div><h3>AEPS</h3><p>Aadhaar cash withdrawal, balance &amp; mini statement.</p></div>
-      <div class="svc reveal" data-cat="bank"><div class="ic">💸</div><h3>Money Transfer (DMT)</h3><p>IMPS/NEFT transfers to any bank account.</p></div>
-      <div class="svc reveal" data-cat="bill"><div class="ic">🧾</div><h3>BBPS Bill Payments</h3><p>Electricity, gas, water, FASTag, loan &amp; more.</p></div>
-      <div class="svc reveal g" data-cat="bank"><div class="ic">🏧</div><h3>Micro ATM</h3><p>Card-based cash withdrawal on a mini POS.</p></div>
-      <div class="svc reveal g" data-cat="bank"><div class="ic">🆔</div><h3>Aadhaar Pay</h3><p>Accept payments with Aadhaar + fingerprint.</p></div>
-      <div class="svc reveal" data-cat="pay"><div class="ic">🏦</div><h3>Payout &amp; UPI</h3><p>Instant disbursals to bank accounts and UPI IDs.</p></div>
-      <div class="svc reveal a" data-cat="bank"><div class="ic">💳</div><h3>Card Swipe (mPOS)</h3><p>Accept debit/credit cards, settle to your wallet.</p></div>
-      <div class="svc reveal a" data-cat="bank"><div class="ic">💵</div><h3>CMS</h3><p>Cash collection for NBFCs and lenders.</p></div>
-      <div class="svc reveal a" data-cat="more"><div class="ic">🪪</div><h3>PAN Card</h3><p>New &amp; correction applications via NSDL/UTI.</p></div>
-      <div class="svc reveal a" data-cat="more"><div class="ic">✈️</div><h3>Travel Booking</h3><p>Flight, bus, train &amp; hotel bookings.</p></div>
-      <div class="svc reveal g" data-cat="more"><div class="ic">🛡️</div><h3>Insurance</h3><p>Motor, health, life &amp; travel cover.</p></div>
-      <div class="svc reveal" data-cat="bill"><div class="ic">🏦</div><h3>Loan Repayment</h3><p>Collect EMI / loan repayments for NBFCs &amp; banks.</p></div>
-      <div class="svc reveal a" data-cat="bill"><div class="ic">💳</div><h3>Credit Card Bill</h3><p>Pay any bank's credit-card bill from your shop.</p></div>
+      <div class="svc reveal" data-toggle="vis_svc_recharge" data-cat="bill"><div class="ic">📱</div><h3>Mobile &amp; DTH Recharge</h3><p>Prepaid, postpaid and DTH for every operator.</p></div>
+      <div class="svc reveal g" data-toggle="vis_svc_aeps" data-cat="bank"><div class="ic">🏧</div><h3>AEPS</h3><p>Aadhaar cash withdrawal, balance &amp; mini statement.</p></div>
+      <div class="svc reveal" data-toggle="vis_svc_dmt" data-cat="bank"><div class="ic">💸</div><h3>Money Transfer (DMT)</h3><p>IMPS/NEFT transfers to any bank account.</p></div>
+      <div class="svc reveal" data-toggle="vis_svc_bbps" data-cat="bill"><div class="ic">🧾</div><h3>BBPS Bill Payments</h3><p>Electricity, gas, water, FASTag, loan &amp; more.</p></div>
+      <div class="svc reveal g" data-toggle="vis_svc_matm" data-cat="bank"><div class="ic">🏧</div><h3>Micro ATM</h3><p>Card-based cash withdrawal on a mini POS.</p></div>
+      <div class="svc reveal g" data-toggle="vis_svc_aadhaar_pay" data-cat="bank"><div class="ic">🆔</div><h3>Aadhaar Pay</h3><p>Accept payments with Aadhaar + fingerprint.</p></div>
+      <div class="svc reveal" data-toggle="vis_svc_payout" data-cat="pay"><div class="ic">🏦</div><h3>Payout &amp; UPI</h3><p>Instant disbursals to bank accounts and UPI IDs.</p></div>
+      <div class="svc reveal a" data-toggle="vis_svc_card_swipe" data-cat="bank"><div class="ic">💳</div><h3>Card Swipe (mPOS)</h3><p>Accept debit/credit cards, settle to your wallet.</p></div>
+      <div class="svc reveal a" data-toggle="vis_svc_cms" data-cat="bank"><div class="ic">💵</div><h3>CMS</h3><p>Cash collection for NBFCs and lenders.</p></div>
+      <div class="svc reveal a" data-toggle="vis_svc_pan" data-cat="more"><div class="ic">🪪</div><h3>PAN Card</h3><p>New &amp; correction applications via NSDL/UTI.</p></div>
+      <div class="svc reveal a" data-toggle="vis_svc_travel" data-cat="more"><div class="ic">✈️</div><h3>Travel Booking</h3><p>Flight, bus, train &amp; hotel bookings.</p></div>
+      <div class="svc reveal g" data-toggle="vis_svc_insurance" data-cat="more"><div class="ic">🛡️</div><h3>Insurance</h3><p>Motor, health, life &amp; travel cover.</p></div>
+      <div class="svc reveal" data-toggle="vis_svc_loan" data-cat="bill"><div class="ic">🏦</div><h3>Loan Repayment</h3><p>Collect EMI / loan repayments for NBFCs &amp; banks.</p></div>
+      <div class="svc reveal a" data-toggle="vis_svc_credit_card" data-cat="bill"><div class="ic">💳</div><h3>Credit Card Bill</h3><p>Pay any bank's credit-card bill from your shop.</p></div>
     </div>
   </section>
 
   <!-- Why -->
-  <section id="why" class="why">
+  <section id="why" class="why" data-toggle="vis_sec_why">
     <div class="wrap">
       <div class="eyebrow reveal">Why partners choose us</div>
       <h2 class="h2 reveal">Built for retailers who want to grow</h2>
@@ -338,7 +338,7 @@
   </section>
 
   <!-- Tiers -->
-  <section id="tiers" class="wrap">
+  <section id="tiers" class="wrap" data-toggle="vis_sec_tiers">
     <div class="eyebrow reveal">Choose your role</div>
     <h2 class="h2 reveal">Earn at every level of the network</h2>
     <p class="lead reveal">Start as a retailer, or build a network as a distributor — everyone earns commission.</p>
@@ -359,7 +359,7 @@
   </section>
 
   <!-- How -->
-  <section id="how" class="why">
+  <section id="how" class="why" data-toggle="vis_sec_how">
     <div class="wrap">
       <div class="eyebrow reveal">Go live in minutes</div>
       <h2 class="h2 reveal">Start earning in 3 steps</h2>
@@ -372,7 +372,7 @@
   </section>
 
   <!-- Testimonials -->
-  <section class="wrap">
+  <section class="wrap" data-toggle="vis_sec_testimonials">
     <div class="eyebrow reveal">What partners say</div>
     <h2 class="h2 reveal">Trusted by shops across भारत</h2>
     <div class="quotes reveal" id="quotes">
@@ -384,7 +384,7 @@
   </section>
 
   <!-- Band -->
-  <section class="wrap">
+  <section class="wrap" data-toggle="vis_sec_cta">
     <div class="band reveal">
       <div>
         <h2>Ready to grow your business?</h2>
@@ -410,17 +410,17 @@
         </div>
         <div>
           <h5>Company</h5>
-          <a href="about.html">About Us</a>
-          <a href="contact.html">Contact Us</a>
-          <a href="grievance.html">Grievance Redressal</a>
-          <a href="faq.html">FAQ</a>
-          <a href="developers.html">Developers / API</a>
+          <a href="about.html" data-toggle="vis_page_about">About Us</a>
+          <a href="contact.html" data-toggle="vis_page_contact">Contact Us</a>
+          <a href="grievance.html" data-toggle="vis_page_grievance">Grievance Redressal</a>
+          <a href="faq.html" data-toggle="vis_page_faq">FAQ</a>
+          <a href="developers.html" data-toggle="vis_page_developers">Developers / API</a>
         </div>
         <div>
           <h5>Legal</h5>
-          <a href="terms.html">Terms &amp; Conditions</a>
-          <a href="privacy.html">Privacy Policy</a>
-          <a href="refund.html">Refund &amp; Cancellation</a>
+          <a href="terms.html" data-toggle="vis_page_terms">Terms &amp; Conditions</a>
+          <a href="privacy.html" data-toggle="vis_page_privacy">Privacy Policy</a>
+          <a href="refund.html" data-toggle="vis_page_refund">Refund &amp; Cancellation</a>
         </div>
         <div>
           <h5>Get in touch</h5>
