@@ -74,6 +74,7 @@ export function permissionForPath(path: string, method: string): string | null |
   if (/^\/providers\b/.test(path)) return 'providers.manage';
   if (/^\/go-live\b/.test(path)) return 'providers.manage';
   if (/^\/provider-directory\b/.test(path)) return 'providers.manage'; // known-provider catalog
+  if (/^\/provider-connections\b/.test(path)) return 'providers.manage'; // one credential → many services
   if (/^\/operators\b/.test(path)) return 'providers.manage'; // recharge operator catalog
   if (/^\/billers\b/.test(path)) return 'providers.manage';   // BBPS biller directory
   if (/^\/commission-plans\b/.test(path)) return 'commission.manage';

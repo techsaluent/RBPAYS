@@ -284,6 +284,7 @@ const NAV = [
   { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'providerconnections', label: '🔌 Provider Connections', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'catalog', label: 'Operator & Biller Catalog', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'webhooks', label: 'Webhook Log', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
@@ -1960,6 +1961,44 @@ const Screens = {
   },
 
   // Admin: manage upstream providers per service (multiple, one active).
+  // Admin: Provider Connections — one credential set across many services.
+  async providerconnections() {
+    const [conns, svcs, dir] = await Promise.all([
+      Api.get('/admin/provider-connections').catch(() => ({ items: [] })),
+      Api.get('/admin/services'),
+      Api.get('/admin/provider-directory').catch(() => ({ items: [] })),
+    ]);
+    Actions._pcServices = svcs.items.map(s => ({ code: s.code, name: s.name }));
+    Actions._pcDir = dir.items || [];
+    const cards = (conns.items || []).map(c => {
+      const chips = (c.services || []).map(s => `<span class="tag ${s.is_active ? 'active' : ''}" style="margin:2px">${esc(s.service_code)}${s.is_active ? ' •' : ''}</span>`).join('');
+      const anyActive = (c.services || []).some(s => s.is_active);
+      return `<div class="panel mt" style="max-width:760px">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div><h2 style="margin:0">${esc(c.label || c.driver)}</h2>
+            <div class="muted" style="font-size:12px">driver: <b>${esc(c.driver)}</b> · ${c.has_key ? 'key set' : 'no key'}${c.has_secret ? ' · secret set' : ''}${c.base_url ? ' · ' + esc(c.base_url) : ''}</div></div>
+          <div>${anyActive ? '<span class="tag active">active</span>' : '<span class="tag blocked">paused</span>'}</div>
+        </div>
+        <div style="margin:10px 0">${chips || '<span class="muted">no services</span>'}</div>
+        <div>
+          <button class="btn sm ghost" onclick="Actions.testConnection('${c.connection_id}')">Test</button>
+          <button class="btn sm" onclick="Actions.editConnection('${c.connection_id}')">Edit</button>
+          ${anyActive
+            ? `<button class="btn sm ghost" onclick="Actions.activateConnection('${c.connection_id}',false)">Pause</button>`
+            : `<button class="btn sm ghost" onclick="Actions.activateConnection('${c.connection_id}',true)">Activate</button>`}
+          <button class="btn sm ghost" onclick="Actions.deleteConnection('${c.connection_id}','${esc((c.label||'').replace(/'/g,"\\'"))}')">Delete</button>
+        </div></div>`;
+    }).join('');
+    $('view').innerHTML = `<div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">Provider Connections</h2>
+        <button class="btn sm" onclick="Actions.editConnection()">+ New connection</button>
+      </div>
+      <p class="muted">Configure a provider's API <b>once</b> and switch it on across every service it powers — e.g. Eko for DMT + AEPS + BBPS + Recharge from a single credential. Activating a connection makes it the live provider for each selected service (any other active provider for that service is switched off). For a single-service provider you can still use <a href="#/providers">Providers</a>.</p>
+    </div>
+    ${cards || '<div class="panel mt" style="max-width:760px"><p class="muted">No connections yet — add one to plug in Eko or another multi-service provider.</p></div>'}`;
+  },
+
   async providers() {
     const svcs = await Api.get('/admin/services');
     const codes = svcs.items.map(s => s.code);
@@ -3483,6 +3522,79 @@ const Actions = {
   },
   async deactivateProvider(id) {
     try { await Api.post(`/admin/providers/${id}/deactivate`, {}); UI.toast('Deactivated'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ----- provider connections (one credential → many services) -----
+  async editConnection(id) {
+    const svcList = Actions._pcServices || ((await Api.get('/admin/services')).items.map(s => ({ code: s.code, name: s.name })));
+    const dir = Actions._pcDir || [];
+    let c = { connection_id: '', label: '', driver: 'eko', base_url: '', partner_id: '', extra: {}, services: [] };
+    if (id) { const d = await Api.get('/admin/provider-connections'); c = (d.items || []).find(x => x.connection_id === id) || c; }
+    const activeCodes = new Set((c.services || []).map(s => s.service_code));
+    const dopt = ['sandbox', 'eko', 'aeronpay', 'razorpay', 'aggregator', 'generic', 'dynamic'].map(dv => `<option ${c.driver === dv ? 'selected' : ''}>${dv}</option>`).join('');
+    const diropt = ['<option value="">— start from a known provider —</option>'].concat(dir.map(p => `<option value="${esc(p.suggested_driver || '')}" data-label="${esc(p.name)}">${esc(p.name)}${p.services ? ' (' + esc(p.services) + ')' : ''}</option>`)).join('');
+    const svcBoxes = svcList.map(s => `<label style="display:inline-flex;gap:6px;align-items:center;margin:3px 12px 3px 0;font-size:13px"><input type="checkbox" id="pc_svc_${s.code}" ${activeCodes.has(s.code) ? 'checked' : ''}> ${esc(s.code)}</label>`).join('');
+    const keepPh = id ? 'leave blank to keep' : '';
+    UI.modal(`<h3>${id ? 'Edit' : 'New'} provider connection</h3>
+      ${id ? '' : `<div class="field"><label>Start from a known provider (optional)</label><select id="pc_dir" onchange="Actions.pcPrefill()">${diropt}</select></div>`}
+      <div class="field"><label>Name / label</label><input id="pc_label" value="${esc(c.label || '')}" placeholder="Eko"></div>
+      <div class="field"><label>Driver</label><select id="pc_driver">${dopt}</select></div>
+      <div class="field"><label>Base URL (optional)</label><input id="pc_base_url" value="${esc(c.base_url || '')}" placeholder="https://api.eko.in/ekoicici/v3"></div>
+      <div class="field"><label>API key / Developer key</label><input id="pc_api_key" placeholder="${keepPh}"></div>
+      <div class="field"><label>API secret / Access key</label><input id="pc_api_secret" placeholder="${keepPh}"></div>
+      <div class="field"><label>Auth token (optional)</label><input id="pc_auth_token" placeholder="${keepPh}"></div>
+      <div class="field"><label>Partner / Initiator ID</label><input id="pc_partner_id" value="${esc(c.partner_id || '')}" placeholder="initiator_id"></div>
+      <div class="field"><label>Extra config (JSON)</label><textarea id="pc_extra" rows="2" style="width:100%;font-family:monospace">${esc(JSON.stringify(c.extra || {}))}</textarea></div>
+      <p class="muted" style="font-size:12px">Eko mapping — API key = developer_key, API secret = access_key, Partner ID = initiator_id, Extra = {"user_code":"…"}.</p>
+      <div class="field"><label>Services this connection powers</label><div>${svcBoxes}</div></div>
+      <div class="field"><label><input type="checkbox" id="pc_activate" checked> Make it the live provider for these services</label></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveConnection('${id || ''}')">Save connection</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  pcPrefill() {
+    const sel = $('pc_dir'); if (!sel) return;
+    const opt = sel.options[sel.selectedIndex];
+    if (sel.value && $('pc_driver')) { try { $('pc_driver').value = sel.value; } catch (e) { /* driver not in list */ } }
+    const label = opt ? opt.getAttribute('data-label') : '';
+    if (label && $('pc_label') && !$('pc_label').value) $('pc_label').value = label;
+  },
+  async saveConnection(id) {
+    const codes = (Actions._pcServices || []).map(s => s.code).filter(code => { const el = $('pc_svc_' + code); return el && el.checked; });
+    if (!codes.length) { UI.toast('Pick at least one service', 'err'); return; }
+    let extra = {};
+    try { const t = $('pc_extra').value.trim(); extra = t ? JSON.parse(t) : {}; } catch (e) { UI.toast('Extra config must be valid JSON', 'err'); return; }
+    const body = {
+      label: val('pc_label'), driver: val('pc_driver'), base_url: val('pc_base_url'),
+      api_key: val('pc_api_key'), api_secret: val('pc_api_secret'), auth_token: val('pc_auth_token'),
+      partner_id: val('pc_partner_id'), extra, service_codes: codes, activate: $('pc_activate').checked,
+    };
+    try {
+      if (id) await Api.put('/admin/provider-connections/' + id, body);
+      else await Api.post('/admin/provider-connections', body);
+      UI.closeModal(); UI.toast('Connection saved'); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async testConnection(id) {
+    UI.modal(`<h3>Testing connection…</h3><p class="muted">Connectivity check (no live transaction)…</p>`);
+    try {
+      const r = await Api.post('/admin/provider-connections/' + id + '/test', {});
+      const res = r.result || r;
+      const rowHtml = (res.checks || []).map(c => `<div class="row" style="gap:8px;align-items:center"><span style="font-size:15px">${c.ok ? '✅' : '❌'}</span><b>${esc(c.label)}</b><span class="muted" style="font-size:12px">${esc(c.detail || '')}</span></div>`).join('');
+      const banner = res.ok
+        ? `<div class="msg" style="background:#e6f4ea;color:#137333;padding:10px;border-radius:8px">${esc(res.message)}</div>`
+        : `<div class="msg err">${esc(res.message)}</div>`;
+      UI.modal(`<h3>Connection — ${res.mode === 'sandbox' ? 'sandbox' : (res.ok ? 'ready' : 'not ready')}</h3>
+        ${banner}<div class="mt" style="display:flex;flex-direction:column;gap:6px">${rowHtml}</div>
+        <div class="row mt" style="justify-content:flex-end"><button class="btn sm" onclick="UI.closeModal()">Close</button></div>`);
+    } catch (err) { UI.modal(`<div class="msg err">${esc(err.message)}</div><div class="row mt" style="justify-content:flex-end"><button class="btn sm" onclick="UI.closeModal()">Close</button></div>`); }
+  },
+  async activateConnection(id, on) {
+    try { await Api.post('/admin/provider-connections/' + id + (on ? '/activate' : '/deactivate'), {}); UI.toast(on ? 'Activated' : 'Paused'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async deleteConnection(id, label) {
+    if (!confirm(`Delete the "${label}" connection? Its provider rows for all its services are removed.`)) return;
+    try { await Api.del('/admin/provider-connections/' + id); UI.toast('Connection deleted'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   // ----- catalog: operators -----
