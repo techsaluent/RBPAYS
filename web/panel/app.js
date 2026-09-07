@@ -295,6 +295,7 @@ const NAV = [
   { key: 'broadcast', label: '📣 Broadcast', roles: ['admin', 'staff'], perm: 'broadcast.manage', section: 'Risk & Ops' },
   { key: 'adminrewards', label: '🎁 Rewards', roles: ['admin', 'staff'], perm: 'rewards.manage', section: 'Risk & Ops' },
   { key: 'audit', label: 'Audit Log', roles: ['admin'], section: 'Risk & Ops' },
+  { key: 'frontend', label: '🖥️ Front-end Visibility', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'staff', label: 'Staff & Roles', roles: ['admin'], section: 'Settings' },
 ];
@@ -1690,6 +1691,87 @@ const Screens = {
         <tbody>${prows || '<tr><td colspan=4 class=muted>No custom pages yet</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Admin: front-end visibility — show/hide marketing services, home-page
+  // sections and legal/company pages on the public site with no redeploy.
+  // Backed by vis_* rows in site_settings (value 'true' = visible).
+  async frontend() {
+    const st = await Api.get('/admin/site/settings');
+    const s = {}; st.items.forEach(r => s[r.key] = r.value || '');
+    // ON when not explicitly 'false' (seeded 'true'; fail-open if missing).
+    const row = (k, label, note) => `<div class="fvrow"><div><div class="lbl">${label}</div>${note ? `<div class="note">${note}</div>` : ''}</div>
+      <label class="fvsw"><input type="checkbox" id="fv_${k}" ${s[k] !== 'false' ? 'checked' : ''}><span class="sl"></span></label></div>`;
+    const SVC = [
+      ['vis_svc_recharge', '📱 Mobile &amp; DTH Recharge'], ['vis_svc_aeps', '🏧 AEPS'],
+      ['vis_svc_dmt', '💸 Money Transfer (DMT)', 'Turn off during a regulatory hold — the card disappears from the site instantly.'],
+      ['vis_svc_bbps', '🧾 BBPS Bill Payments'], ['vis_svc_matm', '🏧 Micro ATM'],
+      ['vis_svc_aadhaar_pay', '🆔 Aadhaar Pay'], ['vis_svc_payout', '🏦 Payout &amp; UPI'],
+      ['vis_svc_card_swipe', '💳 Card Swipe (mPOS)'], ['vis_svc_cms', '💵 CMS'],
+      ['vis_svc_pan', '🪪 PAN Card'], ['vis_svc_travel', '✈️ Travel Booking'],
+      ['vis_svc_insurance', '🛡️ Insurance'], ['vis_svc_loan', '🏦 Loan Repayment'],
+      ['vis_svc_credit_card', '💳 Credit Card Bill'],
+    ];
+    const SEC = [
+      ['vis_sec_stats', 'Stats strip (16+ services, Instant settlement…)'],
+      ['vis_sec_services', 'Services grid (whole “All your services” block)'],
+      ['vis_sec_why', '“Why partners choose us” features'],
+      ['vis_sec_tiers', 'Role tiers (Retailer / Distributor / Master Distributor)'],
+      ['vis_sec_how', '“Start earning in 3 steps”'],
+      ['vis_sec_testimonials', 'Testimonials'],
+      ['vis_sec_cta', 'Call-to-action band (“Ready to grow…”)'],
+    ];
+    const PAGE = [
+      ['vis_page_about', 'About Us'], ['vis_page_contact', 'Contact Us'],
+      ['vis_page_grievance', 'Grievance Redressal'], ['vis_page_faq', 'FAQ'],
+      ['vis_page_developers', 'Developers / API'],
+      ['vis_page_terms', 'Terms &amp; Conditions'], ['vis_page_privacy', 'Privacy Policy'],
+      ['vis_page_refund', 'Refund &amp; Cancellation'],
+    ];
+    $('view').innerHTML = `
+      <style>
+        .fvlist{display:flex;flex-direction:column}
+        .fvrow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 2px;border-bottom:1px solid var(--line)}
+        .fvrow:last-child{border-bottom:0}
+        .fvrow .lbl{font-size:14px} .fvrow .note{font-size:12px;color:var(--muted,#8a90ad);margin-top:3px;max-width:60ch}
+        .fvsw{position:relative;display:inline-block;width:42px;height:24px;flex:0 0 auto}
+        .fvsw input{opacity:0;width:0;height:0;position:absolute}
+        .fvsw .sl{position:absolute;inset:0;background:#c9cee2;border-radius:24px;transition:.18s;cursor:pointer}
+        .fvsw .sl:before{content:'';position:absolute;height:18px;width:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.18s;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+        .fvsw input:checked + .sl{background:var(--brand,#7C3AED)}
+        .fvsw input:checked + .sl:before{transform:translateX(18px)}
+      </style>
+      <div class="panel" style="max-width:720px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h2 style="margin:0">Front-end Visibility</h2>
+          <a class="btn sm ghost" href="../" target="_blank">Open live site ↗</a>
+        </div>
+        <p class="muted">Show or hide parts of the public marketing site without any code change or redeploy — handy when a service (e.g. <b>DMT / Money Transfer</b>) must come off the site for a regulatory hold. Changes apply the moment a visitor next loads a page.</p>
+        <p class="muted" style="font-size:12px;border-left:3px solid var(--brand,#7C3AED);padding-left:10px">Note: this controls only what the public site <i>advertises</i>. To actually stop a service being transacted, disable it under <a href="#/adminservices">Services</a> — that is the real operational switch.</p>
+      </div>
+
+      <div class="panel mt" style="max-width:720px">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h2 style="margin:0">Services on the home page</h2>
+          <div><button class="btn sm ghost" onclick="Actions.fvBulk('vis_svc_',true)">Show all</button>
+               <button class="btn sm ghost" onclick="Actions.fvBulk('vis_svc_',false)">Hide all</button></div>
+        </div>
+        <div class="fvlist">${SVC.map(a => row(a[0], a[1], a[2])).join('')}</div>
+      </div>
+
+      <div class="panel mt" style="max-width:720px"><h2>Home-page sections</h2>
+        <div class="fvlist">${SEC.map(a => row(a[0], a[1], a[2])).join('')}</div>
+      </div>
+
+      <div class="panel mt" style="max-width:720px"><h2>Legal &amp; company pages</h2>
+        <p class="muted" style="margin-top:0">Turning a page off removes its footer link <b>and</b> blocks the page itself — a direct link shows an “unavailable” notice.</p>
+        <div class="fvlist">${PAGE.map(a => row(a[0], a[1], a[2])).join('')}</div>
+      </div>
+
+      <div class="panel mt" style="max-width:720px">
+        <button class="btn" onclick="Actions.saveFrontend()">Save visibility</button>
+        <span class="muted" style="margin-left:12px;font-size:12px">Everything visible by default. Toggle off only what you need hidden.</span>
+      </div>`;
+  },
+
   // Admin: platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop).
   async integrations() {
     const d = await Api.get('/admin/integrations');
@@ -2777,6 +2859,16 @@ const Actions = {
     values['notify_whatsapp'] = $('ws_notify_whatsapp').checked ? 'true' : 'false';
     values['notify_email'] = $('ws_notify_email').checked ? 'true' : 'false';
     try { await Api.put('/admin/site/settings', { values }); UI.toast('Settings saved'); App.applyBranding(); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Flip every switch under a vis_ group on the Front-end Visibility screen.
+  fvBulk(prefix, on) {
+    document.querySelectorAll('[id^="fv_' + prefix + '"]').forEach(el => { el.checked = on; });
+  },
+  async saveFrontend() {
+    const values = {};
+    document.querySelectorAll('[id^="fv_"]').forEach(el => { values[el.id.slice(3)] = el.checked ? 'true' : 'false'; });
+    try { await Api.put('/admin/site/settings', { values }); UI.toast('Front-end visibility updated'); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async editPage(slug) {
