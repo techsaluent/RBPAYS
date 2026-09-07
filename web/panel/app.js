@@ -2899,7 +2899,7 @@ const Actions = {
   },
   // Add / edit a marketing service card (home-page grid).
   async editHomeService(id) {
-    let s = { icon: '💠', title: '', subtitle: '', category: 'more', sort_order: 0, visible: true };
+    let s = { icon: '💠', title: '', subtitle: '', category: 'more', sort_order: 0, visible: true, code: '', terms: '' };
     if (id) { const d = await Api.get('/admin/site/services'); s = d.items.find(x => x.id === id) || s; }
     const opt = (v, label) => `<option value="${v}"${s.category === v ? ' selected' : ''}>${label}</option>`;
     UI.modal(`<h3>${id ? 'Edit' : 'Add'} service</h3>
@@ -2908,6 +2908,8 @@ const Actions = {
       <div class="field"><label>Short description</label><input id="hs_subtitle" value="${esc(s.subtitle || '')}" placeholder="IMPS/NEFT transfers to any bank account."></div>
       <div class="field"><label>Category (tab it appears under)</label>
         <select id="hs_category">${opt('bank', 'Banking')}${opt('bill', 'Recharge & Bills')}${opt('pay', 'Payouts')}${opt('more', 'Travel & more')}</select></div>
+      <div class="field"><label>Service code (links to Services desk — disabling that service hides this card &amp; its terms)</label><input id="hs_code" value="${esc(s.code || '')}" placeholder="dmt, aeps, recharge…"></div>
+      <div class="field"><label>Terms &amp; Conditions clause (shown on the Terms page for this service)</label><textarea id="hs_terms" rows="4" style="width:100%">${esc(s.terms || '')}</textarea></div>
       <div class="field"><label>Sort order (lower shows first)</label><input id="hs_sort" type="number" value="${s.sort_order || 0}"></div>
       <div class="field"><label><input type="checkbox" id="hs_visible" ${s.visible ? 'checked' : ''}> Show on the site</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveHomeService('${id || ''}')">Save</button>
@@ -2919,6 +2921,8 @@ const Actions = {
       title: val('hs_title'),
       subtitle: val('hs_subtitle'),
       category: val('hs_category'),
+      code: val('hs_code'),
+      terms: $('hs_terms').value,
       sort_order: Number(val('hs_sort') || 0),
       visible: $('hs_visible').checked,
     };
@@ -2934,8 +2938,8 @@ const Actions = {
       const d = await Api.get('/admin/site/services');
       const s = d.items.find(x => x.id === id); if (!s) return;
       await Api.put('/admin/site/services/' + id, {
-        icon: s.icon, title: s.title, subtitle: s.subtitle,
-        category: s.category, sort_order: s.sort_order, visible,
+        icon: s.icon, title: s.title, subtitle: s.subtitle, category: s.category,
+        code: s.code || '', terms: s.terms || '', sort_order: s.sort_order, visible,
       });
       App.route();
     } catch (err) { UI.toast(err.message, 'err'); }

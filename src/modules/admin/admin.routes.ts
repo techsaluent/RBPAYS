@@ -1341,7 +1341,7 @@ router.get(
   '/site/services',
   asyncHandler(async (_req: Request, res: Response) => {
     const { rows } = await query(
-      'SELECT id, code, icon, title, subtitle, category, sort_order, visible, updated_at FROM site_services ORDER BY sort_order, id',
+      'SELECT id, code, icon, title, subtitle, category, sort_order, visible, terms, updated_at FROM site_services ORDER BY sort_order, id',
     );
     res.json({ items: rows });
   }),
@@ -1355,6 +1355,7 @@ const siteServiceSchema = z.object({
   sort_order: z.coerce.number().int().min(0).max(9999).default(0),
   visible: z.boolean().default(true),
   code: z.string().trim().max(40).optional(),
+  terms: z.string().max(20000).default(''),
 });
 
 router.post(
@@ -1363,10 +1364,10 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const b = req.body as z.infer<typeof siteServiceSchema>;
     const { rows } = await query(
-      `INSERT INTO site_services (icon, title, subtitle, category, sort_order, visible, code)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       RETURNING id, code, icon, title, subtitle, category, sort_order, visible, updated_at`,
-      [b.icon, b.title, b.subtitle, b.category, b.sort_order, b.visible, b.code ?? null],
+      `INSERT INTO site_services (icon, title, subtitle, category, sort_order, visible, code, terms)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING id, code, icon, title, subtitle, category, sort_order, visible, terms, updated_at`,
+      [b.icon, b.title, b.subtitle, b.category, b.sort_order, b.visible, b.code ?? null, b.terms],
     );
     res.status(201).json({ item: rows[0] });
   }),
@@ -1380,10 +1381,10 @@ router.put(
     const { rows } = await query(
       `UPDATE site_services
           SET icon = $1, title = $2, subtitle = $3, category = $4,
-              sort_order = $5, visible = $6, code = $7, updated_at = now()
-        WHERE id = $8
-       RETURNING id, code, icon, title, subtitle, category, sort_order, visible, updated_at`,
-      [b.icon, b.title, b.subtitle, b.category, b.sort_order, b.visible, b.code ?? null, req.params.id],
+              sort_order = $5, visible = $6, code = $7, terms = $8, updated_at = now()
+        WHERE id = $9
+       RETURNING id, code, icon, title, subtitle, category, sort_order, visible, terms, updated_at`,
+      [b.icon, b.title, b.subtitle, b.category, b.sort_order, b.visible, b.code ?? null, b.terms, req.params.id],
     );
     if (!rows[0]) throw ApiError.notFound('Service not found');
     res.json({ item: rows[0] });

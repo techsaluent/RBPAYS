@@ -47,6 +47,21 @@
       if (key && s[key] === 'false') el.remove();
     });
 
+    // Per-service gating: remove any element tagged data-service="<code>" when
+    // that service is disabled in the admin Services desk. One master switch
+    // per service, applied across every page (home, terms, refund, …).
+    try {
+      if (document.querySelector('[data-service]')) {
+        const sr = await fetch('/api/v1/site/service-status', { cache: 'no-store' });
+        if (sr.ok) {
+          const { disabled } = await sr.json();
+          (disabled || []).forEach((code) => {
+            document.querySelectorAll('[data-service="' + code + '"]').forEach((el) => el.remove());
+          });
+        }
+      }
+    } catch (_) { /* best-effort */ }
+
     if (s.primary_color) document.documentElement.style.setProperty('--brand', s.primary_color);
     const brand = s.brand_name || 'TutiPays';
 

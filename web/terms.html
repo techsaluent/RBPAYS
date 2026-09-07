@@ -38,9 +38,17 @@
     <p>By registering for, accessing or using the Platform, you ("User", "Partner", "Retailer", "Distributor" or "Master Distributor") agree to be bound by these Terms. If you do not agree, do not use the Platform.</p>
 
     <h2>1. Nature of Services</h2>
-    <p>TutiPays is a business-to-business (B2B) technology aggregator that provides a single software interface for its partners to offer assisted digital financial and utility services, including but not limited to Domestic Money Transfer (DMT), Aadhaar Enabled Payment System (AEPS), mobile &amp; DTH recharge, BBPS bill payments, payouts, UPI, Micro ATM, Aadhaar Pay, Card Swipe, CMS, PAN card services, travel booking, insurance and wallet transfers.</p>
+    <p>TutiPays is a business-to-business (B2B) technology aggregator that provides a single software interface for its partners to offer a range of assisted digital financial and utility services. The specific services available to you are those enabled on the Platform from time to time; the terms applicable to each currently-offered service are set out in <a href="#service-terms">Service-specific terms</a> below.</p>
     <div class="callout">
-      <p style="margin:0"><b>Important:</b> TutiPays is a technology and distribution platform. It is <b>not a bank, a Non-Banking Financial Company (NBFC) or a payment system operator</b>. Regulated services such as DMT, AEPS and Micro ATM are provided through arrangements with RBI-authorised banks, payment system operators and their Business Correspondent (BC) / aggregator networks. TutiPays acts as a technology service provider and sub-agent facilitating access to these services.</p>
+      <p style="margin:0"><b>Important:</b> TutiPays is a technology and distribution platform. It is <b>not a bank, a Non-Banking Financial Company (NBFC) or a payment system operator</b>. Regulated services are provided through arrangements with RBI-authorised banks, payment system operators and their Business Correspondent (BC) / aggregator networks. TutiPays acts as a technology service provider and sub-agent facilitating access to these services.</p>
+    </div>
+
+    <!-- Service-specific terms, rendered from the live catalog. A service that
+         is disabled in the admin Services desk drops out here automatically. -->
+    <div id="service-terms" hidden>
+      <h2>Service-specific terms</h2>
+      <p>The following terms apply to each service currently offered on the Platform, in addition to the general terms in this document.</p>
+      <div id="service-terms-list"></div>
     </div>
 
     <h2>2. Eligibility &amp; Registration</h2>
@@ -55,7 +63,7 @@
     <p>Completion of Know Your Customer (KYC) verification is mandatory before you may transact. You agree to submit valid identity and business documents (such as PAN, Aadhaar, GST, shop/business proof) and consent to their verification. We may suspend or restrict your account if KYC is incomplete, expired or found to be false. You must comply with all applicable RBI guidelines, the Prevention of Money Laundering Act, 2002 (PMLA), and other applicable laws while using the Platform.</p>
 
     <h2>4. Transaction Limits</h2>
-    <p>Transaction limits are set in accordance with applicable regulatory guidelines and our risk policies, and may change from time to time without prior notice. For example, Domestic Money Transfer is subject to per-transaction and per-remitter monthly ceilings as prescribed under RBI's Domestic Money Transfer framework. AEPS and other services are subject to their respective operator and regulatory limits.</p>
+    <p>Transaction limits are set in accordance with applicable regulatory guidelines and our risk policies, and may change from time to time without prior notice. Where a service is subject to statutory ceilings (for example under the RBI's applicable frameworks), those limits are enforced automatically in the panel; the specifics for each currently-offered service appear in <a href="#service-terms">Service-specific terms</a> above.</p>
 
     <h2>5. Wallet, Charges &amp; Commission</h2>
     <ul>
@@ -136,6 +144,29 @@
     </div>
   </div></footer>
   <script>document.getElementById('yr').textContent=new Date().getFullYear();</script>
+  <script>
+    // Render per-service terms from the live catalog. Disabled/hidden services
+    // are already excluded server-side, so they simply don't appear here.
+    (function(){
+      var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+      fetch('/api/v1/site/services', { cache:'no-store' })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(d){
+          if (!d || !d.items) return;
+          var withTerms = d.items.filter(function(s){ return s.terms && s.terms.trim(); });
+          if (!withTerms.length) return;
+          document.getElementById('service-terms-list').innerHTML = withTerms.map(function(s){
+            var lines = String(s.terms).split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean);
+            var body = lines.length > 1
+              ? '<ul style="margin:6px 0 0;padding-left:20px">' + lines.map(function(l){ return '<li style="margin:4px 0">' + esc(l) + '</li>'; }).join('') + '</ul>'
+              : '<p style="margin-top:0">' + esc(lines[0] || s.terms) + '</p>';
+            return '<h3 style="margin:20px 0 4px">' + esc(s.title) + '</h3>' + body;
+          }).join('');
+          document.getElementById('service-terms').hidden = false;
+        })
+        .catch(function(){});
+    })();
+  </script>
   <script src="brand.js"></script>
 </body>
 </html>

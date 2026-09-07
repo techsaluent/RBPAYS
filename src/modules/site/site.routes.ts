@@ -35,12 +35,30 @@ router.get(
 router.get(
   '/services',
   asyncHandler(async (_req: Request, res: Response) => {
+    // A card shows only when it is marked visible AND — if it is linked to an
+    // operational service (code) — that service is not disabled. So pausing a
+    // service in the admin Services desk also removes its marketing card.
     const { rows } = await query(
-      `SELECT icon, title, subtitle, category
-         FROM site_services WHERE visible = true
-        ORDER BY sort_order, id`,
+      `SELECT ss.code, ss.icon, ss.title, ss.subtitle, ss.category, ss.terms
+         FROM site_services ss
+         LEFT JOIN services s ON s.code = ss.code
+        WHERE ss.visible = true
+          AND (ss.code IS NULL OR s.code IS NULL OR s.enabled = true)
+        ORDER BY ss.sort_order, ss.id`,
     );
     res.json({ items: rows });
+  }),
+);
+
+// Operational status of every catalog service (purely services.enabled, not
+// affected by marketing visibility). The site uses it to hide any element
+// tagged data-service="<code>" for a service that is currently disabled.
+router.get(
+  '/service-status',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query<{ code: string; enabled: boolean }>('SELECT code, enabled FROM services');
+    const disabled = rows.filter((r) => r.enabled === false).map((r) => r.code);
+    res.json({ disabled });
   }),
 );
 
