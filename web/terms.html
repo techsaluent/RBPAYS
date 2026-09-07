@@ -156,7 +156,11 @@
           var withTerms = d.items.filter(function(s){ return s.terms && s.terms.trim(); });
           if (!withTerms.length) return;
           document.getElementById('service-terms-list').innerHTML = withTerms.map(function(s){
-            return '<h3 style="margin:18px 0 4px">' + esc(s.title) + '</h3><p style="margin-top:0">' + esc(s.terms) + '</p>';
+            var lines = String(s.terms).split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean);
+            var body = lines.length > 1
+              ? '<ul style="margin:6px 0 0;padding-left:20px">' + lines.map(function(l){ return '<li style="margin:4px 0">' + esc(l) + '</li>'; }).join('') + '</ul>'
+              : '<p style="margin-top:0">' + esc(lines[0] || s.terms) + '</p>';
+            return '<h3 style="margin:20px 0 4px">' + esc(s.title) + '</h3>' + body;
           }).join('');
           document.getElementById('service-terms').hidden = false;
         })
