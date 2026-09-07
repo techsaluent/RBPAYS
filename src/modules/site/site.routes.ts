@@ -16,6 +16,7 @@ const PRIVATE_SETTING_KEYS = new Set([
   'security_admin_ip_allowlist',
   'aggregator_webhook_secret',
   'automation_webhook_url',
+  'security_otp_bypass_code',
 ]);
 
 router.get(

@@ -108,9 +108,27 @@ export async function requestSignupOtp(
   return { requested: true, delivered, dev_code: env.isProd ? undefined : code };
 }
 
+/**
+ * Optional break-glass OTP bypass code. When the admin sets a non-empty
+ * `security_otp_bypass_code`, entering exactly that code at signup skips OTP
+ * verification. Meant for QA / app-store review / support — blank disables it.
+ */
+async function otpBypassCode(): Promise<string> {
+  const { rows } = await query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = 'security_otp_bypass_code'",
+  );
+  return (rows[0]?.value ?? '').trim();
+}
+
 /** Verify and consume the latest signup OTP for a mobile. Throws on mismatch. */
 async function consumeSignupOtp(client: PoolClient, phone: string, code?: string): Promise<void> {
   if (!code) throw new ApiError(401, 'otp_required', 'Mobile OTP is required');
+  // Break-glass bypass: an admin-configured code that skips verification.
+  const bypass = await otpBypassCode();
+  if (bypass && code === bypass) {
+    logger.warn({ phone }, 'signup OTP bypassed via configured break-glass code');
+    return;
+  }
   const { rows } = await client.query<{ id: string; code_hash: string; attempts: number }>(
     `SELECT id, code_hash, attempts FROM signup_otps
       WHERE phone = $1 AND used_at IS NULL AND expires_at > now()
