@@ -2,6 +2,17 @@
    company details) from /api/v1/site/settings to any page that includes it.
    Progressive: the page's built-in defaults show first, then get overridden. */
 (async () => {
+  // SEO: ensure a self-referencing canonical + og:url on every page (query and
+  // hash stripped). Runs regardless of the settings fetch below.
+  try {
+    const canonical = location.origin + location.pathname;
+    let link = document.head.querySelector('link[rel="canonical"]');
+    if (!link) { link = document.createElement('link'); link.rel = 'canonical'; document.head.appendChild(link); }
+    link.href = canonical;
+    let og = document.head.querySelector('meta[property="og:url"]');
+    if (!og) { og = document.createElement('meta'); og.setAttribute('property', 'og:url'); document.head.appendChild(og); }
+    og.setAttribute('content', canonical);
+  } catch (_) { /* non-fatal */ }
   try {
     const res = await fetch('/api/v1/site/settings', { cache: 'no-store' });
     if (!res.ok) return;

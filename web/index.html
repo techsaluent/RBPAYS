@@ -482,6 +482,32 @@
     function showQ(n){ qs.forEach(function(q,i){ q.classList.toggle('on', i===n); }); dots.forEach(function(d,i){ d.classList.toggle('on', i===n); }); qi=n; }
     dots.forEach(function(d,i){ d.onclick = function(){ showQ(i); }; });
     if (qs.length) setInterval(function(){ showQ((qi+1)%qs.length); }, 4500);
+
+    // Dynamic services — render the grid from the admin-managed catalog. The
+    // static cards above are a no-JS / crawler fallback; when the API answers
+    // they are replaced by the current, admin-configured set (add/edit/hide/
+    // reorder from the panel with no redeploy). On any error the static cards
+    // stay, so the section is never empty.
+    (function(){
+      var grid = document.getElementById('svcgrid');
+      if (!grid) return;
+      var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+      fetch('/api/v1/site/services', { cache:'no-store' })
+        .then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(d){
+          if (!d || !d.items || !d.items.length) return; // keep the static fallback
+          grid.innerHTML = d.items.map(function(s){
+            var ic = /^(https?:|\/)/.test(s.icon||'') ? '<img src="'+esc(s.icon)+'" alt="" style="width:26px;height:26px;object-fit:contain">' : esc(s.icon||'💠');
+            return '<div class="svc reveal in" data-cat="'+esc(s.category||'more')+'"><div class="ic">'+ic+'</div><h3>'+esc(s.title)+'</h3><p>'+esc(s.subtitle||'')+'</p></div>';
+          }).join('');
+          var active = document.querySelector('.tabs button.on');
+          var cat = active ? active.getAttribute('data-cat') : 'all';
+          grid.querySelectorAll('.svc').forEach(function(s){
+            s.style.display = (cat==='all' || s.getAttribute('data-cat')===cat) ? '' : 'none';
+          });
+        })
+        .catch(function(){});
+    })();
   </script>
   <script src="brand.js"></script>
 </body>

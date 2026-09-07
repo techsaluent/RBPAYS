@@ -32,6 +32,18 @@ router.get(
 );
 
 router.get(
+  '/services',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      `SELECT icon, title, subtitle, category
+         FROM site_services WHERE visible = true
+        ORDER BY sort_order, id`,
+    );
+    res.json({ items: rows });
+  }),
+);
+
+router.get(
   '/pages',
   asyncHandler(async (_req: Request, res: Response) => {
     const { rows } = await query(

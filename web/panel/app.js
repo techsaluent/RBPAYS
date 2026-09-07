@@ -295,6 +295,7 @@ const NAV = [
   { key: 'broadcast', label: '📣 Broadcast', roles: ['admin', 'staff'], perm: 'broadcast.manage', section: 'Risk & Ops' },
   { key: 'adminrewards', label: '🎁 Rewards', roles: ['admin', 'staff'], perm: 'rewards.manage', section: 'Risk & Ops' },
   { key: 'audit', label: 'Audit Log', roles: ['admin'], section: 'Risk & Ops' },
+  { key: 'homeservices', label: '🧩 Home-page Services', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'frontend', label: '🖥️ Front-end Visibility', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'staff', label: 'Staff & Roles', roles: ['admin'], section: 'Settings' },
@@ -1701,16 +1702,6 @@ const Screens = {
     // ON when not explicitly 'false' (seeded 'true'; fail-open if missing).
     const row = (k, label, note) => `<div class="fvrow"><div><div class="lbl">${label}</div>${note ? `<div class="note">${note}</div>` : ''}</div>
       <label class="fvsw"><input type="checkbox" id="fv_${k}" ${s[k] !== 'false' ? 'checked' : ''}><span class="sl"></span></label></div>`;
-    const SVC = [
-      ['vis_svc_recharge', '📱 Mobile &amp; DTH Recharge'], ['vis_svc_aeps', '🏧 AEPS'],
-      ['vis_svc_dmt', '💸 Money Transfer (DMT)', 'Turn off during a regulatory hold — the card disappears from the site instantly.'],
-      ['vis_svc_bbps', '🧾 BBPS Bill Payments'], ['vis_svc_matm', '🏧 Micro ATM'],
-      ['vis_svc_aadhaar_pay', '🆔 Aadhaar Pay'], ['vis_svc_payout', '🏦 Payout &amp; UPI'],
-      ['vis_svc_card_swipe', '💳 Card Swipe (mPOS)'], ['vis_svc_cms', '💵 CMS'],
-      ['vis_svc_pan', '🪪 PAN Card'], ['vis_svc_travel', '✈️ Travel Booking'],
-      ['vis_svc_insurance', '🛡️ Insurance'], ['vis_svc_loan', '🏦 Loan Repayment'],
-      ['vis_svc_credit_card', '💳 Credit Card Bill'],
-    ];
     const SEC = [
       ['vis_sec_stats', 'Stats strip (16+ services, Instant settlement…)'],
       ['vis_sec_services', 'Services grid (whole “All your services” block)'],
@@ -1752,10 +1743,9 @@ const Screens = {
       <div class="panel mt" style="max-width:720px">
         <div class="row" style="justify-content:space-between;align-items:center">
           <h2 style="margin:0">Services on the home page</h2>
-          <div><button class="btn sm ghost" onclick="Actions.fvBulk('vis_svc_',true)">Show all</button>
-               <button class="btn sm ghost" onclick="Actions.fvBulk('vis_svc_',false)">Hide all</button></div>
+          <a class="btn sm" href="#/homeservices">Manage services →</a>
         </div>
-        <div class="fvlist">${SVC.map(a => row(a[0], a[1], a[2])).join('')}</div>
+        <p class="muted" style="margin-bottom:0">Individual service cards (add, edit, reorder, show/hide, delete — e.g. hide DMT for a regulatory hold) are managed on the <a href="#/homeservices">Home-page Services</a> screen, which drives the live grid directly.</p>
       </div>
 
       <div class="panel mt" style="max-width:720px"><h2>Home-page sections</h2>
@@ -1771,6 +1761,39 @@ const Screens = {
         <button class="btn" onclick="Actions.saveFrontend()">Save visibility</button>
         <span class="muted" style="margin-left:12px;font-size:12px">Everything visible by default. Toggle off only what you need hidden.</span>
       </div>`;
+  },
+
+  // Admin: manage the marketing service cards shown on the public home page.
+  // Add / edit / reorder / show-hide / delete — the landing grid renders from
+  // this list live (GET /site/services), no code change or redeploy.
+  async homeservices() {
+    const d = await Api.get('/admin/site/services');
+    const cat = { bank: 'Banking', bill: 'Recharge & Bills', pay: 'Payouts', more: 'Travel & more' };
+    const rows = d.items.map(s => {
+      const isImg = /^(https?:|\/)/.test(s.icon || '');
+      const icon = isImg ? `<img src="${esc(s.icon)}" alt="" style="width:22px;height:22px;object-fit:contain;vertical-align:middle">` : esc(s.icon || '💠');
+      return `<tr>
+        <td class="muted">${s.sort_order}</td>
+        <td style="font-size:18px">${icon}</td>
+        <td><b>${esc(s.title)}</b><div class="muted" style="font-size:12px">${esc(s.subtitle || '')}</div></td>
+        <td>${esc(cat[s.category] || s.category)}</td>
+        <td>${s.visible ? '<span class="tag active">shown</span>' : '<span class="tag blocked">hidden</span>'}</td>
+        <td>
+          <button class="btn sm ghost" onclick="Actions.toggleHomeService(${s.id},${!s.visible})">${s.visible ? 'Hide' : 'Show'}</button>
+          <button class="btn sm" onclick="Actions.editHomeService(${s.id})">Edit</button>
+          <button class="btn sm ghost" onclick="Actions.deleteHomeService(${s.id},'${esc(s.title).replace(/'/g, "\\'")}')">Delete</button>
+        </td></tr>`;
+    }).join('');
+    $('view').innerHTML = `<div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">Home-page Services</h2>
+        <div><a class="btn sm ghost" href="../" target="_blank">Open live site ↗</a>
+             <button class="btn sm" onclick="Actions.editHomeService()">+ Add service</button></div>
+      </div>
+      <p class="muted">These cards drive the “All your services in one place” grid on the marketing site — add, edit, reorder (lower number shows first), show/hide or delete, and the site reflects it on the next page load. Hiding a card removes it from the site; to also stop the service being transacted, pause it under <a href="#/adminservices">Services</a>.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>#</th><th>Icon</th><th>Title</th><th>Category</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=6 class=muted>No services yet — add one.</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Admin: platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop).
@@ -2870,6 +2893,54 @@ const Actions = {
     const values = {};
     document.querySelectorAll('[id^="fv_"]').forEach(el => { values[el.id.slice(3)] = el.checked ? 'true' : 'false'; });
     try { await Api.put('/admin/site/settings', { values }); UI.toast('Front-end visibility updated'); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Add / edit a marketing service card (home-page grid).
+  async editHomeService(id) {
+    let s = { icon: '💠', title: '', subtitle: '', category: 'more', sort_order: 0, visible: true };
+    if (id) { const d = await Api.get('/admin/site/services'); s = d.items.find(x => x.id === id) || s; }
+    const opt = (v, label) => `<option value="${v}"${s.category === v ? ' selected' : ''}>${label}</option>`;
+    UI.modal(`<h3>${id ? 'Edit' : 'Add'} service</h3>
+      <div class="field"><label>Icon (emoji or image URL)</label><input id="hs_icon" value="${esc(s.icon || '')}" placeholder="💸 or https://…/icon.png"></div>
+      <div class="field"><label>Title</label><input id="hs_title" value="${esc(s.title || '')}" placeholder="Money Transfer (DMT)"></div>
+      <div class="field"><label>Short description</label><input id="hs_subtitle" value="${esc(s.subtitle || '')}" placeholder="IMPS/NEFT transfers to any bank account."></div>
+      <div class="field"><label>Category (tab it appears under)</label>
+        <select id="hs_category">${opt('bank', 'Banking')}${opt('bill', 'Recharge & Bills')}${opt('pay', 'Payouts')}${opt('more', 'Travel & more')}</select></div>
+      <div class="field"><label>Sort order (lower shows first)</label><input id="hs_sort" type="number" value="${s.sort_order || 0}"></div>
+      <div class="field"><label><input type="checkbox" id="hs_visible" ${s.visible ? 'checked' : ''}> Show on the site</label></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveHomeService('${id || ''}')">Save</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveHomeService(id) {
+    const body = {
+      icon: val('hs_icon') || '💠',
+      title: val('hs_title'),
+      subtitle: val('hs_subtitle'),
+      category: val('hs_category'),
+      sort_order: Number(val('hs_sort') || 0),
+      visible: $('hs_visible').checked,
+    };
+    try {
+      if (id) await Api.put('/admin/site/services/' + id, body);
+      else await Api.post('/admin/site/services', body);
+      UI.closeModal(); UI.toast('Saved'); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Show/hide inline — re-send the row with visible flipped (PUT needs the full card).
+  async toggleHomeService(id, visible) {
+    try {
+      const d = await Api.get('/admin/site/services');
+      const s = d.items.find(x => x.id === id); if (!s) return;
+      await Api.put('/admin/site/services/' + id, {
+        icon: s.icon, title: s.title, subtitle: s.subtitle,
+        category: s.category, sort_order: s.sort_order, visible,
+      });
+      App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async deleteHomeService(id, title) {
+    if (!confirm(`Delete service "${title}"? It will be removed from the marketing site.`)) return;
+    try { await Api.del('/admin/site/services/' + id); UI.toast('Deleted'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async editPage(slug) {

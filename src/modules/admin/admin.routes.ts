@@ -1335,6 +1335,71 @@ router.delete(
 );
 
 // ---------------------------------------------------------------------
+// Home-page service catalog (marketing cards shown on the landing site)
+// ---------------------------------------------------------------------
+router.get(
+  '/site/services',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      'SELECT id, code, icon, title, subtitle, category, sort_order, visible, updated_at FROM site_services ORDER BY sort_order, id',
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const siteServiceSchema = z.object({
+  icon: z.string().trim().min(1).max(300).default('💠'),
+  title: z.string().trim().min(2).max(120),
+  subtitle: z.string().trim().max(300).default(''),
+  category: z.enum(['bank', 'bill', 'pay', 'more']).default('more'),
+  sort_order: z.coerce.number().int().min(0).max(9999).default(0),
+  visible: z.boolean().default(true),
+  code: z.string().trim().max(40).optional(),
+});
+
+router.post(
+  '/site/services',
+  validate(siteServiceSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof siteServiceSchema>;
+    const { rows } = await query(
+      `INSERT INTO site_services (icon, title, subtitle, category, sort_order, visible, code)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id, code, icon, title, subtitle, category, sort_order, visible, updated_at`,
+      [b.icon, b.title, b.subtitle, b.category, b.sort_order, b.visible, b.code ?? null],
+    );
+    res.status(201).json({ item: rows[0] });
+  }),
+);
+
+router.put(
+  '/site/services/:id',
+  validate(siteServiceSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof siteServiceSchema>;
+    const { rows } = await query(
+      `UPDATE site_services
+          SET icon = $1, title = $2, subtitle = $3, category = $4,
+              sort_order = $5, visible = $6, code = $7, updated_at = now()
+        WHERE id = $8
+       RETURNING id, code, icon, title, subtitle, category, sort_order, visible, updated_at`,
+      [b.icon, b.title, b.subtitle, b.category, b.sort_order, b.visible, b.code ?? null, req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Service not found');
+    res.json({ item: rows[0] });
+  }),
+);
+
+router.delete(
+  '/site/services/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('DELETE FROM site_services WHERE id = $1', [req.params.id]);
+    if (!rowCount) throw ApiError.notFound('Service not found');
+    res.status(204).send();
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop)
 // ---------------------------------------------------------------------
 router.get(
