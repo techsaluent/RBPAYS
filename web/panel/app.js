@@ -3,13 +3,20 @@
 // ------- Config: point this at your API. Override via ?api= or window.TUTIPAYS_API -------
 // Auto-selects the API by the domain the panel is served from.
 function defaultApiBase() {
+  // 1) Explicit override: ?api=… on the URL, or a window global set by the host.
   const q = new URLSearchParams(location.search).get('api');
   if (q) return q;
   if (window.TUTIPAYS_API || window.RBPAYS_API) return window.TUTIPAYS_API || window.RBPAYS_API;
-  const h = location.hostname;
-  if (h === 'localhost' || h === '127.0.0.1') return 'http://localhost:8080/api/v1';
-  // Same-origin, path-based: the site proxies /api -> the API app.
-  // e.g. panel at tutipays.com/panel calls tutipays.com/api/v1 (no CORS needed).
+  // 2) Opened straight off disk (file://) with no origin — nothing proxies /api,
+  //    so fall back to the local standalone-API default.
+  if (location.protocol === 'file:' || !location.origin || location.origin === 'null') {
+    return 'http://localhost:8080/api/v1';
+  }
+  // 3) Everywhere else — production, the deploy proxy, AND localhost behind a
+  //    dev proxy / unified server — the site and API share an origin, so the
+  //    site proxies /api -> the API app (no CORS, no hard-coded port). Only a
+  //    split dev setup (static site on one port, API on another) needs the
+  //    ?api= or window.TUTIPAYS_API override above.
   return location.origin + '/api/v1';
 }
 const Cfg = { API: defaultApiBase() };
