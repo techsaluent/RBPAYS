@@ -2636,7 +2636,7 @@ router.get(
   '/provider-directory',
   asyncHandler(async (_req: Request, res: Response) => {
     const { rows } = await query(
-      'SELECT key, name, website, services, suggested_driver, notes FROM provider_directory WHERE enabled = true ORDER BY sort_order, name',
+      'SELECT key, name, website, services, suggested_driver, base_url, default_services, notes FROM provider_directory WHERE enabled = true ORDER BY sort_order, name',
     );
     res.json({ items: rows });
   }),
