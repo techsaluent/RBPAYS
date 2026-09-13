@@ -13,7 +13,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
 import { rupeesToPaise, bigintToNumber, paiseToRupees } from '../../utils/money';
-import { debit, credit } from '../wallet/wallet.service';
+import { debit, credit, freezeWallet, unfreezeWallet, recoverChargeback, getWalletByUser } from '../wallet/wallet.service';
 import { createMember } from '../members/members.service';
 import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
@@ -506,6 +506,74 @@ router.post(
     await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'hold.release',
       targetType: 'user', targetId: req.params.id, detail: { hold_id: req.params.holdId } });
     res.json({ hold: rows[0] });
+  }),
+);
+
+// ---- Wallet snapshot (balance / held / available / frozen) ---------------
+router.get(
+  '/users/:id/wallet',
+  asyncHandler(async (req: Request, res: Response) => {
+    const wallet = await getWalletByUser(req.params.id);
+    res.json({ wallet });
+  }),
+);
+
+// ---- Wallet freeze / unfreeze (block ALL spends) -------------------------
+const freezeSchema = z.object({ reason: z.string().trim().max(200).optional() });
+
+router.post(
+  '/users/:id/freeze',
+  validate(freezeSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof freezeSchema>;
+    const wallet = await freezeWallet(req.params.id, req.user.id, b.reason);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'wallet.freeze',
+      targetType: 'user', targetId: req.params.id, detail: { reason: b.reason ?? null } });
+    res.json({ wallet });
+  }),
+);
+
+router.post(
+  '/users/:id/unfreeze',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const wallet = await unfreezeWallet(req.params.id);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'wallet.unfreeze',
+      targetType: 'user', targetId: req.params.id, detail: {} });
+    res.json({ wallet });
+  }),
+);
+
+// ---- Chargeback recovery (claw back a loss, cascading up the upline) ------
+const chargebackSchema = z.object({
+  amount: z.coerce.number().positive().max(10000000), // rupees
+  reason: z.string().trim().max(200).optional(),
+  reference: z.string().trim().max(64).optional(),
+});
+
+router.post(
+  '/users/:id/chargeback',
+  validate(chargebackSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof chargebackSchema>;
+    const user = await query('SELECT 1 FROM users WHERE id = $1', [req.params.id]);
+    if (!user.rowCount) throw ApiError.notFound('User not found');
+    const adminId = req.user.id;
+    const result = await withTransaction((client) =>
+      recoverChargeback(client, {
+        originUserId: req.params.id,
+        amountPaise: rupeesToPaise(b.amount),
+        adminId,
+        reason: b.reason,
+        reference: b.reference,
+      }),
+    );
+    await logAudit({ actorId: adminId, actorRole: req.user.role, action: 'wallet.chargeback',
+      targetType: 'user', targetId: req.params.id,
+      detail: { amount_paise: rupeesToPaise(b.amount), reason: b.reason ?? null, reference: b.reference ?? null, legs: result.legs } });
+    res.status(201).json({ chargeback_id: result.id, legs: result.legs });
   }),
 );
 
