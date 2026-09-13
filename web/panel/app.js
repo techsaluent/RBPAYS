@@ -1177,6 +1177,7 @@ const Screens = {
           : `<button class="btn sm" onclick="Actions.setStatus('${u.id}','active')">Activate</button>`}
         <button class="btn sm ghost" onclick="Actions.resetUserPw('${u.id}','${esc(u.full_name)}')">Reset PW</button>
         ${u.role !== 'admin' ? `<button class="btn sm ghost" onclick="Actions.holds('${u.id}','${esc(u.full_name)}')">Lien</button>
+        <button class="btn sm ghost" onclick="Actions.walletControls('${u.id}','${esc(u.full_name)}')">Wallet</button>
         <button class="btn sm ghost" onclick="Actions.assessOnb('${u.id}')">Score</button>
         <button class="btn sm ghost" onclick="Actions.setUserPlan('${u.id}','${esc(u.full_name)}','${u.commission_plan_id||''}')">Plan</button>
         <button class="btn sm ghost" onclick="Actions.promote('${u.id}')">Promote</button>` : ''}
@@ -2849,6 +2850,60 @@ const Actions = {
     try { await Api.post(`/admin/users/${userId}/holds/${holdId}/release`, {});
       UI.toast('Hold released'); Actions.holds(userId, name); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Wallet controls: freeze (block all spends) + chargeback recovery from upline.
+  async walletControls(userId, name) {
+    const { wallet: w } = await Api.get(`/admin/users/${userId}/wallet`);
+    const frozen = w.frozen;
+    UI.modal(`<h3>Wallet controls — ${esc(name)}</h3>
+      <div class="row" style="gap:16px;flex-wrap:wrap">
+        <div><div class="muted" style="font-size:12px">Balance</div><b>${money(w.balance_paise/100)}</b></div>
+        <div><div class="muted" style="font-size:12px">On hold (lien)</div><b>${money((w.held_paise||0)/100)}</b></div>
+        <div><div class="muted" style="font-size:12px">Available</div><b>${money((w.available_paise||0)/100)}</b></div>
+        <div><div class="muted" style="font-size:12px">Status</div>${frozen ? '<b style="color:#c0392b">FROZEN</b>' : '<b style="color:#1e8e3e">Active</b>'}</div>
+      </div>
+      ${frozen ? `<p class="muted" style="font-size:13px;margin-top:8px">Frozen${w.frozen_reason ? `: ${esc(w.frozen_reason)}` : ''}. All spends are blocked until unfrozen.</p>` : ''}
+      <hr class="mt">
+      <h4>Freeze wallet</h4>
+      <p class="muted" style="font-size:13px">A freeze blocks <b>every</b> debit (services, transfers, withdrawals) — unlike a lien, which only blocks a portion.</p>
+      ${frozen
+        ? `<button class="btn sm" onclick="Actions.unfreezeWallet('${userId}','${esc(name)}')">Unfreeze wallet</button>`
+        : `<div class="row" style="gap:8px;align-items:end">
+             <div class="field" style="margin:0;flex:1"><label>Reason</label><input id="frz_reason" placeholder="fraud review / KYC hold"></div>
+             <button class="btn sm" onclick="Actions.freezeWallet('${userId}','${esc(name)}')">Freeze wallet</button>
+           </div>`}
+      <hr class="mt">
+      <h4>Chargeback recovery</h4>
+      <p class="muted" style="font-size:13px">Claws back a loss from this member, cascading any shortfall <b>up the parent chain</b>. The top account absorbs the remainder (may go negative).</p>
+      <div class="row" style="gap:8px;align-items:end;flex-wrap:wrap">
+        <div class="field" style="margin:0"><label>Amount (₹)</label><input id="cb_amt" type="number" min="1" step="0.01" style="width:120px"></div>
+        <div class="field" style="margin:0"><label>Reference</label><input id="cb_ref" placeholder="disputed txn ref" style="width:150px"></div>
+        <div class="field" style="margin:0;flex:1"><label>Reason</label><input id="cb_reason" placeholder="disputed / chargeback"></div>
+        <button class="btn sm danger" onclick="Actions.chargeback('${userId}','${esc(name)}')">Recover</button>
+      </div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async freezeWallet(userId, name) {
+    try { await Api.post(`/admin/users/${userId}/freeze`, { reason: val('frz_reason') || undefined });
+      UI.toast('Wallet frozen'); Actions.walletControls(userId, name); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async unfreezeWallet(userId, name) {
+    try { await Api.post(`/admin/users/${userId}/unfreeze`, {});
+      UI.toast('Wallet unfrozen'); Actions.walletControls(userId, name); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async chargeback(userId, name) {
+    const amt = +val('cb_amt'); if (!amt || amt <= 0) return UI.toast('Enter an amount', 'err');
+    if (!confirm(`Recover ${money(amt)} from ${name} and their upline? This debits real wallet balances.`)) return;
+    try {
+      const r = await Api.post(`/admin/users/${userId}/chargeback`, {
+        amount: amt, reference: val('cb_ref') || undefined, reason: val('cb_reason') || undefined,
+      });
+      const n = (r.legs || []).length;
+      UI.toast(`Recovered across ${n} account${n === 1 ? '' : 's'}`);
+      Actions.walletControls(userId, name);
+    } catch (err) { UI.toast(err.message, 'err'); }
   },
   async resetUserPw(id, name) {
     const pw = prompt(`Set a new password for ${name} (min 8 chars):`);
