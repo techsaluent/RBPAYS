@@ -273,6 +273,7 @@ const NAV = [
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
+  { key: 'developer', label: '🧩 Developer API', roles: NETWORK_ROLES },
   { key: 'profile', label: 'Profile', roles: '*' },
   { key: 'security', label: 'Security', roles: '*' },
   // Admin console — grouped into sidebar sections; each maps to a staff permission.
@@ -650,6 +651,47 @@ const Screens = {
         }
       }).catch(() => {});
     }
+  },
+
+  // Developer API: a member issues platform API keys, integrates their own code,
+  // and resells our services (recharge, payout, DMT, BBPS…) through /partner.
+  async developer() {
+    const [svc, keysRes, delRes] = await Promise.all([
+      Api.get('/developer/services').catch(() => ({ services: [] })),
+      Api.get('/developer/keys').catch(() => ({ items: [] })),
+      Api.get('/developer/deliveries').catch(() => ({ items: [] })),
+    ]);
+    State._devServices = svc.services || [];
+    const base = (window.TUTIPAYS_API || (location.origin + '/api/v1')).replace(/\/$/, '');
+    const keyRows = (keysRes.items || []).map(k => `<tr>
+      <td><code>${esc(k.key_prefix)}…</code>${k.label ? '<br><span class="muted">' + esc(k.label) + '</span>' : ''}</td>
+      <td>${esc((k.scopes || []).join(', '))}</td>
+      <td>${esc(k.environment)}</td>
+      <td>${k.rate_limit_per_min}/min</td>
+      <td>${k.callback_url ? '<span class="muted" title="' + esc(k.callback_url) + '">set</span>' : '<span class="muted">—</span>'}</td>
+      <td>${k.active ? UI.statusTag('active') : '<span class="tag">revoked</span>'}</td>
+      <td>${k.active ? `<button class="btn sm ghost" onclick="Actions.editApiKey('${k.id}')">Edit</button>
+        <button class="btn sm ghost" onclick="Actions.revealSecret('${k.id}')">Secret</button>
+        <button class="btn sm ghost" onclick="Actions.revokeApiKey('${k.id}')">Revoke</button>` : '<span class="muted">—</span>'}</td>
+    </tr>`).join('');
+    const delRows = (delRes.items || []).map(d => `<tr>
+      <td class="muted">${new Date(d.created_at).toLocaleString('en-IN')}</td>
+      <td>${esc(d.reference)}</td><td>${esc(d.event)}</td>
+      <td>${d.delivered ? UI.statusTag('success') : UI.statusTag('failed')}${d.response_status ? ' <span class="muted">HTTP ' + d.response_status + '</span>' : ''}</td>
+      <td>${d.attempts}</td></tr>`).join('');
+    $('view').innerHTML = `
+      <div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2>🧩 Developer API</h2><button class="btn sm" onclick="Actions.newApiKey()">+ Create API key</button></div>
+        <p class="muted">Issue platform API keys and consume TutiPays services from your own app — recharge, payout, money transfer (DMT), BBPS and more. Transactions run on <b>your</b> wallet, with your commissions. Full guide: <a href="../developers.html" target="_blank">developer docs</a>.</p>
+        <p class="muted" style="font-size:13px">Base URL: <code>${esc(base)}/partner</code> · Auth header: <code>Authorization: Bearer pk_live_…</code> · Idempotency: send a unique <code>reference</code> per transaction.</p>
+        <div class="tbl-wrap mt"><table><thead><tr><th>Key</th><th>Scopes</th><th>Env</th><th>Rate</th><th>Callback</th><th>Status</th><th></th></tr></thead>
+        <tbody>${keyRows || '<tr><td colspan=7 class=muted>No API keys yet. Create one to get started.</td></tr>'}</tbody></table></div>
+      </div>
+      <div class="panel mt"><h2>Webhook deliveries</h2>
+        <p class="muted" style="font-size:13px">We POST a signed callback (header <code>X-TutiPays-Signature</code> = HMAC-SHA256 of the body) to your callback URL when a transaction settles. Verify it with your key's signing secret.</p>
+        <div class="tbl-wrap"><table><thead><tr><th>When</th><th>Reference</th><th>Event</th><th>Result</th><th>Tries</th></tr></thead>
+        <tbody>${delRows || '<tr><td colspan=5 class=muted>No deliveries yet.</td></tr>'}</tbody></table></div>
+      </div>`;
   },
 
   // Account security: change password, set/remove login MPIN, authenticator
@@ -2905,6 +2947,88 @@ const Actions = {
       Actions.walletControls(userId, name);
     } catch (err) { UI.toast(err.message, 'err'); }
   },
+
+  // ---- Developer API keys (member self-service) --------------------------
+  _keyForm(k) {
+    const services = State._devServices || [];
+    const sel = new Set((k && k.scopes) || ['*']);
+    const all = sel.has('*');
+    const boxes = services.map(s => `<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 8px 2px 0;font-size:13px">
+      <input type="checkbox" class="dev_scope" value="${esc(s)}" ${(!all && sel.has(s)) ? 'checked' : ''}> ${esc(s)}</label>`).join('');
+    return `
+      <div class="field"><label>Label</label><input id="dev_label" value="${k ? esc(k.label || '') : ''}" placeholder="My storefront"></div>
+      ${k ? '' : `<div class="field"><label>Environment</label><select id="dev_env"><option value="live">live</option><option value="test">test</option></select></div>`}
+      <div class="field"><label>Scopes (services this key may call)</label>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" id="dev_all" ${all ? 'checked' : ''} onchange="document.querySelectorAll('.dev_scope').forEach(c=>{c.disabled=this.checked})"> <b>All services (*)</b></label>
+        <div>${boxes}</div></div>
+      <div class="field"><label>Callback URL (optional — receives signed settlement webhooks)</label>
+        <input id="dev_cb" value="${k ? esc(k.callback_url || '') : ''}" placeholder="https://yourapp.com/tutipays/webhook"></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label>Rate limit (per minute)</label><input id="dev_rate" type="number" min="1" max="6000" value="${k ? k.rate_limit_per_min : 120}"></div>
+        <div class="field" style="flex:2"><label>IP allowlist (comma-separated, blank = any)</label><input id="dev_ips" value="${k ? esc((k.allowed_ips || []).join(', ')) : ''}" placeholder="e.g. 203.0.113.4, 203.0.113.5"></div>
+      </div>`;
+  },
+  _keyPayload() {
+    const all = $('dev_all') && $('dev_all').checked;
+    const scopes = all ? ['*'] : Array.from(document.querySelectorAll('.dev_scope')).filter(c => c.checked).map(c => c.value);
+    const ips = (val('dev_ips') || '').split(',').map(s => s.trim()).filter(Boolean);
+    const cb = (val('dev_cb') || '').trim();
+    return {
+      label: val('dev_label') || undefined,
+      scopes,
+      allowed_ips: ips,
+      rate_limit_per_min: +val('dev_rate') || 120,
+      callback_url: cb || null,
+    };
+  },
+  newApiKey() {
+    UI.modal(`<h3>Create API key</h3>${Actions._keyForm(null)}
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+      <button class="btn" onclick="Actions.saveNewApiKey()">Create key</button></div>`);
+  },
+  async saveNewApiKey() {
+    const body = Actions._keyPayload();
+    if ($('dev_env')) body.environment = val('dev_env') || 'live';
+    if (!body.scopes.length) return UI.toast('Pick at least one scope', 'err');
+    try {
+      const { key } = await Api.post('/developer/keys', body);
+      UI.modal(`<h3>API key created</h3>
+        <p class="muted">Copy these now — the secret key and signing secret are shown <b>once</b> and cannot be retrieved later.</p>
+        <div class="field"><label>API key</label><input value="${esc(key.api_key)}" readonly onclick="this.select()"></div>
+        <div class="field"><label>Callback signing secret</label><input value="${esc(key.callback_secret)}" readonly onclick="this.select()"></div>
+        <p class="muted" style="font-size:13px">Use the key as <code>Authorization: Bearer ${esc(key.key_prefix)}…</code>. Verify webhooks with the signing secret.</p>
+        <div class="foot"><button class="btn" onclick="UI.closeModal();App.route()">Done</button></div>`);
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async editApiKey(id) {
+    const { items } = await Api.get('/developer/keys');
+    const k = (items || []).find(x => x.id === id);
+    if (!k) return UI.toast('Key not found', 'err');
+    UI.modal(`<h3>Edit API key</h3><p class="muted"><code>${esc(k.key_prefix)}…</code></p>${Actions._keyForm(k)}
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+      <button class="btn" onclick="Actions.saveApiKey('${id}')">Save</button></div>`);
+  },
+  async saveApiKey(id) {
+    const body = Actions._keyPayload();
+    if (!body.scopes.length) return UI.toast('Pick at least one scope', 'err');
+    try { await Api.put(`/developer/keys/${id}`, body); UI.closeModal(); UI.toast('Key updated'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async revealSecret(id) {
+    try {
+      const { callback_secret } = await Api.get(`/developer/keys/${id}/secret`);
+      UI.modal(`<h3>Callback signing secret</h3>
+        <div class="field"><input value="${esc(callback_secret || '')}" readonly onclick="this.select()"></div>
+        <p class="muted" style="font-size:13px">Verify each webhook: HMAC-SHA256 of the raw body with this secret must equal the <code>X-TutiPays-Signature</code> header.</p>
+        <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async revokeApiKey(id) {
+    if (!confirm('Revoke this API key? Any integration using it will stop working immediately.')) return;
+    try { await Api.del(`/developer/keys/${id}`); UI.toast('Key revoked'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+
   async resetUserPw(id, name) {
     const pw = prompt(`Set a new password for ${name} (min 8 chars):`);
     if (!pw) return;
