@@ -170,6 +170,10 @@
   </header>
 
   <nav class="toc" aria-label="Contents">
+    <div class="grp">Partner API</div>
+    <a href="#partner">Reseller quick-start</a>
+    <a href="#partner-endpoints">Partner endpoints</a>
+    <a href="#partner-webhooks">Outbound webhooks</a>
     <div class="grp">Start here</div>
     <a href="#conventions">Conventions</a>
     <a href="#envelope">Response envelope</a>
@@ -191,6 +195,85 @@
   </nav>
 
   <main>
+    <!-- ============ PARTNER / RESELLER API ============ -->
+    <section id="partner">
+      <h2>Partner / Reseller API</h2>
+      <p class="sub">Become a reselling point: generate a platform API key, integrate from your own app, and fulfil recharge, payout, money transfer (DMT), BBPS and more through TutiPays. Every call runs on <b>your</b> wallet with your commissions — exactly as if you'd transacted in the panel.</p>
+      <div class="cards">
+        <div class="card"><h4>1 · Get a key</h4><p>Panel → <b>🧩 Developer API</b> → <b>Create API key</b>. Pick the <b>scopes</b> (which services the key may call), an optional callback URL and IP allowlist. The secret key <span class="mono">pk_live_…</span> and signing secret are shown <b>once</b> — store them safely.</p></div>
+        <div class="card"><h4>2 · Authenticate</h4><p>Send <span class="mono">Authorization: Bearer pk_live_…</span> to the partner base <span class="mono">/api/v1/partner</span>. The key resolves to your account; no login needed.</p></div>
+        <div class="card"><h4>3 · Transact</h4><p>POST to a service endpoint with a unique <span class="mono">reference</span> (your idempotency key). Re-sending the same reference returns the original result — never a double charge.</p></div>
+        <div class="card"><h4>4 · Reconcile</h4><p>Receive a <b>signed webhook</b> on settlement, or poll <span class="mono">GET /partner/transactions/&lt;reference&gt;</span>. Both report the terminal status and the bank UTR.</p></div>
+      </div>
+      <div class="cards" style="margin-top:14px">
+        <div class="card"><h4>Scopes</h4><p>A key only calls services in its scope list (or <span class="mono">*</span> for all). A call outside scope returns <span class="mono">403</span>.</p></div>
+        <div class="card"><h4>Rate limit</h4><p>Per-key, per-minute (default 120). Over the limit returns <span class="mono">429</span> with a <span class="mono">Retry-After</span> header.</p></div>
+        <div class="card"><h4>IP allowlist</h4><p>Optional. When set, calls from any other IP return <span class="mono">403</span>. Leave empty to allow any origin.</p></div>
+        <div class="card"><h4>Amounts &amp; refs</h4><p>Same as every service: <span class="mono">amount</span> in rupees; a unique <span class="mono">reference</span> per transaction; the 15-char platform reference and UTR come back on settlement.</p></div>
+      </div>
+    </section>
+
+    <!-- ============ PARTNER ENDPOINTS ============ -->
+    <section id="partner-endpoints">
+      <h2>Partner endpoints</h2>
+      <p class="sub">Base <span class="mono">https://tutipays.com/api/v1/partner</span>. Service bodies are identical to the internal service endpoints documented below — only the base path and the <span class="mono">pk_</span> auth differ.</p>
+      <pre><span class="c">// Who am I — key scopes, environment, rate limit</span>
+GET /api/v1/partner/me
+
+<span class="c">// Wallet balance / spendable</span>
+GET /api/v1/partner/wallet
+
+<span class="c">// Transaction status by your reference (poll alongside the webhook)</span>
+GET /api/v1/partner/transactions/&lt;reference&gt;
+GET /api/v1/partner/transactions?status=success&amp;limit=20
+
+<span class="c">// Services (each gated by the key's scope)</span>
+POST /api/v1/partner/recharge     <span class="c">// { operator, number, amount, reference }</span>
+POST /api/v1/partner/dmt          <span class="c">// money transfer</span>
+POST /api/v1/partner/bbps         <span class="c">// bill payment</span>
+POST /api/v1/partner/payout       <span class="c">// bank payout</span></pre>
+      <p class="sub" style="margin-top:11px">Example — a prepaid recharge:</p>
+      <pre>curl -X POST https://tutipays.com/api/v1/partner/recharge \
+  -H "Authorization: Bearer pk_live_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"operator":"Airtel","number":"9876543210","amount":199,"reference":"ORDER-10231"}'
+
+<span class="c">// 201 Created</span>
+{ <span class="k">"transaction"</span>: { <span class="k">"reference"</span>:"ORDER-10231", <span class="k">"status"</span>:"success", <span class="k">"amount_paise"</span>:19900, … }, <span class="k">"idempotent"</span>:false }</pre>
+    </section>
+
+    <!-- ============ PARTNER WEBHOOKS ============ -->
+    <section id="partner-webhooks">
+      <h2>Outbound webhooks (TutiPays → you)</h2>
+      <p class="sub">If your key has a callback URL, TutiPays POSTs a signed JSON body to it whenever one of your transactions reaches a terminal state. Delivery is retried up to 3× and logged (Panel → Developer API → Webhook deliveries).</p>
+      <pre>POST &lt;your callback URL&gt;
+X-TutiPays-Event: transaction.success
+X-TutiPays-Signature: &lt;hex HMAC-SHA256 of the raw body&gt;
+Content-Type: application/json
+
+{
+  <span class="k">"event"</span>: "transaction.success",
+  <span class="k">"created_at"</span>: "2026-09-13T01:18:38.785Z",
+  <span class="k">"data"</span>: {
+    <span class="k">"reference"</span>: "ORDER-10231",
+    <span class="k">"service"</span>: "recharge",
+    <span class="k">"status"</span>: "success",
+    <span class="k">"amount"</span>: "199.00",
+    <span class="k">"amount_paise"</span>: 19900,
+    <span class="k">"net_paise"</span>: 19900,
+    <span class="k">"provider"</span>: "…",
+    <span class="k">"message"</span>: "…"
+  }
+}</pre>
+      <h3>Verify the signature</h3>
+      <p class="sub">Compute HMAC-SHA256 of the <b>raw</b> request body using your key's signing secret (<span class="mono">whsec_…</span>, revealable in the panel) and compare, in constant time, to the <span class="mono">X-TutiPays-Signature</span> header. Reject on mismatch.</p>
+      <pre><span class="c">// Node.js</span>
+const crypto = require('crypto');
+const expected = crypto.createHmac('sha256', SIGNING_SECRET).update(rawBody).digest('hex');
+const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.headers['x-tutipays-signature']));</pre>
+      <p class="sub">Reply <span class="mono">2xx</span> to acknowledge. Any other status (or a timeout) is retried. Deliveries are de-duplicated per <span class="mono">(key, reference, event)</span>, so a replay never double-posts.</p>
+    </section>
+
     <!-- ============ CONVENTIONS ============ -->
     <section id="conventions">
       <h2>Conventions</h2>
