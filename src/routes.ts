@@ -34,6 +34,8 @@ import catalogRoutes from './modules/catalog/catalog.routes';
 import disputesRoutes from './modules/disputes/disputes.routes';
 import transactionRoutes from './modules/transactions/transactions.routes';
 import siteRoutes from './modules/site/site.routes';
+import developerRoutes from './modules/partner/developer.routes';
+import partnerRoutes from './modules/partner/partner.routes';
 
 const router = Router();
 
@@ -72,5 +74,8 @@ router.use('/staff', staffRoutes);
 router.use('/catalog', catalogRoutes);
 router.use('/disputes', disputesRoutes);
 router.use('/site', siteRoutes);
+// Partner/reseller API: member key management (JWT) + the public keyed API.
+router.use('/developer', developerRoutes);
+router.use('/partner', partnerRoutes);
 
 export default router;

@@ -59,8 +59,10 @@ export function requireService(serviceCode: string) {
 
       // Transaction MPIN: when enabled platform-wide, confirm the money
       // transaction with the member's MPIN (read from the raw body before the
-      // per-route schema strips it). Admins are exempt (support/testing).
-      if (row.require_txn_mpin === 'true' && req.user.role !== 'admin') {
+      // per-route schema strips it). Admins are exempt (support/testing), and
+      // partner API keys are exempt because the signed secret key is itself the
+      // transaction auth factor.
+      if (row.require_txn_mpin === 'true' && req.user.role !== 'admin' && !req.partner) {
         if (!row.mpin_hash) {
           throw new ApiError(403, 'txn_mpin_not_set', 'Set a transaction MPIN in Security before transacting');
         }

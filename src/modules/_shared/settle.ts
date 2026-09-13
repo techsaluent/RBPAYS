@@ -9,6 +9,7 @@ import { ProviderResult } from '../../providers/types';
 import { notifyTxn } from '../notify/alerts';
 import { addNotification } from '../notify/notify.service';
 import { rewardReferralOnFirstSuccess } from '../rewards/referral.service';
+import { deliverPartnerCallback } from '../partner/partner.service';
 
 // Cash-out inflow services accumulate in the retailer's AePS Settlement
 // wallet (per the multi-wallet model), not the pre-funded Main wallet.
@@ -175,6 +176,10 @@ export async function settleByReference(
 
   // Member SMS alert (best-effort, after commit) for a terminal outcome.
   if (notify) void notifyTxn(notify.userId, { ...notify, reference });
+  // Outbound partner/reseller webhook (best-effort, after commit) — fires for
+  // any member holding a partner API key with a callback URL, however the
+  // transaction was initiated (partner API or panel).
+  if (notify) void deliverPartnerCallback(notify.userId, reference);
   // Referral bonus notification to the referrer (best-effort, after commit).
   if (referralReward) {
     void addNotification(referralReward.referrerId, 'info', 'Referral bonus earned! 🎁',
