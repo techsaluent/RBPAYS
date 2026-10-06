@@ -272,6 +272,12 @@ const crypto = require('crypto');
 const expected = crypto.createHmac('sha256', SIGNING_SECRET).update(rawBody).digest('hex');
 const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.headers['x-tutipays-signature']));</pre>
       <p class="sub">Reply <span class="mono">2xx</span> to acknowledge. Any other status (or a timeout) is retried. Deliveries are de-duplicated per <span class="mono">(key, reference, event)</span>, so a replay never double-posts.</p>
+      <div class="cards" style="margin-top:14px">
+        <div class="card"><h4>URL requirements</h4><p>Must be <span class="mono">https://</span> and publicly reachable. Private / loopback / link-local / reserved IPs and internal hostnames are rejected when you save it.</p></div>
+        <div class="card"><h4>Test it</h4><p>Panel → Developer API → <b>Test</b> on a key sends a signed <span class="mono">test.ping</span> to the endpoint and logs the result, so you can confirm signature verification before going live.</p></div>
+        <div class="card"><h4>Per-key or account default</h4><p>Set a callback URL on each key, or one <b>account default</b> that every key without its own URL falls back to. Each has its own signing secret.</p></div>
+        <div class="card"><h4>Events</h4><p><span class="mono">transaction.success</span>, <span class="mono">transaction.failed</span> on settlement; <span class="mono">test.ping</span> from the test button. Switch on the <span class="mono">event</span> field.</p></div>
+      </div>
     </section>
 
     <!-- ============ CONVENTIONS ============ -->

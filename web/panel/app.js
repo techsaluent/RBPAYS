@@ -656,41 +656,68 @@ const Screens = {
   // Developer API: a member issues platform API keys, integrates their own code,
   // and resells our services (recharge, payout, DMT, BBPS…) through /partner.
   async developer() {
-    const [svc, keysRes, delRes] = await Promise.all([
+    const [svc, keysRes, delRes, defRes] = await Promise.all([
       Api.get('/developer/services').catch(() => ({ services: [] })),
       Api.get('/developer/keys').catch(() => ({ items: [] })),
       Api.get('/developer/deliveries').catch(() => ({ items: [] })),
+      Api.get('/developer/callback-default').catch(() => ({ default: { callback_url: null } })),
     ]);
     State._devServices = svc.services || [];
+    const origin = (window.TUTIPAYS_API ? location.origin : location.origin);
     const base = (window.TUTIPAYS_API || (location.origin + '/api/v1')).replace(/\/$/, '');
+    const def = (defRes && defRes.default) || { callback_url: null };
+    const cbCell = (url) => url
+      ? `<code style="font-size:11px" title="${esc(url)}">${esc(url.length > 32 ? url.slice(0, 30) + '…' : url)}</code>`
+      : (def.callback_url ? '<span class="muted" title="uses account default">default</span>' : '<span class="muted">—</span>');
     const keyRows = (keysRes.items || []).map(k => `<tr>
       <td><code>${esc(k.key_prefix)}…</code>${k.label ? '<br><span class="muted">' + esc(k.label) + '</span>' : ''}</td>
       <td>${esc((k.scopes || []).join(', '))}</td>
       <td>${esc(k.environment)}</td>
       <td>${k.rate_limit_per_min}/min</td>
-      <td>${k.callback_url ? '<span class="muted" title="' + esc(k.callback_url) + '">set</span>' : '<span class="muted">—</span>'}</td>
+      <td>${cbCell(k.callback_url)}</td>
       <td>${k.active ? UI.statusTag('active') : '<span class="tag">revoked</span>'}</td>
       <td>${k.active ? `<button class="btn sm ghost" onclick="Actions.editApiKey('${k.id}')">Edit</button>
+        <button class="btn sm ghost" onclick="Actions.testCallback('${k.id}')">Test</button>
         <button class="btn sm ghost" onclick="Actions.revealSecret('${k.id}')">Secret</button>
         <button class="btn sm ghost" onclick="Actions.revokeApiKey('${k.id}')">Revoke</button>` : '<span class="muted">—</span>'}</td>
     </tr>`).join('');
     const delRows = (delRes.items || []).map(d => `<tr>
       <td class="muted">${new Date(d.created_at).toLocaleString('en-IN')}</td>
       <td>${esc(d.reference)}</td><td>${esc(d.event)}</td>
-      <td>${d.delivered ? UI.statusTag('success') : UI.statusTag('failed')}${d.response_status ? ' <span class="muted">HTTP ' + d.response_status + '</span>' : ''}</td>
+      <td>${d.delivered ? UI.statusTag('success') : UI.statusTag('failed')}${d.response_status ? ' <span class="muted">HTTP ' + d.response_status + '</span>' : ''}${(!d.delivered && d.error) ? ' <span class="muted" title="' + esc(d.error) + '">·</span>' : ''}</td>
       <td>${d.attempts}</td></tr>`).join('');
     $('view').innerHTML = `
       <div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
         <h2>🧩 Developer API</h2><button class="btn sm" onclick="Actions.newApiKey()">+ Create API key</button></div>
         <p class="muted">Issue platform API keys and consume TutiPays services from your own app — recharge, payout, money transfer (DMT), BBPS and more. Transactions run on <b>your</b> wallet, with your commissions. Full guide: <a href="../developers.html" target="_blank">developer docs</a>.</p>
         <p class="muted" style="font-size:13px">Base URL: <code>${esc(base)}/partner</code> · Auth header: <code>Authorization: Bearer pk_live_…</code> · Idempotency: send a unique <code>reference</code> per transaction.</p>
-        <div class="tbl-wrap mt"><table><thead><tr><th>Key</th><th>Scopes</th><th>Env</th><th>Rate</th><th>Callback</th><th>Status</th><th></th></tr></thead>
+        <div class="tbl-wrap mt"><table><thead><tr><th>Key</th><th>Scopes</th><th>Env</th><th>Rate</th><th>Callback URL</th><th>Status</th><th></th></tr></thead>
         <tbody>${keyRows || '<tr><td colspan=7 class=muted>No API keys yet. Create one to get started.</td></tr>'}</tbody></table></div>
       </div>
+
+      <div class="panel mt"><h2>Your callback URL</h2>
+        <p class="muted" style="font-size:13px">When a transaction settles we POST a <b>signed</b> JSON callback to your URL (header <code>X-TutiPays-Signature</code> = HMAC-SHA256 of the raw body — verify it with the key's signing secret). We retry up to 3×. Each key can have its own callback URL; keys without one fall back to the <b>account default</b> below. Must be <code>https://</code> and public (private/localhost IPs are rejected).</p>
+        <div class="row" style="gap:8px;align-items:end;flex-wrap:wrap">
+          <div class="field" style="margin:0;flex:1;min-width:280px"><label>Account default callback URL</label>
+            <input id="cbdef_url" value="${esc(def.callback_url || '')}" placeholder="https://yourapp.com/tutipays/webhook"></div>
+          <button class="btn sm" onclick="Actions.saveCallbackDefault()">Save</button>
+          ${def.callback_url ? `<button class="btn sm ghost" onclick="Actions.revealDefaultSecret()">Signing secret</button>
+          <button class="btn sm ghost" onclick="Actions.saveCallbackDefault(true)">Clear</button>` : ''}
+        </div>
+      </div>
+
       <div class="panel mt"><h2>Webhook deliveries</h2>
-        <p class="muted" style="font-size:13px">We POST a signed callback (header <code>X-TutiPays-Signature</code> = HMAC-SHA256 of the body) to your callback URL when a transaction settles. Verify it with your key's signing secret.</p>
         <div class="tbl-wrap"><table><thead><tr><th>When</th><th>Reference</th><th>Event</th><th>Result</th><th>Tries</th></tr></thead>
-        <tbody>${delRows || '<tr><td colspan=5 class=muted>No deliveries yet.</td></tr>'}</tbody></table></div>
+        <tbody>${delRows || '<tr><td colspan=5 class=muted>No deliveries yet. Use “Test” on a key to send a test.ping.</td></tr>'}</tbody></table></div>
+      </div>
+
+      <div class="panel mt"><h2>Inbound webhook URLs <span class="muted" style="font-weight:400;font-size:13px">(for provider / aggregator setup — admin)</span></h2>
+        <p class="muted" style="font-size:13px">These are the URLs TutiPays <b>exposes</b> for upstream providers to post transaction status back to us. Set them in your provider/aggregator dashboard. (Different from your outbound callback above.)</p>
+        <div class="tbl-wrap"><table><thead><tr><th>Purpose</th><th>URL</th></tr></thead><tbody>
+          <tr><td>Per-provider callback</td><td><code>${esc(origin)}/api/v1/webhooks/provider/&lt;providerId&gt;</code></td></tr>
+          <tr><td>Generic aggregator</td><td><code>${esc(origin)}/api/v1/webhooks/aggregator</code></td></tr>
+          <tr><td>Razorpay</td><td><code>${esc(origin)}/api/v1/webhooks/razorpay</code></td></tr>
+        </tbody></table></div>
       </div>`;
   },
 
@@ -3027,6 +3054,37 @@ const Actions = {
     if (!confirm('Revoke this API key? Any integration using it will stop working immediately.')) return;
     try { await Api.del(`/developer/keys/${id}`); UI.toast('Key revoked'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async testCallback(id) {
+    UI.toast('Sending test webhook…');
+    try {
+      const { result } = await Api.post(`/developer/keys/${id}/test-callback`, {});
+      if (result.delivered) UI.toast(`Delivered ✓ (HTTP ${result.response_status})`);
+      else UI.toast(`Not delivered: ${result.error || 'HTTP ' + result.response_status} (${result.attempts} tries)`, 'err');
+      App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async saveCallbackDefault(clear) {
+    const url = clear ? null : (val('cbdef_url') || '').trim();
+    if (clear && !confirm('Clear the account default callback URL? Keys without their own URL will stop receiving webhooks.')) return;
+    try {
+      const { default: d } = await Api.put('/developer/callback-default', { callback_url: url || null });
+      if (d && d.callback_secret) {
+        UI.modal(`<h3>Default callback saved</h3>
+          <p class="muted">Copy the signing secret now — it's shown once. Verify each webhook with it.</p>
+          <div class="field"><label>Callback signing secret</label><input value="${esc(d.callback_secret)}" readonly onclick="this.select()"></div>
+          <div class="foot"><button class="btn" onclick="UI.closeModal();App.route()">Done</button></div>`);
+      } else { UI.toast(url ? 'Saved' : 'Cleared'); App.route(); }
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async revealDefaultSecret() {
+    try {
+      const { callback_secret } = await Api.get('/developer/callback-default/secret');
+      UI.modal(`<h3>Default callback signing secret</h3>
+        <div class="field"><input value="${esc(callback_secret || '')}" readonly onclick="this.select()"></div>
+        <p class="muted" style="font-size:13px">Verify each webhook: HMAC-SHA256 of the raw body with this secret must equal the <code>X-TutiPays-Signature</code> header.</p>
+        <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+    } catch (err) { UI.toast(err.message, 'err'); }
   },
 
   async resetUserPw(id, name) {
