@@ -6,6 +6,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import {
   PARTNER_SERVICES, createKey, listKeys, updateKey, revokeKey, getCallbackSecret, listDeliveries,
+  sendTestCallback, getCallbackDefaultInfo, getCallbackDefaultSecret, setCallbackDefault,
 } from './partner.service';
 
 // Member-facing management of the partner/reseller API keys. JWT-authenticated
@@ -93,6 +94,15 @@ router.get(
   }),
 );
 
+// Send a signed `test.ping` to the key's effective callback URL.
+router.post(
+  '/keys/:id/test-callback',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    res.json({ result: await sendTestCallback(req.user.id, req.params.id) });
+  }),
+);
+
 router.delete(
   '/keys/:id',
   asyncHandler(async (req: Request, res: Response) => {
@@ -108,6 +118,35 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();
     res.json({ items: await listDeliveries(req.user.id) });
+  }),
+);
+
+// ---- Account-level default callback (fallback for keys without their own) --
+const defaultSchema = z.object({ callback_url: z.string().trim().url().max(500).nullable().optional() });
+
+router.get(
+  '/callback-default',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    res.json({ default: await getCallbackDefaultInfo(req.user.id) });
+  }),
+);
+
+router.put(
+  '/callback-default',
+  validate(defaultSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof defaultSchema>;
+    res.json({ default: await setCallbackDefault(req.user.id, b.callback_url ?? null) });
+  }),
+);
+
+router.get(
+  '/callback-default/secret',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    res.json({ callback_secret: await getCallbackDefaultSecret(req.user.id) });
   }),
 );
 
