@@ -13,6 +13,16 @@ import rechargeRouter from '../recharge/recharge.routes';
 import dmtRouter from '../dmt/dmt.routes';
 import bbpsRouter from '../bbps/bbps.routes';
 import payoutRouter from '../payout/payout.routes';
+import aepsRouter from '../aeps/aeps.routes';
+import cmsRouter from '../cms/cms.routes';
+import upiRouter from '../upi/upi.routes';
+import matmRouter from '../matm/matm.routes';
+import aadhaarPayRouter from '../aadhaar-pay/aadhaar-pay.routes';
+import panCardRouter from '../pan-card/pan-card.routes';
+import cardSwipeRouter from '../card-swipe/card-swipe.routes';
+import walletTransferRouter from '../wallet-transfer/wallet-transfer.routes';
+import travelRouter from '../travel/travel.routes';
+import insuranceRouter from '../insurance/insurance.routes';
 
 /**
  * Public partner / reseller API. Authenticated by a `pk_` API key that resolves
@@ -101,5 +111,15 @@ router.use('/recharge', partnerScope('recharge'), rechargeRouter);
 router.use('/dmt', partnerScope('dmt'), dmtRouter);
 router.use('/bbps', partnerScope('bbps'), bbpsRouter);
 router.use('/payout', partnerScope('payout'), payoutRouter);
+router.use('/aeps', partnerScope('aeps'), aepsRouter);
+router.use('/cms', partnerScope('cms'), cmsRouter);
+router.use('/upi', partnerScope('upi'), upiRouter);
+router.use('/matm', partnerScope('matm'), matmRouter);
+router.use('/aadhaar-pay', partnerScope('aadhaar_pay'), aadhaarPayRouter);
+router.use('/pan-card', partnerScope('pan_card'), panCardRouter);
+router.use('/card-swipe', partnerScope('card_swipe'), cardSwipeRouter);
+router.use('/wallet-transfer', partnerScope('wallet_transfer'), walletTransferRouter);
+router.use('/travel', partnerScope('travel'), travelRouter);
+router.use('/insurance', partnerScope('insurance'), insuranceRouter);
 
 export default router;

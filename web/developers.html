@@ -227,11 +227,22 @@ GET /api/v1/partner/wallet
 GET /api/v1/partner/transactions/&lt;reference&gt;
 GET /api/v1/partner/transactions?status=success&amp;limit=20
 
-<span class="c">// Services (each gated by the key's scope)</span>
-POST /api/v1/partner/recharge     <span class="c">// { operator, number, amount, reference }</span>
-POST /api/v1/partner/dmt          <span class="c">// money transfer</span>
-POST /api/v1/partner/bbps         <span class="c">// bill payment</span>
-POST /api/v1/partner/payout       <span class="c">// bank payout</span></pre>
+<span class="c">// Services (each gated by the key's scope). Bodies match the internal
+// service endpoints documented below; only the base path + pk_ auth differ.</span>
+POST /api/v1/partner/recharge
+POST /api/v1/partner/dmt                   <span class="c">// money transfer</span>
+POST /api/v1/partner/bbps/pay              <span class="c">// bill payment</span>
+POST /api/v1/partner/payout                <span class="c">// bank payout</span>
+POST /api/v1/partner/upi/pay               <span class="c">// UPI payout</span>
+POST /api/v1/partner/cms/pay               <span class="c">// cash management</span>
+POST /api/v1/partner/pan-card/apply
+POST /api/v1/partner/travel/book
+POST /api/v1/partner/insurance/buy
+POST /api/v1/partner/wallet-transfer
+POST /api/v1/partner/aeps/cash-withdrawal  <span class="c">// + /balance-enquiry, /mini-statement (need biometric)</span>
+POST /api/v1/partner/matm/withdrawal       <span class="c">// (needs device)</span>
+POST /api/v1/partner/aadhaar-pay           <span class="c">// (needs biometric)</span>
+POST /api/v1/partner/card-swipe            <span class="c">// (needs device)</span></pre>
       <p class="sub" style="margin-top:11px">Example — a prepaid recharge:</p>
       <pre>curl -X POST https://tutipays.com/api/v1/partner/recharge \
   -H "Authorization: Bearer pk_live_xxx" \
