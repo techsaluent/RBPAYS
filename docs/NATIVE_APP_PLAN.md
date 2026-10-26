@@ -49,6 +49,24 @@ Base: `https://tutipays.com/api/v1` · Auth: `Authorization: Bearer <JWT>`
 - Device binding + optional biometric unlock (app-side).
 - Transaction MPIN already supported server-side (`security_require_txn_mpin`).
 - Certificate pinning to the API domain (app-side).
+- **Screen-capture blocking (true block — app-only).** Unlike the web panels
+  (where a page can only deter + watermark, never block an OS screenshot), the
+  native apps hard-block capture:
+  - **Android:** set `FLAG_SECURE` on the app window
+    (`getWindow().setFlags(LayoutParams.FLAG_SECURE, …)`; in React Native use
+    `expo-screen-capture` `preventScreenCaptureAsync()` or
+    `react-native-screenshot-prevent`). This blocks screenshots **and** screen
+    recording, and shows a blank frame in the app switcher / screen mirroring.
+  - **iOS:** screenshots can't be blocked, but detect them
+    (`UIApplication.userDidTakeScreenshotNotification`) and detect active
+    recording/mirroring (`UIScreen.main.isCaptured`) → blur the UI with a
+    secure overlay while captured (`expo-screen-capture` exposes both). Hide
+    sensitive views behind the app-switcher snapshot
+    (`applicationWillResignActive` → cover with a splash/blur view).
+  - Apply globally, or at least on balance, statement, card and OTP screens.
+  - This complements the web layer (`web/panel/privacy.js`: identity
+    watermark, copy/context-menu block, hide-on-background, print block), which
+    is the strongest a browser allows.
 
 ## 4. Store & branding checklist (per brand / white-label tenant)
 

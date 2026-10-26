@@ -275,6 +275,18 @@
 
     @media (max-width:720px){ .topbar{ position:static; margin:-20px -20px 16px; } main{ padding:20px; } }
   </style>
+  <style>
+    /* Screen-capture privacy: blank the page for print / "Save as PDF" so a
+       print capture can't lift balances or member data. */
+    @media print {
+      body * { visibility: hidden !important; }
+      body::before {
+        content: "Printing is disabled for your account's security.";
+        visibility: visible; display: block; padding: 40px;
+        font: 600 16px system-ui, sans-serif; color: #111;
+      }
+    }
+  </style>
 </head>
 <body>
   <!-- Auth -->
@@ -373,7 +385,7 @@
   <script>
     (function () {
       var v = Date.now();
-      ['charts.js', 'rdservice.js', 'app.js'].forEach(function (s) {
+      ['privacy.js', 'charts.js', 'rdservice.js', 'app.js'].forEach(function (s) {
         document.write('<script src="' + s + '?v=' + v + '"><\/script>');
       });
     })();
