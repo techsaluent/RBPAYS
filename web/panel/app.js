@@ -1542,6 +1542,7 @@ const Screens = {
         <button class="btn ghost" onclick="Actions.errStatus('triaged')">Mark triaged</button>
         <button class="btn ghost" onclick="Actions.errStatus('ignored')">Ignore</button>
         <button class="btn ghost" onclick="Actions.errStatus('resolved')">Resolve</button>
+        <button class="btn ghost" onclick="Actions.escalateError()">↗ Open fix PR</button>
         <button class="btn" onclick="Actions.diagnoseError()">🤖 Diagnose with AI</button></div>`);
   },
   _errAiHtml(e) {
@@ -1559,6 +1560,13 @@ const Screens = {
   async errStatus(status) {
     try { await Api.post(`/admin/errors/${State._errId}/status`, { status }); UI.toast('Marked ' + status); UI.closeModal(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async escalateError() {
+    try {
+      const r = await Api.post(`/admin/errors/${State._errId}/escalate`, {});
+      UI.toast(r.already ? 'Already escalated' : 'Issue opened — a fix PR will follow');
+      UI.closeModal(); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
   },
   // Admin: ops desk — maker-checker manual adjustments.
   async opsdesk() {
