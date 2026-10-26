@@ -25,6 +25,7 @@ import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } 
 import { postJournal } from '../_shared/ledger';
 import { settleByReference } from '../_shared/settle';
 import { listTenants, getTenant, createTenant, updateTenant } from '../tenant/tenant.service';
+import { listErrors, getError, setErrorStatus, diagnoseError } from '../telemetry/error.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
@@ -318,6 +319,38 @@ router.put('/tenants/:id', validate(tenantSchema.partial()), asyncHandler(async 
   await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.update',
     targetType: 'tenant', targetId: req.params.id, detail: req.body });
   res.json({ tenant: t });
+}));
+
+// ---- Error monitor + AI triage -------------------------------------------
+router.get('/errors',
+  validate(z.object({ status: z.enum(['open', 'triaged', 'resolved', 'ignored']).optional(),
+    source: z.enum(['web', 'api']).optional() }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as { status?: string; source?: string };
+    res.json({ items: await listErrors(q) });
+  }));
+
+router.get('/errors/:id', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ error_report: await getError(req.params.id) });
+}));
+
+router.post('/errors/:id/status',
+  validate(z.object({ status: z.enum(['open', 'triaged', 'resolved', 'ignored']) })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const r = await setErrorStatus(req.params.id, (req.body as { status: 'open' | 'triaged' | 'resolved' | 'ignored' }).status);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'error.status',
+      targetType: 'error_report', targetId: req.params.id, detail: { status: req.body.status } });
+    res.json({ error_report: r });
+  }));
+
+// Ask the AI to diagnose + draft a fix (suggestion only — never auto-applied).
+router.post('/errors/:id/diagnose', asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const r = await diagnoseError(req.params.id);
+  await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'error.diagnose',
+    targetType: 'error_report', targetId: req.params.id, detail: {} });
+  res.json({ error_report: r });
 }));
 
 // ---- Transaction ops: refund + pending resolution ------------------------
