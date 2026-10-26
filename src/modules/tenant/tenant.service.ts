@@ -192,6 +192,55 @@ export async function deleteDomain(tenantId: string, domainId: string) {
   if (!rowCount) throw ApiError.notFound('Domain not found');
 }
 
+// ---- Per-tenant service visibility (Stage 3) ---------------------------
+
+/** The active tenant id that owns a verified host, or null. */
+export async function tenantIdForHost(host: string | undefined | null): Promise<string | null> {
+  const t = host ? await tenantByHost(host) : null;
+  return t ? t.id : null;
+}
+
+/** Service codes a tenant has explicitly hidden (visible = false). */
+export async function hiddenServiceCodes(tenantId: string): Promise<string[]> {
+  const { rows } = await query<{ service_code: string }>(
+    'SELECT service_code FROM tenant_service_visibility WHERE tenant_id = $1 AND visible = false',
+    [tenantId],
+  );
+  return rows.map((r) => r.service_code);
+}
+
+/** Hidden service codes for a request host's tenant ([] when no tenant host). */
+export async function hiddenServiceCodesForHost(host: string | undefined | null): Promise<string[]> {
+  const id = await tenantIdForHost(host);
+  return id ? hiddenServiceCodes(id) : [];
+}
+
+/**
+ * The tenant's service-visibility matrix for the admin UI: every catalog
+ * service with its current effective visibility for this tenant (an explicit
+ * override wins; absent = visible).
+ */
+export async function tenantServiceMatrix(tenantId: string) {
+  const { rows } = await query<{ code: string; name: string | null; enabled: boolean; visible: boolean | null }>(
+    `SELECT s.code, s.name, s.enabled, v.visible
+       FROM services s
+       LEFT JOIN tenant_service_visibility v ON v.service_code = s.code AND v.tenant_id = $1
+      ORDER BY s.code`,
+    [tenantId],
+  );
+  return rows.map((r) => ({ code: r.code, name: r.name, enabled: r.enabled, visible: r.visible !== false }));
+}
+
+/** Upsert a tenant's visibility override for one service. */
+export async function setTenantServiceVisibility(tenantId: string, serviceCode: string, visible: boolean) {
+  await getTenant(tenantId);
+  await query(
+    `INSERT INTO tenant_service_visibility (tenant_id, service_code, visible) VALUES ($1,$2,$3)
+       ON CONFLICT (tenant_id, service_code) DO UPDATE SET visible = EXCLUDED.visible`,
+    [tenantId, serviceCode, visible],
+  );
+}
+
 // ---- Admin CRUD ---------------------------------------------------------
 
 export interface TenantInput {

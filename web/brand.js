@@ -19,6 +19,21 @@
     const { settings: s } = await res.json();
     if (!s) return;
 
+    // White-label Stage 3: on a partner's custom domain, overlay that tenant's
+    // brand over the platform settings so the whole marketing site renders in
+    // their brand. Service cards + data-service gating already resolve by host.
+    try {
+      const br = await fetch('/api/v1/site/branding?host=' + encodeURIComponent(location.host), { cache: 'no-store' });
+      if (br.ok) {
+        const b = (await br.json()).branding;
+        if (b && b.tenant_id) {
+          for (const k of ['brand_name', 'primary_color', 'logo_url', 'logo_emoji', 'tagline', 'support_email', 'company_name']) {
+            if (b[k]) s[k] = b[k];
+          }
+        }
+      }
+    } catch (_) { /* best-effort */ }
+
     // ---- Front-end visibility toggles (admin-managed, no redeploy) ----
     // Standalone-page guard: if this page's flag is explicitly 'false', the
     // admin has taken it down — replace the whole page with an "unavailable"

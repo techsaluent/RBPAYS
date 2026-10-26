@@ -25,7 +25,8 @@ import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } 
 import { postJournal } from '../_shared/ledger';
 import { settleByReference } from '../_shared/settle';
 import { listTenants, getTenant, createTenant, updateTenant,
-  listDomains, addDomain, verifyDomain, updateDomain, deleteDomain } from '../tenant/tenant.service';
+  listDomains, addDomain, verifyDomain, updateDomain, deleteDomain,
+  tenantServiceMatrix, setTenantServiceVisibility } from '../tenant/tenant.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
@@ -361,6 +362,21 @@ router.delete('/tenants/:id/domains/:domainId', asyncHandler(async (req: Request
     targetType: 'tenant', targetId: req.params.id, detail: { domainId: req.params.domainId } });
   res.status(204).send();
 }));
+
+// ---- White-label per-tenant service visibility (Stage 3) -----------------
+router.get('/tenants/:id/services', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ items: await tenantServiceMatrix(req.params.id) });
+}));
+
+router.put('/tenants/:id/services/:code',
+  validate(z.object({ visible: z.boolean() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    await setTenantServiceVisibility(req.params.id, req.params.code, (req.body as { visible: boolean }).visible);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.service.visibility',
+      targetType: 'tenant', targetId: req.params.id, detail: { code: req.params.code, visible: req.body.visible } });
+    res.json({ ok: true });
+  }));
 
 // ---- Transaction ops: refund + pending resolution ------------------------
 const txnDecisionSchema = z.object({ remark: z.string().trim().min(1).max(200) });

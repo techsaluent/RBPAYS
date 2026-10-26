@@ -1922,7 +1922,8 @@ const Screens = {
       <td>${esc(t.support_email || '')}</td>
       <td>${t.status === 'active' ? UI.statusTag('active') : '<span class="tag">suspended</span>'}</td>
       <td><button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button>
-        <button class="btn sm ghost" onclick="Actions.manageDomains('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Domains</button></td>
+        <button class="btn sm ghost" onclick="Actions.manageDomains('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Domains</button>
+        <button class="btn sm ghost" onclick="Actions.manageTenantServices('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Services</button></td>
     </tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
         <h2>🏷️ White-label Partners</h2><button class="btn sm" onclick="Actions.newTenant()">+ New partner brand</button></div>
@@ -3534,6 +3535,28 @@ const Actions = {
     if (!confirm('Remove this domain?')) return;
     try { await Api.del(`/admin/tenants/${State._dnTenant}/domains/${domainId}`); Actions.manageDomains(State._dnTenant); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // White-label Stage 3: choose which services show on a tenant's branded site/panel.
+  async manageTenantServices(id, brand) {
+    State._tsvTenant = id;
+    const d = await Api.get(`/admin/tenants/${id}/services`).catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(s => `<tr>
+      <td><b>${esc(s.name || s.code)}</b> <span class="muted">${esc(s.code)}</span>${s.enabled ? '' : ' <span class="tag">platform-off</span>'}</td>
+      <td style="text-align:right">
+        <label style="cursor:pointer;user-select:none"><input type="checkbox" ${s.visible ? 'checked' : ''} onchange="Actions.toggleTenantService('${s.code}', this.checked, this)" style="vertical-align:middle"> <span style="margin-left:4px;vertical-align:middle">${s.visible ? 'shown' : 'hidden'}</span></label>
+      </td></tr>`).join('');
+    UI.modal(`<h3>Services on this brand — ${esc(brand || '')}</h3>
+      <p class="muted">Turn a service off to hide it from this partner's branded site and service cards. The platform master switch still applies first.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Service</th><th style="text-align:right">Visible</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=2 class=muted>No services.</td></tr>'}</tbody></table></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async toggleTenantService(code, visible, el) {
+    try {
+      await Api.put(`/admin/tenants/${State._tsvTenant}/services/${encodeURIComponent(code)}`, { visible });
+      UI.toast(visible ? 'Service shown' : 'Service hidden');
+      if (el && el.nextElementSibling) el.nextElementSibling.textContent = visible ? 'shown' : 'hidden';
+    } catch (err) { UI.toast(err.message, 'err'); if (el) el.checked = !visible; }
   },
   async reviewKyc(id, status) {
     // Every approval / rejection must carry a remark for the audit trail.
