@@ -26,7 +26,8 @@ import { postJournal } from '../_shared/ledger';
 import { settleByReference } from '../_shared/settle';
 import { listTenants, getTenant, createTenant, updateTenant,
   listDomains, addDomain, verifyDomain, updateDomain, deleteDomain,
-  tenantServiceMatrix, setTenantServiceVisibility } from '../tenant/tenant.service';
+  tenantServiceMatrix, setTenantServiceVisibility,
+  tenantOverview, getTenantSettings, setTenantSetting } from '../tenant/tenant.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
@@ -133,6 +134,7 @@ const listUsersSchema = z.object({
   role: z.enum(['user', 'retailer', 'distributor', 'master_distributor', 'admin', 'agent']).optional(),
   status: z.enum(['active', 'suspended', 'blocked']).optional(),
   q: z.string().trim().max(120).optional(),
+  tenant_id: z.string().uuid().optional(), // white-label Stage 4: scope to one tenant's network
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -148,9 +150,10 @@ router.get(
         WHERE ($1::text IS NULL OR role = $1)
           AND ($2::text IS NULL OR status = $2)
           AND ($3::text IS NULL OR full_name ILIKE $3 OR email ILIKE $3 OR phone ILIKE $3 OR username ILIKE $3)
+          AND ($6::uuid IS NULL OR tenant_id = $6)
         ORDER BY created_at DESC
         LIMIT $4 OFFSET $5`,
-      [q.role ?? null, q.status ?? null, like, q.limit, q.offset],
+      [q.role ?? null, q.status ?? null, like, q.limit, q.offset, q.tenant_id ?? null],
     );
     res.json({ items: rows, limit: q.limit, offset: q.offset });
   }),
@@ -375,6 +378,26 @@ router.put('/tenants/:id/services/:code',
     await setTenantServiceVisibility(req.params.id, req.params.code, (req.body as { visible: boolean }).visible);
     await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.service.visibility',
       targetType: 'tenant', targetId: req.params.id, detail: { code: req.params.code, visible: req.body.visible } });
+    res.json({ ok: true });
+  }));
+
+// ---- White-label tenant overview + policy settings (Stage 4) -------------
+router.get('/tenants/:id/overview', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ overview: await tenantOverview(req.params.id) });
+}));
+
+router.get('/tenants/:id/settings', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ settings: await getTenantSettings(req.params.id) });
+}));
+
+router.put('/tenants/:id/settings',
+  validate(z.object({ key: z.string().trim().min(1).max(60), value: z.string().max(500) })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { key, value } = req.body as { key: string; value: string };
+    await setTenantSetting(req.params.id, key, value);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.setting',
+      targetType: 'tenant', targetId: req.params.id, detail: { key, value: key === 'webhook_secret' ? '•••' : value } });
     res.json({ ok: true });
   }));
 

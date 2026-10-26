@@ -1921,7 +1921,8 @@ const Screens = {
       <td>${t.members || 0}</td>
       <td>${esc(t.support_email || '')}</td>
       <td>${t.status === 'active' ? UI.statusTag('active') : '<span class="tag">suspended</span>'}</td>
-      <td><button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button>
+      <td><button class="btn sm ghost" onclick="Actions.tenantOverview('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Overview</button>
+        <button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button>
         <button class="btn sm ghost" onclick="Actions.manageDomains('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Domains</button>
         <button class="btn sm ghost" onclick="Actions.manageTenantServices('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Services</button></td>
     </tr>`).join('');
@@ -3535,6 +3536,56 @@ const Actions = {
     if (!confirm('Remove this domain?')) return;
     try { await Api.del(`/admin/tenants/${State._dnTenant}/domains/${domainId}`); Actions.manageDomains(State._dnTenant); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // White-label Stage 4: super-admin overview of a tenant's whole network + policy settings.
+  async tenantOverview(id, brand) {
+    State._ovTenant = id;
+    const [o, st] = await Promise.all([
+      Api.get(`/admin/tenants/${id}/overview`).catch(() => ({ overview: null })),
+      Api.get(`/admin/tenants/${id}/settings`).catch(() => ({ settings: {} })),
+    ]);
+    const ov = o.overview, s = st.settings || {};
+    if (!ov) return UI.toast('Could not load overview', 'err');
+    const roleRows = Object.entries(ov.members.by_role).map(([r, v]) => `<tr><td>${esc(r.replace(/_/g, ' '))}</td><td>${v.total}</td><td>${v.active}</td></tr>`).join('') || '<tr><td colspan=3 class=muted>No members yet</td></tr>';
+    const txnRows = Object.entries(ov.transactions.by_status).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v.count}</td><td>${money(v.volume_paise/100)}</td></tr>`).join('') || '<tr><td colspan=3 class=muted>No transactions</td></tr>';
+    UI.modal(`<h3>Overview — ${esc(brand || '')}</h3>
+      <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <div class="stat b"><div class="muted">Members</div><b style="font-size:20px">${ov.members.total}</b></div>
+        <div class="stat g"><div class="muted">Wallet balance</div><b style="font-size:20px">${money(ov.wallet_balance_paise/100)}</b></div>
+        <div class="stat o"><div class="muted">Txns (success vol)</div><b style="font-size:20px">${money(ov.transactions.success_volume_paise/100)}</b></div>
+        <div class="stat b"><div class="muted">Platform margin</div><b style="font-size:20px">${money(ov.platform_margin_paise/100)}</b></div>
+      </div>
+      <div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px"><h4>Network by role</h4>
+          <div class="tbl-wrap"><table><thead><tr><th>Role</th><th>Total</th><th>Active</th></tr></thead><tbody>${roleRows}</tbody></table></div></div>
+        <div style="flex:1;min-width:220px"><h4>Transactions by status</h4>
+          <div class="tbl-wrap"><table><thead><tr><th>Status</th><th>Count</th><th>Volume</th></tr></thead><tbody>${txnRows}</tbody></table></div></div>
+      </div>
+      <h4 style="margin-top:14px">Policy settings</h4>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:150px"><label>KYC required</label>
+          <select id="ts_kyc"><option value="">platform default</option><option value="true" ${s.kyc_required === 'true' ? 'selected' : ''}>required</option><option value="false" ${s.kyc_required === 'false' ? 'selected' : ''}>not required</option></select></div>
+        <div class="field" style="flex:1;min-width:150px"><label>API rate limit / min</label><input id="ts_rate" value="${esc(s.rate_limit_per_min || '')}" placeholder="platform default"></div>
+        <div class="field" style="flex:1;min-width:150px"><label>Settlement cycle</label><input id="ts_cycle" value="${esc(s.settlement_cycle || '')}" placeholder="T+1"></div>
+      </div>
+      <div class="field"><label>Inbound webhook secret ${s.webhook_secret ? '<span class="tag">set</span>' : ''}</label><input id="ts_wh" type="password" placeholder="${s.webhook_secret ? '•••••• (leave blank to keep)' : 'set a signing secret'}"></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button>
+        <button class="btn" onclick="Actions.saveTenantSettings()">Save settings</button></div>`);
+  },
+  async saveTenantSettings() {
+    const id = State._ovTenant;
+    const put = (key, value) => Api.put(`/admin/tenants/${id}/settings`, { key, value });
+    try {
+      const jobs = [
+        put('kyc_required', ($('ts_kyc') && $('ts_kyc').value) || ''),
+        put('rate_limit_per_min', val('ts_rate')),
+        put('settlement_cycle', val('ts_cycle')),
+      ];
+      const wh = val('ts_wh');
+      if (wh) jobs.push(put('webhook_secret', wh)); // only overwrite when a new value is typed
+      await Promise.all(jobs);
+      UI.closeModal(); UI.toast('Tenant settings saved');
+    } catch (err) { UI.toast(err.message, 'err'); }
   },
   // White-label Stage 3: choose which services show on a tenant's branded site/panel.
   async manageTenantServices(id, brand) {

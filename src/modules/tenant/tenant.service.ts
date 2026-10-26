@@ -241,6 +241,103 @@ export async function setTenantServiceVisibility(tenantId: string, serviceCode: 
   );
 }
 
+// ---- Tenant overview + settings (Stage 4: isolation & tenant-admin) ----
+
+/**
+ * Super-admin visibility for one tenant: its whole network (recursive over
+ * parent_id from the owner, plus any directly-tagged members), wallet balances,
+ * transaction volume, and net platform margin booked on its members' txns.
+ */
+export async function tenantOverview(tenantId: string) {
+  await getTenant(tenantId);
+
+  const members = await query<{ role: string; n: string; active: string }>(
+    `SELECT role, COUNT(*) AS n, COUNT(*) FILTER (WHERE status = 'active') AS active
+       FROM users WHERE tenant_id = $1 GROUP BY role`,
+    [tenantId],
+  );
+  const wallet = await query<{ total: string | null; held: string | null }>(
+    `SELECT COALESCE(SUM(w.balance_paise),0) AS total
+       FROM wallets w JOIN users u ON u.id = w.user_id WHERE u.tenant_id = $1`,
+    [tenantId],
+  );
+  const txns = await query<{ status: string; n: string; volume: string | null }>(
+    `SELECT t.status::text AS status, COUNT(*) AS n, COALESCE(SUM(t.amount_paise),0) AS volume
+       FROM transactions t JOIN users u ON u.id = t.user_id
+      WHERE u.tenant_id = $1 GROUP BY t.status`,
+    [tenantId],
+  );
+  const margin = await query<{ net: string | null }>(
+    `SELECT COALESCE(SUM(CASE WHEN jl.direction='credit' THEN jl.amount_paise ELSE -jl.amount_paise END),0) AS net
+       FROM journal_lines jl
+       JOIN journal_entries je ON je.id = jl.entry_id
+       JOIN transactions t ON t.reference = je.reference
+       JOIN users u ON u.id = t.user_id
+      WHERE jl.account_code = 'platform_margin' AND u.tenant_id = $1`,
+    [tenantId],
+  );
+
+  const byRole: Record<string, { total: number; active: number }> = {};
+  let memberTotal = 0;
+  for (const r of members.rows) {
+    byRole[r.role] = { total: Number(r.n), active: Number(r.active) };
+    memberTotal += Number(r.n);
+  }
+  const txnByStatus: Record<string, { count: number; volume_paise: number }> = {};
+  let txnCount = 0;
+  let successVolume = 0;
+  for (const r of txns.rows) {
+    txnByStatus[r.status] = { count: Number(r.n), volume_paise: Number(r.volume ?? 0) };
+    txnCount += Number(r.n);
+    if (r.status === 'success') successVolume += Number(r.volume ?? 0);
+  }
+  return {
+    members: { total: memberTotal, by_role: byRole },
+    wallet_balance_paise: Number(wallet.rows[0]?.total ?? 0),
+    transactions: { total: txnCount, success_volume_paise: successVolume, by_status: txnByStatus },
+    platform_margin_paise: Number(margin.rows[0]?.net ?? 0),
+  };
+}
+
+// Per-tenant policy overrides the runtime may honour over platform defaults.
+const TENANT_SETTING_KEYS = new Set([
+  'kyc_required',            // 'true' | 'false'
+  'rate_limit_per_min',      // integer, partner API throttle
+  'webhook_secret',          // inbound webhook HMAC secret for this tenant's keys
+  'settlement_cycle',        // e.g. 'T+1', 'weekly'
+  'min_wallet_balance_paise',// soft floor warning
+  'notes',                   // free text for admins
+]);
+
+export async function getTenantSettings(tenantId: string): Promise<Record<string, string>> {
+  const { rows } = await query<{ key: string; value: string | null }>(
+    'SELECT key, value FROM tenant_settings WHERE tenant_id = $1',
+    [tenantId],
+  );
+  const out: Record<string, string> = {};
+  for (const r of rows) out[r.key] = r.value ?? '';
+  return out;
+}
+
+/** One effective setting for a tenant, or the supplied fallback. */
+export async function getTenantSetting(tenantId: string, key: string, fallback = ''): Promise<string> {
+  const { rows } = await query<{ value: string | null }>(
+    'SELECT value FROM tenant_settings WHERE tenant_id = $1 AND key = $2',
+    [tenantId, key],
+  );
+  return rows[0]?.value ?? fallback;
+}
+
+export async function setTenantSetting(tenantId: string, key: string, value: string) {
+  if (!TENANT_SETTING_KEYS.has(key)) throw ApiError.badRequest(`Unknown tenant setting: ${key}`);
+  await getTenant(tenantId);
+  await query(
+    `INSERT INTO tenant_settings (tenant_id, key, value) VALUES ($1,$2,$3)
+       ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [tenantId, key, value],
+  );
+}
+
 // ---- Admin CRUD ---------------------------------------------------------
 
 export interface TenantInput {
