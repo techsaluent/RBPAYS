@@ -2,7 +2,10 @@ import { Request, Response, Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query } from '../../../db';
-import { brandingForHost } from '../tenant/tenant.service';
+import { brandingForHost, hiddenServiceCodesForHost } from '../tenant/tenant.service';
+
+// The host to resolve a tenant from: explicit ?host= (behind a proxy) or the request Host header.
+const reqHost = (req: Request): string => (typeof req.query.host === 'string' && req.query.host) || req.get('host') || '';
 
 /**
  * Public website configuration — branding + admin-authored pages. No auth:
@@ -40,19 +43,18 @@ router.get(
 router.get(
   '/branding',
   asyncHandler(async (req: Request, res: Response) => {
-    const host = (typeof req.query.host === 'string' && req.query.host) || req.get('host') || '';
-    const branding = await brandingForHost(host);
+    const branding = await brandingForHost(reqHost(req));
     res.json({ branding });
   }),
 );
 
 router.get(
   '/services',
-  asyncHandler(async (_req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     // A card shows only when it is marked visible AND — if it is linked to an
     // operational service (code) — that service is not disabled. So pausing a
     // service in the admin Services desk also removes its marketing card.
-    const { rows } = await query(
+    const { rows } = await query<{ code: string | null }>(
       `SELECT ss.code, ss.icon, ss.title, ss.subtitle, ss.category, ss.terms
          FROM site_services ss
          LEFT JOIN services s ON s.code = ss.code
@@ -60,7 +62,11 @@ router.get(
           AND (ss.code IS NULL OR s.code IS NULL OR s.enabled = true)
         ORDER BY ss.sort_order, ss.id`,
     );
-    res.json({ items: rows });
+    // White-label Stage 3: on a tenant's custom domain, also drop cards the
+    // tenant has hidden for their own brand.
+    const hidden = new Set(await hiddenServiceCodesForHost(reqHost(req)));
+    const items = hidden.size ? rows.filter((r) => !r.code || !hidden.has(r.code)) : rows;
+    res.json({ items });
   }),
 );
 
@@ -69,10 +75,13 @@ router.get(
 // tagged data-service="<code>" for a service that is currently disabled.
 router.get(
   '/service-status',
-  asyncHandler(async (_req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const { rows } = await query<{ code: string; enabled: boolean }>('SELECT code, enabled FROM services');
-    const disabled = rows.filter((r) => r.enabled === false).map((r) => r.code);
-    res.json({ disabled });
+    const disabled = new Set(rows.filter((r) => r.enabled === false).map((r) => r.code));
+    // White-label Stage 3: a tenant's own hidden services count as disabled on
+    // their branded site, so brand.js strips those data-service elements too.
+    for (const c of await hiddenServiceCodesForHost(reqHost(req))) disabled.add(c);
+    res.json({ disabled: [...disabled] });
   }),
 );
 
