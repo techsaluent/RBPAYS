@@ -31,6 +31,55 @@ async function marginForPeriod(tenantId: string, start: string, end: string) {
   return { grossMargin: Number(rows[0]?.net ?? 0), txnCount: Number(rows[0]?.n ?? 0) };
 }
 
+/**
+ * A reseller's earnings for a period (multi-level white-label). For each DIRECT
+ * sub-tenant: platform margin M on the sub-tenant's network → the sub-partner
+ * keeps M × their partner_share_bps; the reseller earns (M − sub-partner cut) ×
+ * the reseller's reseller_share_bps. Never negative. Returns the total plus a
+ * per-sub-tenant breakdown.
+ */
+export async function resellerEarningsForPeriod(resellerTenantId: string, start: string, end: string) {
+  await getTenant(resellerTenantId);
+  if (new Date(start) > new Date(end)) throw ApiError.badRequest('Period start must be on or before period end');
+  const resellerBps = Math.max(0, Math.min(10000, parseInt(await getTenantSetting(resellerTenantId, 'reseller_share_bps', '0'), 10) || 0));
+
+  const { rows: subs } = await query<{ id: string; brand_name: string }>(
+    'SELECT id, brand_name FROM tenants WHERE parent_tenant_id = $1 AND status = $2',
+    [resellerTenantId, 'active'],
+  );
+
+  const breakdown: Array<{ tenant_id: string; brand_name: string; gross_margin_paise: number; sub_partner_cut_paise: number; reseller_earning_paise: number }> = [];
+  let totalGross = 0;
+  let totalEarning = 0;
+  for (const s of subs) {
+    const { grossMargin } = await marginForPeriod(s.id, start, end);
+    const subBps = Math.max(0, Math.min(10000, parseInt(await getTenantSetting(s.id, 'partner_share_bps', '0'), 10) || 0));
+    const subCut = grossMargin > 0 ? Math.floor((grossMargin * subBps) / 10000) : 0;
+    const remainder = grossMargin - subCut;
+    const resellerEarning = remainder > 0 ? Math.floor((remainder * resellerBps) / 10000) : 0;
+    breakdown.push({ tenant_id: s.id, brand_name: s.brand_name, gross_margin_paise: grossMargin, sub_partner_cut_paise: subCut, reseller_earning_paise: resellerEarning });
+    totalGross += grossMargin;
+    totalEarning += resellerEarning;
+  }
+  return { reseller_share_bps: resellerBps, total_gross_margin_paise: totalGross, total_reseller_earning_paise: totalEarning, sub_tenants: breakdown };
+}
+
+/** Generate a reseller-earnings statement (kind='reseller') for a period. */
+export async function generateResellerInvoice(resellerTenantId: string, start: string, end: string, notes?: string) {
+  const e = await resellerEarningsForPeriod(resellerTenantId, start, end);
+  const { rows } = await query(
+    `INSERT INTO tenant_invoices
+       (tenant_id, period_start, period_end, gross_margin_paise, partner_share_bps,
+        partner_earning_paise, platform_fee_paise, net_payable_paise, txn_count, kind, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'reseller',$10) RETURNING *`,
+    [resellerTenantId, start, end, e.total_gross_margin_paise, e.reseller_share_bps,
+      e.total_reseller_earning_paise, e.total_gross_margin_paise - e.total_reseller_earning_paise,
+      e.total_reseller_earning_paise, e.sub_tenants.length,
+      notes ?? `Reseller earnings across ${e.sub_tenants.length} sub-brand(s)`],
+  );
+  return { invoice: rows[0], breakdown: e };
+}
+
 export async function listInvoices(tenantId: string) {
   const { rows } = await query('SELECT * FROM tenant_invoices WHERE tenant_id = $1 ORDER BY period_start DESC, created_at DESC', [tenantId]);
   return rows;

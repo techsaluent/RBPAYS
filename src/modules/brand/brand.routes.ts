@@ -9,7 +9,9 @@ import {
   requireOwnedTenantId, getTenant, updateTenant,
   listDomains, addDomain, verifyDomain, deleteDomain,
   tenantServiceMatrix, setTenantServiceVisibility,
+  listSubTenants, createSubTenant, setTenantSetting,
 } from '../tenant/tenant.service';
+import { resellerEarningsForPeriod, generateResellerInvoice, listInvoices } from '../tenant/tenant.billing.service';
 
 /**
  * Self-service white-label brand console (Sec2Pay-style): a partner who OWNS a
@@ -90,5 +92,76 @@ router.put('/services/:code', validate(z.object({ visible: z.boolean() })),
     await setTenantServiceVisibility(id, req.params.code, (req.body as { visible: boolean }).visible);
     res.json({ ok: true });
   }));
+
+// ---- Reseller: my sub-brands + earnings (multi-level white-label) --------
+const subTenantSchema = z.object({
+  brand_name: z.string().trim().min(1).max(80),
+  owner_user_id: z.string().uuid(), // must be in my downline — enforced server-side
+  logo_url: z.string().trim().max(500).nullable().optional(),
+  logo_emoji: z.string().trim().max(16).nullable().optional(),
+  primary_color: z.string().trim().max(32).nullable().optional(),
+  tagline: z.string().trim().max(160).nullable().optional(),
+  support_email: z.string().trim().max(120).nullable().optional(),
+  support_phone: z.string().trim().max(20).nullable().optional(),
+  company_name: z.string().trim().max(120).nullable().optional(),
+  partner_share_bps: z.coerce.number().int().min(0).max(10000).optional(),
+});
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+
+router.get('/sub-tenants', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ items: await listSubTenants(await myTenantId(req)) });
+}));
+
+router.post('/sub-tenants', validate(subTenantSchema), asyncHandler(async (req: Request, res: Response) => {
+  const myId = await myTenantId(req);
+  const body = req.body as z.infer<typeof subTenantSchema>;
+  const t = await createSubTenant(req.user!.id, myId, body);
+  await logAudit({ actorId: req.user!.id, actorRole: req.user!.role, action: 'brand.subtenant.create',
+    targetType: 'tenant', targetId: t.id, detail: { brand_name: t.brand_name, owner: body.owner_user_id } });
+  res.status(201).json({ sub_tenant: t });
+}));
+
+// Update a sub-brand I own (branding + the sub-partner's margin). Scoped: the
+// target must be a direct sub-tenant of MY tenant.
+router.put('/sub-tenants/:id',
+  validate(brandingSchema.extend({ partner_share_bps: z.coerce.number().int().min(0).max(10000).optional() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const myId = await myTenantId(req);
+    const sub = await getTenant(req.params.id);
+    if (sub.parent_tenant_id !== myId) throw ApiError.forbidden('That brand is not one of your sub-brands');
+    const body = req.body as z.infer<typeof brandingSchema> & { partner_share_bps?: number };
+    const { partner_share_bps, ...branding } = body;
+    if (Object.keys(branding).length) await updateTenant(sub.id, branding);
+    if (partner_share_bps != null) await setTenantSetting(sub.id, 'partner_share_bps', String(partner_share_bps));
+    await logAudit({ actorId: req.user!.id, actorRole: req.user!.role, action: 'brand.subtenant.update',
+      targetType: 'tenant', targetId: sub.id, detail: body });
+    res.json({ sub_tenant: await getTenant(sub.id) });
+  }));
+
+// My reseller earnings for a period (what the platform owes me on my sub-brands).
+router.get('/reseller-earnings',
+  validate(z.object({ from: isoDate, to: isoDate }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const myId = await myTenantId(req);
+    const q = req.query as unknown as { from: string; to: string };
+    res.json({ earnings: await resellerEarningsForPeriod(myId, q.from, q.to) });
+  }));
+
+// Generate a reseller-earnings statement (draft). The platform issues + settles it.
+router.post('/reseller-statement',
+  validate(z.object({ period_start: isoDate, period_end: isoDate })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const myId = await myTenantId(req);
+    const b = req.body as { period_start: string; period_end: string };
+    const result = await generateResellerInvoice(myId, b.period_start, b.period_end);
+    await logAudit({ actorId: req.user!.id, actorRole: req.user!.role, action: 'brand.reseller.statement',
+      targetType: 'tenant_invoice', targetId: result.invoice.id, detail: { period: [b.period_start, b.period_end], net_payable_paise: result.invoice.net_payable_paise } });
+    res.status(201).json(result);
+  }));
+
+// My statements (both my own partner statements and my reseller-earnings ones).
+router.get('/statements', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ items: await listInvoices(await myTenantId(req)) });
+}));
 
 export default router;
