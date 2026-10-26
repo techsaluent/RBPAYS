@@ -298,6 +298,7 @@ const NAV = [
   { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'webhooks', label: 'Webhook Log', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'aistudio', label: '🤖 AI Integration Studio', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'apiwizard', label: '➕ Add API (wizard)', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'devdesk', label: '🛠️ AI Dev Desk', roles: ['admin', 'staff'], perm: 'devdesk.manage', section: 'API & Providers' },
   { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
   { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
@@ -1519,6 +1520,74 @@ const Screens = {
         <button class="btn" onclick="Actions.treasurySweep()">Execute sweep</button></div>`;
   },
 
+  // Admin: Add API from docs — paste docs → AI drafts config → test → go live.
+  async apiwizard() {
+    const svc = ['payout', 'dmt', 'recharge', 'bbps'];
+    const checks = svc.map(s => `<label style="margin-right:12px"><input type="checkbox" class="wiz-svc" value="${s}"> ${s}</label>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>➕ Add an API from its docs</h2>
+      <p class="muted">Paste a provider's API docs, pick the services, and the AI drafts a <b>dynamic</b> config (endpoints, auth, field mappings). Test it, then go live — a service tile is created for you. No developer for standard REST/JSON APIs.</p>
+      <div class="field"><label>Provider name</label><input id="wiz_label" placeholder="AcmePay"></div>
+      <div class="field"><label>Services this API covers</label><div>${checks}</div></div>
+      <div class="field"><label>Paste the API documentation</label><textarea id="wiz_docs" rows="8" placeholder="Endpoints, auth headers, request/response fields…"></textarea></div>
+      <button class="btn" onclick="Actions.wizDraft()">① Draft config with AI</button>
+      <div id="wiz_rest" style="display:none;margin-top:14px">
+        <div class="field"><label>Drafted config (editable JSON)</label><textarea id="wiz_config" rows="10" style="font-family:monospace;font-size:12px"></textarea></div>
+        <h3>Credentials</h3>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <div class="field" style="flex:2;min-width:220px"><label>Base URL</label><input id="wiz_base" placeholder="https://api.acmepay.com"></div>
+          <div class="field" style="flex:1;min-width:140px"><label>API key</label><input id="wiz_key"></div>
+          <div class="field" style="flex:1;min-width:140px"><label>API secret</label><input id="wiz_secret" type="password"></div>
+        </div>
+        <div class="row" style="gap:8px">
+          <button class="btn ghost" onclick="Actions.wizTest()">② Test (dry run)</button>
+          <label style="margin-left:8px"><input type="checkbox" id="wiz_tiles" checked> Create service tiles</label>
+          <label style="margin-left:8px"><input type="checkbox" id="wiz_activate"> Activate now</label>
+        </div>
+        <pre id="wiz_testout" class="muted" style="white-space:pre-wrap;font-size:12px;margin-top:8px"></pre>
+        <button class="btn" onclick="Actions.wizProvision()">③ Create &amp; go live</button>
+      </div></div>`;
+  },
+  _wizServices() { return Array.from(document.querySelectorAll('.wiz-svc:checked')).map(c => c.value); },
+  async wizDraft() {
+    const docs = val('wiz_docs'); const services = Actions._wizServices();
+    if (!services.length) return UI.toast('Pick at least one service', 'err');
+    UI.toast('Drafting with AI…');
+    try {
+      const r = await Api.post('/admin/integrations/ai-draft', { docs, services });
+      $('wiz_config').value = JSON.stringify(r.config || {}, null, 2);
+      $('wiz_rest').style.display = 'block';
+      UI.toast(r.source === 'ai' ? 'AI drafted the config' : 'Template scaffold (configure AI for a smarter draft)');
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  _wizConfig() { try { return JSON.parse(val('wiz_config') || '{}'); } catch (e) { UI.toast('Config is not valid JSON', 'err'); throw e; } },
+  _wizCreds() { return { base_url: val('wiz_base') || undefined, api_key: val('wiz_key') || undefined, api_secret: val('wiz_secret') || undefined }; },
+  async wizTest() {
+    const services = Actions._wizServices(); if (!services.length) return UI.toast('Pick a service', 'err');
+    let config; try { config = Actions._wizConfig(); } catch (e) { return; }
+    const out = $('wiz_testout'); out.textContent = 'Testing…';
+    try {
+      const r = await Api.post('/admin/integrations/provider-test', { service: services[0], config, creds: Actions._wizCreds() });
+      out.textContent = r.ok === false
+        ? '✗ ' + (r.error || 'Mapping failed') + (r.missing ? '\nMissing: ' + JSON.stringify(r.missing) : '')
+        : '✓ Would call ' + (r.method || 'POST') + ' ' + (r.url || '(resolved)') + '\n' + JSON.stringify(r.body || r, null, 2).slice(0, 800);
+    } catch (err) { out.textContent = '✗ ' + err.message; }
+  },
+  async wizProvision() {
+    const label = val('wiz_label'); const services = Actions._wizServices();
+    if (!label) return UI.toast('Enter a provider name', 'err');
+    if (!services.length) return UI.toast('Pick at least one service', 'err');
+    let config; try { config = Actions._wizConfig(); } catch (e) { return; }
+    const activate = $('wiz_activate') && $('wiz_activate').checked;
+    if (activate && !confirm('Activate this provider now? It will start handling live ' + services.join('/') + ' transactions.')) return;
+    try {
+      const r = await Api.post('/admin/integrations/provision', {
+        label, services, config, creds: Actions._wizCreds(),
+        create_tiles: $('wiz_tiles') ? $('wiz_tiles').checked : true, activate,
+      });
+      UI.toast(`Created ${(r.providers || []).length} provider(s), ${(r.tiles || []).length} tile(s)` + (r.skipped && r.skipped.length ? ` · skipped ${r.skipped.join(',')}` : ''));
+      location.hash = '#/providers';
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
   // Admin: ops desk — maker-checker manual adjustments.
   async opsdesk() {
     const [d, tx] = await Promise.all([
