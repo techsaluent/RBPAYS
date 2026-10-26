@@ -25,6 +25,7 @@ import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } 
 import { postJournal } from '../_shared/ledger';
 import { settleByReference } from '../_shared/settle';
 import { listTenants, getTenant, createTenant, updateTenant } from '../tenant/tenant.service';
+import * as bank from '../bank/bank.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
@@ -319,6 +320,108 @@ router.put('/tenants/:id', validate(tenantSchema.partial()), asyncHandler(async 
     targetType: 'tenant', targetId: req.params.id, detail: req.body });
   res.json({ tenant: t });
 }));
+
+// ---- Connected Banking ---------------------------------------------------
+const connSchema = z.object({
+  label: z.string().trim().min(1).max(80),
+  owner_user_id: z.string().uuid().nullable().optional(),
+  driver: z.string().trim().max(40).optional(),
+  bank_name: z.string().trim().max(80).nullable().optional(),
+  account_name: z.string().trim().max(120).nullable().optional(),
+  account_number: z.string().trim().max(40).nullable().optional(), // stored masked only
+  ifsc: z.string().trim().max(20).nullable().optional(),
+  status: z.enum(['active', 'disabled']).optional(),
+});
+
+router.get('/bank/connections', asyncHandler(async (_req: Request, res: Response) => {
+  res.json({ items: await bank.listConnections() });
+}));
+
+router.get('/bank/connections/:id', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ connection: await bank.getConnection(req.params.id) });
+}));
+
+router.post('/bank/connections', validate(connSchema), asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const c = await bank.createConnection(req.body as bank.ConnectionInput);
+  await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'bank.connection.create',
+    targetType: 'bank_connection', targetId: c.id, detail: { label: c.label, driver: c.driver } });
+  res.status(201).json({ connection: c });
+}));
+
+router.put('/bank/connections/:id', validate(connSchema.partial()), asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const c = await bank.updateConnection(req.params.id, req.body as Partial<bank.ConnectionInput> & { status?: 'active' | 'disabled' });
+  await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'bank.connection.update',
+    targetType: 'bank_connection', targetId: req.params.id, detail: req.body });
+  res.json({ connection: c });
+}));
+
+router.post('/bank/connections/:id/balance',
+  validate(z.object({ balance_paise: z.coerce.number().int() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const c = await bank.setBalance(req.params.id, (req.body as { balance_paise: number }).balance_paise);
+    res.json({ connection: c });
+  }));
+
+router.get('/bank/connections/:id/virtual-accounts', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ items: await bank.listVirtualAccounts(req.params.id) });
+}));
+
+router.post('/bank/connections/:id/virtual-accounts',
+  validate(z.object({ user_id: z.string().uuid(), va_number: z.string().trim().min(3).max(60),
+    va_ifsc: z.string().trim().max(20).optional(), upi_handle: z.string().trim().max(120).optional() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as { user_id: string; va_number: string; va_ifsc?: string; upi_handle?: string };
+    const va = await bank.assignVirtualAccount(req.params.id, b.user_id, b.va_number, b.va_ifsc, b.upi_handle);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'bank.va.assign',
+      targetType: 'bank_connection', targetId: req.params.id, detail: { user_id: b.user_id, va_number: b.va_number } });
+    res.status(201).json({ virtual_account: va });
+  }));
+
+router.get('/bank/connections/:id/statement', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ items: await bank.listStatement(req.params.id) });
+}));
+
+router.post('/bank/connections/:id/statement',
+  validate(z.object({ lines: z.array(z.object({
+    direction: z.enum(['credit', 'debit']), amount_paise: z.coerce.number().int().positive(),
+    txn_time: z.string().optional(), balance_after_paise: z.coerce.number().int().nullable().optional(),
+    utr: z.string().max(60).nullable().optional(), counterparty: z.string().max(120).nullable().optional(),
+    narration: z.string().max(240).nullable().optional(), external_id: z.string().max(120).nullable().optional(),
+  })).min(1) })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const inserted = await bank.syncStatement(req.params.id, (req.body as { lines: bank.StatementLine[] }).lines);
+    res.json({ inserted });
+  }));
+
+router.get('/bank/connections/:id/collections', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ items: await bank.listCollections(req.params.id) });
+}));
+
+// Manual collection ingest (reconciliation / testing) — same path the webhook uses.
+router.post('/bank/connections/:id/collections',
+  validate(z.object({ amount_paise: z.coerce.number().int().positive(), external_id: z.string().trim().min(1).max(120),
+    va_number: z.string().trim().max(60).optional(), user_id: z.string().uuid().optional(),
+    utr: z.string().trim().max(60).optional(), payer: z.string().trim().max(120).optional() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const result = await bank.recordCollection(req.params.id, req.body as bank.CollectionInput);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'bank.collection.ingest',
+      targetType: 'bank_connection', targetId: req.params.id, detail: { external_id: req.body.external_id, status: result.status } });
+    res.status(201).json({ collection: result });
+  }));
+
+router.post('/bank/collections/:collectionId/apply',
+  validate(z.object({ user_id: z.string().uuid() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const result = await bank.applyCollection(req.params.collectionId, (req.body as { user_id: string }).user_id);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'bank.collection.apply',
+      targetType: 'bank_collection', targetId: req.params.collectionId, detail: { user_id: req.body.user_id } });
+    res.json({ collection: result });
+  }));
 
 // ---- Transaction ops: refund + pending resolution ------------------------
 const txnDecisionSchema = z.object({ remark: z.string().trim().min(1).max(200) });

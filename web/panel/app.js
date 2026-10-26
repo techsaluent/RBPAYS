@@ -291,6 +291,7 @@ const NAV = [
   { key: 'settlement', label: 'Settlement Report', roles: ['admin', 'staff'], perm: 'recon.manage', section: 'Finance' },
   { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
+  { key: 'connectedbanking', label: '🏦 Connected Banking', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providerconnections', label: '🔌 Provider Connections', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
@@ -1504,6 +1505,148 @@ const Screens = {
         <div class="field"><label>To</label><select id="tr_to"><option value="payout_escrow">payout_escrow</option><option value="bank_escrow">bank_escrow (collection)</option></select></div>
         <div class="field"><label>Amount (₹)</label><input id="tr_amt" type="number" step="0.01" min="1"></div>
         <button class="btn" onclick="Actions.treasurySweep()">Execute sweep</button></div>`;
+  },
+
+  // Admin: Connected Banking — linked bank accounts, virtual accounts,
+  // statement + collections that auto-load member wallets.
+  async connectedbanking() {
+    const d = await Api.get('/admin/bank/connections').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(c => `<tr>
+      <td><b>${esc(c.label)}</b><br><span class="muted">${esc(c.bank_name || '')} ${esc(c.account_number_masked || '')} ${esc(c.ifsc || '')}</span></td>
+      <td>${esc(c.driver)}</td>
+      <td>${esc(c.owner_name || 'platform')}</td>
+      <td class="right">${c.balance_paise != null ? money(c.balance_paise / 100) : '—'}<br><span class="muted" style="font-size:11px">${c.balance_updated_at ? new Date(c.balance_updated_at).toLocaleString('en-IN') : 'never'}</span></td>
+      <td>${c.status === 'active' ? UI.statusTag('active') : '<span class="tag">disabled</span>'} <span class="tag">${c.virtual_accounts || 0} VAs</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn sm ghost" onclick="Actions.bankVAs('${c.id}','${esc((c.label||'').replace(/'/g,''))}')">VAs</button>
+        <button class="btn sm ghost" onclick="Actions.bankCollections('${c.id}','${esc((c.label||'').replace(/'/g,''))}')">Collections</button>
+        <button class="btn sm ghost" onclick="Actions.bankStatement('${c.id}','${esc((c.label||'').replace(/'/g,''))}')">Statement</button>
+        <button class="btn sm ghost" onclick="Actions.bankSetBalance('${c.id}')">Balance</button>
+        <button class="btn sm ghost" onclick="Actions.editBankConnection('${c.id}')">Edit</button>
+      </td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2>🏦 Connected Banking</h2><button class="btn sm" onclick="Actions.newBankConnection()">+ Connect a bank account</button></div>
+      <p class="muted">Link a corporate/current account (directly or via a banking aggregator) to track its balance &amp; statement, collect into per-member virtual accounts, and fund payouts. Money received into a member's virtual account auto-loads their wallet. Account numbers are stored masked only; the callback URL for a connection is <code>/api/v1/webhooks/bank/&lt;connection-id&gt;</code>.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Account</th><th>Driver</th><th>Owner</th><th class="right">Balance</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No bank accounts connected yet.</td></tr>'}</tbody></table></div></div>`;
+  },
+  _bankForm(c) {
+    return `
+      <div class="field"><label>Label</label><input id="bk_label" value="${c ? esc(c.label || '') : ''}" placeholder="HDFC Current — Collections"></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label>Driver</label><input id="bk_driver" value="${c ? esc(c.driver || 'manual') : 'manual'}" placeholder="manual"></div>
+        <div class="field" style="flex:1"><label>Bank name</label><input id="bk_bank" value="${c ? esc(c.bank_name || '') : ''}"></div>
+      </div>
+      <div class="field"><label>Account name</label><input id="bk_acctname" value="${c ? esc(c.account_name || '') : ''}"></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label>Account number ${c ? '(stored masked — re-enter to change)' : '(stored masked only)'}</label><input id="bk_acctno" placeholder="${c && c.account_number_masked ? esc(c.account_number_masked) : ''}"></div>
+        <div class="field" style="flex:1"><label>IFSC</label><input id="bk_ifsc" value="${c ? esc(c.ifsc || '') : ''}"></div>
+      </div>
+      ${c ? `<div class="field"><label>Status</label><select id="bk_status"><option value="active" ${c.status === 'active' ? 'selected' : ''}>active</option><option value="disabled" ${c.status === 'disabled' ? 'selected' : ''}>disabled</option></select></div>` : ''}`;
+  },
+  _bankBody() {
+    const b = { label: val('bk_label'), driver: val('bk_driver') || 'manual', bank_name: val('bk_bank') || null,
+      account_name: val('bk_acctname') || null, ifsc: val('bk_ifsc') || null };
+    const acct = val('bk_acctno'); if (acct) b.account_number = acct;
+    if ($('bk_status')) b.status = $('bk_status').value;
+    return b;
+  },
+  newBankConnection() {
+    UI.modal(`<h3>Connect a bank account</h3>${Actions._bankForm(null)}
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+      <button class="btn" onclick="Actions.saveBankConnection()">Connect</button></div>`);
+  },
+  async editBankConnection(id) {
+    const r = await Api.get('/admin/bank/connections/' + id);
+    UI.modal(`<h3>Edit — ${esc(r.connection.label)}</h3>${Actions._bankForm(r.connection)}
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+      <button class="btn" onclick="Actions.saveBankConnection('${id}')">Save</button></div>`);
+  },
+  async saveBankConnection(id) {
+    const body = Actions._bankBody();
+    if (!body.label) return UI.toast('Label is required', 'err');
+    try {
+      if (id) await Api.put('/admin/bank/connections/' + id, body);
+      else await Api.post('/admin/bank/connections', body);
+      UI.closeModal(); UI.toast('Bank connection saved'); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async bankSetBalance(id) {
+    const rupees = prompt('Set current balance (₹):');
+    if (rupees === null || rupees === '') return;
+    const paise = Math.round(parseFloat(rupees) * 100);
+    if (!Number.isFinite(paise)) return UI.toast('Enter a number', 'err');
+    try { await Api.post(`/admin/bank/connections/${id}/balance`, { balance_paise: paise }); UI.toast('Balance updated'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async bankVAs(id, label) {
+    State._bkConn = id;
+    const d = await Api.get(`/admin/bank/connections/${id}/virtual-accounts`).catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(v => `<tr><td><b>${esc(v.va_number)}</b> ${esc(v.va_ifsc || '')}<br><span class="muted">${esc(v.upi_handle || '')}</span></td>
+      <td>${esc(v.user_name || '')}<br><span class="muted">${esc(v.user_phone || '')}</span></td>
+      <td>${v.status === 'active' ? UI.statusTag('active') : '<span class="tag">closed</span>'}</td></tr>`).join('');
+    UI.modal(`<h3>Virtual accounts — ${esc(label || '')}</h3>
+      <p class="muted">Money received into a member's virtual account auto-loads their wallet.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>VA</th><th>Member</th><th>Status</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=3 class=muted>No virtual accounts.</td></tr>'}</tbody></table></div>
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-top:10px;align-items:flex-end">
+        <div class="field" style="flex:2;min-width:180px"><label>Member user id</label><input id="va_user" placeholder="UUID of the member"></div>
+        <div class="field" style="flex:1;min-width:120px"><label>VA number</label><input id="va_num"></div>
+        <div class="field" style="flex:1;min-width:120px"><label>VA IFSC</label><input id="va_ifsc"></div>
+        <button class="btn" onclick="Actions.addVA()">Assign</button></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async addVA() {
+    const user_id = val('va_user'), va_number = val('va_num');
+    if (!user_id || !va_number) return UI.toast('Member id and VA number required', 'err');
+    try { await Api.post(`/admin/bank/connections/${State._bkConn}/virtual-accounts`, { user_id, va_number, va_ifsc: val('va_ifsc') || undefined }); UI.toast('Virtual account assigned'); Actions.bankVAs(State._bkConn); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async bankCollections(id, label) {
+    State._bkConn = id;
+    const d = await Api.get(`/admin/bank/connections/${id}/collections`).catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(c => `<tr>
+      <td class="muted">${new Date(c.created_at).toLocaleString('en-IN')}</td>
+      <td class="right">${money(c.amount_paise / 100)}</td>
+      <td>${esc(c.payer || '')}${c.utr ? '<br><span class="muted">UTR ' + esc(c.utr) + '</span>' : ''}</td>
+      <td>${esc(c.user_name || '—')}</td>
+      <td>${c.status === 'credited' ? UI.statusTag('credited') : (c.status === 'received' ? '<span class="tag">unapplied</span>' : '<span class="tag">ignored</span>')}
+        ${c.status === 'received' ? `<button class="btn sm ghost" onclick="Actions.applyCollection('${c.id}')">Apply to member…</button>` : ''}</td></tr>`).join('');
+    UI.modal(`<h3>Collections — ${esc(label || '')}</h3>
+      <p class="muted">Inbound bank credits. A credit into a mapped virtual account auto-loads that member's wallet; an unmatched credit lands here as unapplied for you to apply manually. Live credits arrive via <code>/api/v1/webhooks/bank/${esc(id)}</code>.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>When</th><th class="right">Amount</th><th>Payer</th><th>Credited to</th><th>Status</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No collections yet.</td></tr>'}</tbody></table></div>
+      <h4 style="margin-top:12px">Record a collection manually (reconciliation)</h4>
+      <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div class="field" style="flex:1;min-width:110px"><label>Amount (₹)</label><input id="col_amt" type="number" step="0.01" min="1"></div>
+        <div class="field" style="flex:1;min-width:120px"><label>Reference / UTR</label><input id="col_ext"></div>
+        <div class="field" style="flex:1;min-width:120px"><label>VA number (optional)</label><input id="col_va"></div>
+        <button class="btn" onclick="Actions.recordCollection()">Record</button></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async recordCollection() {
+    const amt = parseFloat(val('col_amt')); const external_id = val('col_ext');
+    if (!Number.isFinite(amt) || amt <= 0 || !external_id) return UI.toast('Amount and reference required', 'err');
+    try { await Api.post(`/admin/bank/connections/${State._bkConn}/collections`, { amount_paise: Math.round(amt * 100), external_id, va_number: val('col_va') || undefined }); UI.toast('Collection recorded'); Actions.bankCollections(State._bkConn); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async applyCollection(colId) {
+    const user_id = prompt('Credit this collection to member user id (UUID):');
+    if (!user_id) return;
+    try { await Api.post(`/admin/bank/collections/${colId}/apply`, { user_id }); UI.toast('Applied to member wallet'); Actions.bankCollections(State._bkConn); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async bankStatement(id, label) {
+    const d = await Api.get(`/admin/bank/connections/${id}/statement`).catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(s => `<tr>
+      <td class="muted">${new Date(s.txn_time).toLocaleString('en-IN')}</td>
+      <td>${s.direction === 'credit' ? '↓ credit' : '↑ debit'}</td>
+      <td class="right">${money(s.amount_paise / 100)}</td>
+      <td>${esc(s.counterparty || '')}${s.utr ? ' · ' + esc(s.utr) : ''}<br><span class="muted">${esc(s.narration || '')}</span></td></tr>`).join('');
+    UI.modal(`<h3>Statement — ${esc(label || '')}</h3>
+      <div class="tbl-wrap"><table><thead><tr><th>When</th><th>Dir</th><th class="right">Amount</th><th>Details</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=4 class=muted>No statement lines. The driver or a sync populates these.</td></tr>'}</tbody></table></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
   },
 
   // Admin: ops desk — maker-checker manual adjustments.

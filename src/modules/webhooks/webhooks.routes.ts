@@ -6,6 +6,7 @@ import { query, withTransaction } from '../../../db';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { credit } from '../wallet/wallet.service';
+import { recordCollection, CollectionInput } from '../bank/bank.service';
 import { settleByReference } from '../_shared/settle';
 import { getGatewayProvider } from '../../providers';
 import { ProviderResult } from '../../providers/types';
@@ -450,6 +451,96 @@ router.post(
       await markProcessed('whatsapp', externalId, 'received');
     }
     res.json({ status: 'ok' });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Connected Banking collection webhook: a bank / banking-aggregator posts an
+// inbound credit (money received into a connected account or a member's virtual
+// account); we auto-load the resolved member's wallet. Auth per the
+// connection's `extra`: webhook_secret → HMAC (x-webhook-signature), else
+// webhook_ips → IP allowlist, else `none`. Idempotent on (connection, ext id).
+// ---------------------------------------------------------------------
+const num = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+const str = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
+
+/** Map a vendor collection payload (flexible key names) to a CollectionInput. */
+function parseCollection(p: Record<string, unknown>): CollectionInput | null {
+  // Amount: prefer explicit paise, else treat a rupee figure as rupees.
+  const paise = num(p.amount_paise ?? p.amountPaise);
+  const rupees = num(p.amount ?? p.amount_rupees ?? p.credit_amount ?? p.txn_amount);
+  const amount_paise = paise ?? (rupees !== null ? Math.round(rupees * 100) : null);
+  const external_id = str(p.external_id ?? p.reference ?? p.rrn ?? p.utr ?? p.transaction_id ?? p.txn_id ?? p.id);
+  if (!amount_paise || amount_paise <= 0 || !external_id) return null;
+  return {
+    amount_paise,
+    external_id,
+    va_number: str(p.va_number ?? p.virtual_account ?? p.vpa ?? p.to_account ?? p.account_number) ?? undefined,
+    user_id: str(p.user_id) ?? undefined,
+    utr: str(p.utr ?? p.rrn ?? p.bank_reference) ?? undefined,
+    payer: str(p.payer ?? p.sender ?? p.remitter ?? p.from) ?? undefined,
+  };
+}
+
+router.post(
+  '/bank/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query<{ status: string; extra: Record<string, unknown> | null }>(
+      'SELECT status, extra FROM bank_connections WHERE id = $1',
+      [req.params.id],
+    );
+    const conn = rows[0];
+    if (!conn) throw ApiError.notFound('Unknown bank callback endpoint');
+    if (conn.status !== 'active') throw ApiError.forbidden('Bank connection is disabled');
+
+    const extra = conn.extra ?? {};
+    const tag = `bank:${req.params.id}`;
+    const secret = String((extra.webhook_secret as string) ?? '').trim();
+    const ipsRaw = extra.webhook_ips;
+    const ipList = (Array.isArray(ipsRaw) ? ipsRaw.map(String) : String(ipsRaw ?? '').split(','))
+      .map((s) => s.trim()).filter(Boolean);
+
+    if (secret) {
+      if (!verifyHmac(rawText(req), String(req.headers['x-webhook-signature'] ?? ''), secret)) {
+        await recordRejected(tag, 'Invalid bank webhook signature', rawText(req), 401);
+        throw ApiError.unauthorized('Invalid webhook signature');
+      }
+    } else if (ipList.length) {
+      const ip = callerIp(req);
+      if (!ipAllowed(ip, ipList)) {
+        await recordRejected(tag, `Caller IP ${ip} not in allowlist`, rawText(req), 401);
+        throw ApiError.unauthorized('Caller IP not allowed');
+      }
+    }
+    // else: secured only by the unguessable connection id (configure a secret/IPs for production).
+
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(rawText(req)) as Record<string, unknown>;
+    } catch {
+      await recordRejected(tag, 'Malformed JSON body', rawText(req), 400);
+      throw ApiError.badRequest('Malformed JSON body');
+    }
+    const input = parseCollection(payload);
+    if (!input) {
+      await recordRejected(tag, 'Missing amount or external id', rawText(req), 422);
+      throw ApiError.unprocessable('Could not read amount / reference from the payload');
+    }
+
+    const isNew = await recordEvent(tag, 'collection', input.external_id, payload, input.external_id);
+    const result = await recordCollection(req.params.id, input);
+    await markProcessed(tag, input.external_id, result.status);
+    res.json({
+      status: 'ok',
+      acknowledged: true,
+      duplicate: result.duplicate ?? !isNew,
+      collection_status: result.status,
+      credited_user: result.user_id ?? null,
+    });
   }),
 );
 

@@ -28,7 +28,8 @@ export type WalletSource =
   | 'withdrawal'
   | 'loan'
   | 'credit_card'
-  | 'chargeback';
+  | 'chargeback'
+  | 'bank_collection';
 
 interface WalletRow {
   id: string;
