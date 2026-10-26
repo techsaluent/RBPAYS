@@ -24,7 +24,8 @@ import { draftProviderConfig, analyzeDevRequest } from '../ai/ai.service';
 import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } from '../devdesk/devdesk.service';
 import { postJournal } from '../_shared/ledger';
 import { settleByReference } from '../_shared/settle';
-import { listTenants, getTenant, createTenant, updateTenant } from '../tenant/tenant.service';
+import { listTenants, getTenant, createTenant, updateTenant,
+  listDomains, addDomain, verifyDomain, updateDomain, deleteDomain } from '../tenant/tenant.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
@@ -318,6 +319,47 @@ router.put('/tenants/:id', validate(tenantSchema.partial()), asyncHandler(async 
   await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.update',
     targetType: 'tenant', targetId: req.params.id, detail: req.body });
   res.json({ tenant: t });
+}));
+
+// ---- White-label custom domains (Stage 2) --------------------------------
+router.get('/tenants/:id/domains', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ items: await listDomains(req.params.id) });
+}));
+
+router.post('/tenants/:id/domains',
+  validate(z.object({ domain: z.string().trim().min(3).max(255) })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const d = await addDomain(req.params.id, (req.body as { domain: string }).domain);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.domain.add',
+      targetType: 'tenant', targetId: req.params.id, detail: { domain: d.domain } });
+    res.status(201).json({ domain: d });
+  }));
+
+router.post('/tenants/:id/domains/:domainId/verify', asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const result = await verifyDomain(req.params.id, req.params.domainId);
+  if (result.verified) {
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.domain.verify',
+      targetType: 'tenant', targetId: req.params.id, detail: { domainId: req.params.domainId } });
+  }
+  res.json(result);
+}));
+
+router.put('/tenants/:id/domains/:domainId',
+  validate(z.object({ is_primary: z.boolean().optional(), ssl_status: z.enum(['pending', 'active', 'error']).optional() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const d = await updateDomain(req.params.id, req.params.domainId, req.body as { is_primary?: boolean; ssl_status?: 'pending' | 'active' | 'error' });
+    res.json({ domain: d });
+  }));
+
+router.delete('/tenants/:id/domains/:domainId', asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  await deleteDomain(req.params.id, req.params.domainId);
+  await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.domain.delete',
+    targetType: 'tenant', targetId: req.params.id, detail: { domainId: req.params.domainId } });
+  res.status(204).send();
 }));
 
 // ---- Transaction ops: refund + pending resolution ------------------------

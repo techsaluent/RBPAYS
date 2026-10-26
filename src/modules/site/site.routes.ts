@@ -2,6 +2,7 @@ import { Request, Response, Router } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query } from '../../../db';
+import { brandingForHost } from '../tenant/tenant.service';
 
 /**
  * Public website configuration — branding + admin-authored pages. No auth:
@@ -29,6 +30,19 @@ router.get(
       settings[r.key] = r.value ?? '';
     }
     res.json({ settings });
+  }),
+);
+
+// White-label Stage 2: resolve the brand for the requesting host so the
+// login / landing page themes a partner's custom domain before sign-in.
+// Host comes from an explicit ?host= (useful behind a proxy) or the request's
+// own Host header. Unknown/unverified hosts return the platform brand.
+router.get(
+  '/branding',
+  asyncHandler(async (req: Request, res: Response) => {
+    const host = (typeof req.query.host === 'string' && req.query.host) || req.get('host') || '';
+    const branding = await brandingForHost(host);
+    res.json({ branding });
   }),
 );
 

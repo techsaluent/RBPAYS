@@ -348,6 +348,19 @@ const App = {
           poster.setAttribute('href', s.auth_poster_link || '../');
           if (!s.auth_poster_link) poster.removeAttribute('href');
         }
+        // White-label Stage 2: on a partner's custom domain, theme the
+        // login/landing page to that tenant's brand before anyone signs in.
+        try {
+          const br = await fetch(Cfg.API + '/site/branding?host=' + encodeURIComponent(location.host), { cache: 'no-store' });
+          if (br.ok) {
+            const b = (await br.json()).branding;
+            if (b && b.tenant_id) {
+              if (b.brand_name) s.brand_name = b.brand_name;
+              if (b.primary_color) s.primary_color = b.primary_color;
+              if (b.logo_url) s.logo_url = b.logo_url;
+            }
+          }
+        } catch (_) {}
       }
       // Brand DOM apply — runs for platform settings AND a tenant override.
       if (s.primary_color) document.documentElement.style.setProperty('--brand', s.primary_color);
@@ -1908,7 +1921,8 @@ const Screens = {
       <td>${t.members || 0}</td>
       <td>${esc(t.support_email || '')}</td>
       <td>${t.status === 'active' ? UI.statusTag('active') : '<span class="tag">suspended</span>'}</td>
-      <td><button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button></td>
+      <td><button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button>
+        <button class="btn sm ghost" onclick="Actions.manageDomains('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Domains</button></td>
     </tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
         <h2>🏷️ White-label Partners</h2><button class="btn sm" onclick="Actions.newTenant()">+ New partner brand</button></div>
@@ -3474,6 +3488,52 @@ const Actions = {
       else await Api.post('/admin/tenants', body);
       UI.closeModal(); UI.toast('Partner brand saved'); App.route();
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // White-label Stage 2: manage a tenant's custom domains.
+  async manageDomains(id, brand) {
+    State._dnTenant = id;
+    const d = await Api.get(`/admin/tenants/${id}/domains`).catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(x => `<tr>
+      <td><b>${esc(x.domain)}</b>${x.is_primary ? ' <span class="tag">primary</span>' : ''}</td>
+      <td>${x.verified_at ? UI.statusTag('verified') : '<span class="tag">pending DNS</span>'}</td>
+      <td><span class="tag">SSL: ${esc(x.ssl_status)}</span></td>
+      <td style="white-space:nowrap">
+        ${x.verified_at ? '' : `<button class="btn sm ghost" onclick="Actions.verifyDomain('${x.id}')">Check DNS</button>`}
+        ${x.verified_at && !x.is_primary ? `<button class="btn sm ghost" onclick="Actions.primaryDomain('${x.id}')">Make primary</button>` : ''}
+        <button class="btn sm ghost danger" onclick="Actions.deleteDomain('${x.id}')">✕</button>
+      </td></tr>
+      ${x.verified_at ? '' : `<tr><td colspan=4 class=muted style="font-size:12px">Add a <b>TXT</b> record <code>_tutipays-verify.${esc(x.domain)}</code> = <code>${esc(x.verify_token)}</code> at your DNS, then Check DNS. Point the host at the platform server (A/CNAME) and ops provisions TLS.</td></tr>`}`).join('');
+    UI.modal(`<h3>Custom domains — ${esc(brand || '')}</h3>
+      <p class="muted">A partner can serve the branded panel on their own host (e.g. pay.brand.com). Verify ownership by DNS TXT; TLS is provisioned by ops.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Domain</th><th>Ownership</th><th>TLS</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=4 class=muted>No domains yet.</td></tr>'}</tbody></table></div>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <input id="dn_new" placeholder="pay.partnerbrand.com" style="flex:1">
+        <button class="btn" onclick="Actions.addDomain()">Add domain</button></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async addDomain() {
+    const domain = val('dn_new');
+    if (!domain) return UI.toast('Enter a domain', 'err');
+    try { await Api.post(`/admin/tenants/${State._dnTenant}/domains`, { domain }); UI.toast('Domain added — set the DNS TXT record'); Actions.manageDomains(State._dnTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async verifyDomain(domainId) {
+    try {
+      const r = await Api.post(`/admin/tenants/${State._dnTenant}/domains/${domainId}/verify`, {});
+      if (r.verified) UI.toast('Domain verified ✓');
+      else UI.toast(r.error || 'Not verified yet', 'err');
+      Actions.manageDomains(State._dnTenant);
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async primaryDomain(domainId) {
+    try { await Api.put(`/admin/tenants/${State._dnTenant}/domains/${domainId}`, { is_primary: true }); Actions.manageDomains(State._dnTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async deleteDomain(domainId) {
+    if (!confirm('Remove this domain?')) return;
+    try { await Api.del(`/admin/tenants/${State._dnTenant}/domains/${domainId}`); Actions.manageDomains(State._dnTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
   async reviewKyc(id, status) {
     // Every approval / rejection must carry a remark for the audit trail.
