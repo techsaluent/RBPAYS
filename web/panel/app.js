@@ -281,6 +281,7 @@ const NAV = [
   { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review', section: 'Users & KYC' },
   { key: 'deletionrequests', label: 'Deletion Requests', roles: ['admin', 'staff'], perm: 'users.manage', section: 'Users & KYC' },
+  { key: 'tenants', label: '🏷️ White-label Partners', roles: ['admin', 'staff'], perm: 'users.manage', section: 'Users & KYC' },
   { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
   { key: 'withdrawals', label: 'Withdrawals', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
@@ -324,19 +325,33 @@ function allowed(item) {
 
 // ---------------- App bootstrap + router ----------------
 const App = {
-  async applyBranding() {
+  async applyBranding(override) {
     try {
-      const r = await fetch(Cfg.API + '/site/settings', { cache: 'no-store' });
-      if (!r.ok) return;
-      const { settings: s } = await r.json();
-      if (!s) return;
-      App._site = s;
-      // Reveal the mobile-OTP step on sign-up when the admin requires it.
-      const otpBox = document.getElementById('signup-otp');
-      if (otpBox) otpBox.classList.toggle('hidden', s.security_require_signup_otp !== 'true');
+      let s = override;
+      if (!s) {
+        const r = await fetch(Cfg.API + '/site/settings', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = await r.json(); s = j.settings;
+        if (!s) return;
+        App._site = s;
+        // Reveal the mobile-OTP step on sign-up when the admin requires it.
+        const otpBox = document.getElementById('signup-otp');
+        if (otpBox) otpBox.classList.toggle('hidden', s.security_require_signup_otp !== 'true');
+        // Login/signup offer poster (super-admin configurable).
+        const poster = document.getElementById('auth-poster');
+        if (poster) {
+          if (s.auth_poster_url) poster.style.backgroundImage = `url("${s.auth_poster_url}")`;
+          const t = document.getElementById('poster-title');
+          const sub = document.getElementById('poster-sub');
+          if (t && s.auth_poster_title) t.textContent = s.auth_poster_title;
+          if (sub && s.auth_poster_subtitle) sub.textContent = s.auth_poster_subtitle;
+          poster.setAttribute('href', s.auth_poster_link || '../');
+          if (!s.auth_poster_link) poster.removeAttribute('href');
+        }
+      }
+      // Brand DOM apply — runs for platform settings AND a tenant override.
       if (s.primary_color) document.documentElement.style.setProperty('--brand', s.primary_color);
       const brand = s.brand_name || 'TutiPays';
-      // Admin-uploaded logo overrides the bundled Tutipays mark (login + sidebar).
       if (s.logo_url) {
         document.querySelectorAll('.auth-logo').forEach(i => { i.src = s.logo_url; });
         document.documentElement.style.setProperty('--logo-icon', `url('${s.logo_url}')`);
@@ -347,18 +362,7 @@ const App = {
         else if (el.querySelector('small') && el.childNodes[0].nodeType === 3) el.childNodes[0].nodeValue = brand + ' ';
         else if (!el.querySelector('small') && !el.querySelector('img')) el.textContent = brand;
       });
-      if (/TutiPays/.test(document.title)) document.title = document.title.replace(/TutiPays/g, brand);
-      // Login/signup offer poster (super-admin configurable).
-      const poster = document.getElementById('auth-poster');
-      if (poster) {
-        if (s.auth_poster_url) poster.style.backgroundImage = `url("${s.auth_poster_url}")`;
-        const t = document.getElementById('poster-title');
-        const sub = document.getElementById('poster-sub');
-        if (t && s.auth_poster_title) t.textContent = s.auth_poster_title;
-        if (sub && s.auth_poster_subtitle) sub.textContent = s.auth_poster_subtitle;
-        poster.setAttribute('href', s.auth_poster_link || '../');
-        if (!s.auth_poster_link) poster.removeAttribute('href');
-      }
+      if (document.title && document.title !== brand) document.title = brand;
     } catch (_) {}
   },
   async boot() {
@@ -378,7 +382,10 @@ const App = {
       }
       return;
     }
-    App.applyBranding();
+    // Apply platform branding first (caches _site, reveals poster/otp), then
+    // let the member's tenant brand win on top when they belong to one.
+    await App.applyBranding();
+    if (State.user.branding && State.user.branding.tenant_id) App.applyBranding(State.user.branding);
     $('auth').style.display = 'none'; $('app').style.display = 'grid';
     $('who-name').textContent = State.user.full_name;
     $('who-role').textContent = State.user.role.replace(/_/g, ' ');
@@ -1183,7 +1190,7 @@ const Screens = {
         </div></div>
       <p class="muted">Every inbound provider callback — verified, de-duplicated and settled by our reference id. Click a row to see the raw payload and re-process it. Rejected rows are callbacks we refused (bad signature / credentials).</p>
       <div class="box" style="background:#f7f8fb;border:1px solid #e5e9f2;border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13px">
-        <b>Callback URLs</b> — <code>${origin}/api/v1/webhooks/provider/&lt;providerId&gt;</code> (per provider), <code>${origin}/api/v1/webhooks/aggregator</code>, <code>${origin}/api/v1/webhooks/razorpay</code>. Auth: HMAC <code>X-Webhook-Signature</code> or HTTP Basic (set per provider under <a href="#/providerconnections">Provider Connections</a>).
+        <b>Callback URLs</b> — <code>${origin}/api/v1/webhooks/provider/&lt;providerId&gt;</code> (per provider), <code>${origin}/api/v1/webhooks/aggregator</code>, <code>${origin}/api/v1/webhooks/razorpay</code>, <code>${origin}/api/v1/webhooks/whatsapp</code> (Meta Cloud). Auth: HMAC <code>X-Webhook-Signature</code> or HTTP Basic (set per provider under <a href="#/providerconnections">Provider Connections</a>).
       </div>
       <div class="tbl-wrap"><table><thead><tr><th>Received</th><th>Provider</th><th>Event</th><th>Reference</th><th>Outcome</th><th>Detail</th></tr></thead>
       <tbody>${rows || '<tr><td colspan=6 class=muted>No callbacks received yet.</td></tr>'}</tbody></table></div></div>`;
@@ -1888,6 +1895,26 @@ const Screens = {
       <div class="tbl-wrap"><table>
         <thead><tr><th>Member</th><th>Role</th><th>Contact</th><th>Reason</th><th>Requested</th><th></th></tr></thead>
         <tbody>${rows || '<tr><td colspan=6 class=muted>No pending requests</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Admin: white-label partners — each tenant is a partner brand (name/logo/
+  // colour/support). Members under the tenant owner see that brand.
+  async tenants() {
+    const d = await Api.get('/admin/tenants').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(t => `<tr>
+      <td><span style="display:inline-grid;place-items:center;width:26px;height:26px;border-radius:7px;color:#fff;font-weight:800;background:${esc(t.primary_color || '#7C3AED')}">${t.logo_url ? '<img src="' + esc(t.logo_url) + '" style="width:26px;height:26px;border-radius:7px;object-fit:cover">' : esc(t.logo_emoji || (t.brand_name || '?')[0])}</span>
+        <b style="margin-left:6px">${esc(t.brand_name)}</b></td>
+      <td>${esc(t.owner_name || '')}<br><span class="muted">${esc(t.owner_phone || 'no owner')}</span></td>
+      <td>${t.members || 0}</td>
+      <td>${esc(t.support_email || '')}</td>
+      <td>${t.status === 'active' ? UI.statusTag('active') : '<span class="tag">suspended</span>'}</td>
+      <td><button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button></td>
+    </tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2>🏷️ White-label Partners</h2><button class="btn sm" onclick="Actions.newTenant()">+ New partner brand</button></div>
+      <p class="muted">Each partner brand (tenant) sets its own name, logo, colour and support details. The partner (owner) and everyone in their network see that brand in the panel and on receipts — your platform stays the engine underneath. Assign a partner by picking their <b>owner</b> member; their whole downline inherits the brand.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Brand</th><th>Owner</th><th>Members</th><th>Support email</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No partner brands yet. Create one to start white-labeling.</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Admin: manage the marketing service cards shown on the public home page.
@@ -3389,6 +3416,65 @@ const Actions = {
       UI.closeModal(); App.route();
     } catch (err) { UI.toast(err.message, 'err'); }
   },
+  // ---- White-label tenants ------------------------------------------------
+  _tenantForm(t, members) {
+    const opts = ['<option value="">— no owner yet —</option>'].concat(
+      (members || []).map(m => `<option value="${m.id}" ${t && t.owner_user_id === m.id ? 'selected' : ''}>${esc(m.full_name || m.username || m.phone)} (${esc(m.role)})</option>`)
+    ).join('');
+    return `
+      <div class="field"><label>Brand name</label><input id="tn_name" value="${t ? esc(t.brand_name || '') : ''}" placeholder="PartnerPay"></div>
+      <div class="field"><label>Owner (partner member — their network inherits the brand)</label><select id="tn_owner">${opts}</select></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label>Primary colour (hex)</label><input id="tn_color" value="${t ? esc(t.primary_color || '') : ''}" placeholder="#2563EB"></div>
+        <div class="field" style="flex:1"><label>Logo emoji (fallback)</label><input id="tn_emoji" value="${t ? esc(t.logo_emoji || '') : ''}" placeholder="💠"></div>
+      </div>
+      <div class="field"><label>Logo URL (optional)</label><input id="tn_logo" value="${t ? esc(t.logo_url || '') : ''}" placeholder="https://…/logo.png"></div>
+      <div class="field"><label>Tagline</label><input id="tn_tagline" value="${t ? esc(t.tagline || '') : ''}"></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label>Support email</label><input id="tn_email" value="${t ? esc(t.support_email || '') : ''}"></div>
+        <div class="field" style="flex:1"><label>Support phone</label><input id="tn_phone" value="${t ? esc(t.support_phone || '') : ''}"></div>
+      </div>
+      <div class="field"><label>Company / legal name</label><input id="tn_company" value="${t ? esc(t.company_name || '') : ''}"></div>
+      ${t ? `<div class="field"><label>Status</label><select id="tn_status"><option value="active" ${t.status === 'active' ? 'selected' : ''}>active</option><option value="suspended" ${t.status === 'suspended' ? 'selected' : ''}>suspended</option></select></div>` : ''}`;
+  },
+  _tenantBody() {
+    const b = {
+      brand_name: val('tn_name'),
+      owner_user_id: ($('tn_owner') && $('tn_owner').value) || null,
+      primary_color: val('tn_color') || null,
+      logo_emoji: val('tn_emoji') || null,
+      logo_url: val('tn_logo') || null,
+      tagline: val('tn_tagline') || null,
+      support_email: val('tn_email') || null,
+      support_phone: val('tn_phone') || null,
+      company_name: val('tn_company') || null,
+    };
+    if ($('tn_status')) b.status = $('tn_status').value;
+    return b;
+  },
+  async newTenant() {
+    const m = await Api.get('/admin/users?limit=200').catch(() => ({ items: [] }));
+    State._tnMembers = (m.items || []).filter(u => u.role !== 'admin');
+    UI.modal(`<h3>New partner brand</h3>${Actions._tenantForm(null, State._tnMembers)}
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+      <button class="btn" onclick="Actions.saveTenant()">Create</button></div>`);
+  },
+  async editTenant(id) {
+    const [tr, m] = await Promise.all([Api.get('/admin/tenants/' + id), Api.get('/admin/users?limit=200').catch(() => ({ items: [] }))]);
+    State._tnMembers = (m.items || []).filter(u => u.role !== 'admin');
+    UI.modal(`<h3>Edit brand — ${esc(tr.tenant.brand_name)}</h3>${Actions._tenantForm(tr.tenant, State._tnMembers)}
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+      <button class="btn" onclick="Actions.saveTenant('${id}')">Save</button></div>`);
+  },
+  async saveTenant(id) {
+    const body = Actions._tenantBody();
+    if (!body.brand_name) return UI.toast('Brand name is required', 'err');
+    try {
+      if (id) await Api.put('/admin/tenants/' + id, body);
+      else await Api.post('/admin/tenants', body);
+      UI.closeModal(); UI.toast('Partner brand saved'); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
   async reviewKyc(id, status) {
     // Every approval / rejection must carry a remark for the audit trail.
     const remarks = prompt(`${status === 'verified' ? 'Approve' : 'Reject'} this document — enter a remark (required):`,
@@ -3846,17 +3932,24 @@ const Actions = {
       <div class="field"><label>Partner / Initiator ID</label><input id="pc_partner_id" value="${esc(c.partner_id || '')}" placeholder="initiator_id"></div>
       <div class="field"><label>Extra config (JSON)</label><textarea id="pc_extra" rows="2" style="width:100%;font-family:monospace">${esc(JSON.stringify(c.extra || {}))}</textarea></div>
       <p class="muted" style="font-size:12px">Eko mapping — API key = developer_key, API secret = access_key, Partner ID = initiator_id, Extra = {"user_code":"…"}.</p>
-      <div class="field"><label>Callback (webhook) auth — how this provider signs the status it posts back</label>
-        <select id="pc_wauth" onchange="document.getElementById('pc_wbasic').hidden = (this.value!=='basic')">
-          <option value="hmac" ${((c.extra||{}).webhook_auth==='basic')?'':'selected'}>HMAC signature (X-Webhook-Signature)</option>
-          <option value="basic" ${((c.extra||{}).webhook_auth==='basic')?'selected':''}>HTTP Basic Auth (username / password) — e.g. AeronPay</option>
+      <div class="field"><label>Callback (webhook) auth — how this provider secures the status it posts back</label>
+        <select id="pc_wauth" onchange="var v=this.value;document.getElementById('pc_wbasic').hidden=(v!=='basic');document.getElementById('pc_wipbox').hidden=(v!=='ip')">
+          <option value="hmac" ${((c.extra||{}).webhook_auth && (c.extra||{}).webhook_auth!=='hmac')?'':'selected'}>HMAC signature (X-Webhook-Signature)</option>
+          <option value="basic" ${((c.extra||{}).webhook_auth==='basic')?'selected':''}>HTTP Basic Auth (username / password)</option>
+          <option value="ip" ${((c.extra||{}).webhook_auth==='ip')?'selected':''}>IP allowlist (no signature) — e.g. AeronPay</option>
+          <option value="none" ${((c.extra||{}).webhook_auth==='none')?'selected':''}>None — secret URL only (least secure)</option>
         </select></div>
       <div id="pc_wbasic" ${((c.extra||{}).webhook_auth==='basic')?'':'hidden'}>
         <div class="row" style="gap:8px">
           <div class="field" style="flex:1"><label>Webhook username</label><input id="pc_wuser" value="${esc((c.extra||{}).webhook_user||'')}"></div>
           <div class="field" style="flex:1"><label>Webhook password</label><input id="pc_wpass" value="${esc((c.extra||{}).webhook_pass||'')}"></div>
         </div>
-        <p class="muted" style="font-size:12px">Set the same username/password in the provider's dashboard (AeronPay → Developers → Callback URL auth). They'll be Basic-Auth-checked on every callback.</p>
+        <p class="muted" style="font-size:12px">Set the same username/password in the provider's dashboard. They'll be Basic-Auth-checked on every callback.</p>
+      </div>
+      <div id="pc_wipbox" ${((c.extra||{}).webhook_auth==='ip')?'':'hidden'}>
+        <div class="field"><label>Allowed source IPs / CIDRs (comma-separated)</label>
+          <input id="pc_wips" value="${esc(((c.extra||{}).webhook_ips||[]).join ? ((c.extra||{}).webhook_ips||[]).join(', ') : ((c.extra||{}).webhook_ips||''))}" placeholder="e.g. 13.235.0.0/16, 52.66.12.34"></div>
+        <p class="muted" style="font-size:12px">Ask the provider for the IPs/CIDRs their webhook posts <b>from</b> (AeronPay → Partner Console → Developer → Whitelisting lists these). Callbacks from any other IP are rejected.</p>
       </div>
       <div class="field"><label>Services this connection powers</label><div>${svcBoxes}</div></div>
       <div class="field"><label><input type="checkbox" id="pc_activate" checked> Make it the live provider for these services</label></div>
@@ -3881,12 +3974,18 @@ const Actions = {
     try { const t = $('pc_extra').value.trim(); extra = t ? JSON.parse(t) : {}; } catch (e) { UI.toast('Extra config must be valid JSON', 'err'); return; }
     // Merge the friendly webhook-auth fields into extra.
     const wauth = $('pc_wauth') ? $('pc_wauth').value : 'hmac';
+    delete extra.webhook_user; delete extra.webhook_pass; delete extra.webhook_ips;
     if (wauth === 'basic') {
       extra.webhook_auth = 'basic';
       extra.webhook_user = val('pc_wuser');
       extra.webhook_pass = val('pc_wpass');
+    } else if (wauth === 'ip') {
+      extra.webhook_auth = 'ip';
+      extra.webhook_ips = (val('pc_wips') || '').split(',').map(s => s.trim()).filter(Boolean);
+    } else if (wauth === 'none') {
+      extra.webhook_auth = 'none';
     } else {
-      delete extra.webhook_auth; delete extra.webhook_user; delete extra.webhook_pass;
+      delete extra.webhook_auth;
     }
     const body = {
       label: val('pc_label'), driver: val('pc_driver'), base_url: val('pc_base_url'),

@@ -237,6 +237,32 @@ function verifyBasic(header: string | undefined, user: string, pass: string): bo
   return safeEqual(decoded.slice(0, idx), user) && safeEqual(decoded.slice(idx + 1), pass);
 }
 
+/** Best-effort caller IP: first X-Forwarded-For hop, else the socket address. */
+function callerIp(req: Request): string {
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return (xff || req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+}
+
+const ipv4ToInt = (ip: string): number =>
+  ip.split('.').reduce((a, o) => ((a << 8) + (Number(o) & 255)) >>> 0, 0) >>> 0;
+
+/** Match an IPv4 address against an entry that is an exact IP or a CIDR range. */
+function ipMatches(ip: string, entry: string): boolean {
+  const e = entry.trim();
+  if (!e) return false;
+  if (!e.includes('/')) return e === ip;
+  const [range, bitsStr] = e.split('/');
+  const bits = Number(bitsStr);
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip) || !/^\d+\.\d+\.\d+\.\d+$/.test(range) || !(bits >= 0 && bits <= 32)) return false;
+  const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+  return (ipv4ToInt(ip) & mask) === (ipv4ToInt(range) & mask);
+}
+
+/** True if the caller IP is in the allowlist (exact IPs or CIDR ranges). */
+function ipAllowed(ip: string, list: string[]): boolean {
+  return list.some((e) => ipMatches(ip, e));
+}
+
 /**
  * Shared callback handler. Parses the many field/status variants aggregators
  * use, finds our original `reference`, and settles whichever service that
@@ -330,6 +356,23 @@ router.post(
         res.setHeader('WWW-Authenticate', 'Basic realm="tutipays-webhook"');
         throw ApiError.unauthorized('Invalid webhook credentials');
       }
+    } else if (authMode === 'ip') {
+      // IP allowlist — for providers whose callbacks carry no signature/credential
+      // (e.g. AeronPay, which secures callbacks by posting from static IPs/CIDRs).
+      const raw = extra.webhook_ips;
+      const list = (Array.isArray(raw) ? raw.map(String) : String(raw ?? '').split(','))
+        .map((s) => s.trim()).filter(Boolean);
+      if (list.length === 0) throw ApiError.forbidden('Provider webhook IP allowlist not configured');
+      const ip = callerIp(req);
+      if (!ipAllowed(ip, list)) {
+        await recordRejected(tag, `Caller IP ${ip} not in allowlist`, rawText(req), 401);
+        throw ApiError.unauthorized('Caller IP not allowed');
+      }
+    } else if (authMode === 'none') {
+      // No verification — secured only by the secret callback URL (the provider
+      // id is an unguessable UUID) plus our unguessable transaction reference.
+      // Use only when the provider offers neither signature, credential, nor a
+      // source-IP list; prefer 'ip' whenever the provider publishes its CIDRs.
     } else {
       const secret = (provider.webhook_secret || (await aggregatorWebhookSecret())).trim();
       if (!secret) throw ApiError.forbidden('Provider webhook secret not configured');
@@ -339,6 +382,74 @@ router.post(
       }
     }
     await handleCallback(req, res, tag);
+  }),
+);
+
+// ---------------------------------------------------------------------
+// WhatsApp (Meta Cloud API) webhook: GET verifies the endpoint, POST
+// receives message-status updates + inbound messages. Config lives on the
+// `whatsapp` integration's `extra`:
+//   verify_token — the token you set in Meta's webhook config (GET challenge)
+//   app_secret   — verifies the POST body's X-Hub-Signature-256 (optional but
+//                  recommended). Every event is logged to the webhook monitor.
+// ---------------------------------------------------------------------
+async function whatsappConfig(): Promise<{ verifyToken: string; appSecret: string }> {
+  const { rows } = await query<{ extra: Record<string, unknown> | null }>(
+    "SELECT extra FROM platform_integrations WHERE key = 'whatsapp'",
+  );
+  const e = rows[0]?.extra ?? {};
+  return {
+    verifyToken: String((e.verify_token as string) || (e.whatsapp_verify_token as string) || ''),
+    appSecret: String((e.app_secret as string) || (e.whatsapp_app_secret as string) || ''),
+  };
+}
+
+// GET verification handshake — Meta calls this when you save the webhook URL.
+router.get(
+  '/whatsapp',
+  asyncHandler(async (req: Request, res: Response) => {
+    const mode = String(req.query['hub.mode'] ?? '');
+    const token = String(req.query['hub.verify_token'] ?? '');
+    const challenge = String(req.query['hub.challenge'] ?? '');
+    const { verifyToken } = await whatsappConfig();
+    if (mode === 'subscribe' && verifyToken && token === verifyToken) {
+      res.type('text/plain').send(challenge);
+      return;
+    }
+    throw ApiError.forbidden('WhatsApp webhook verification failed');
+  }),
+);
+
+// POST receiver — delivery statuses + inbound messages. Logged to the monitor.
+router.post(
+  '/whatsapp',
+  asyncHandler(async (req: Request, res: Response) => {
+    const raw = rawText(req);
+    const { appSecret } = await whatsappConfig();
+    if (appSecret) {
+      const sig = String(req.headers['x-hub-signature-256'] ?? '').replace(/^sha256=/i, '');
+      const expected = crypto.createHmac('sha256', appSecret).update(raw).digest('hex');
+      const ok = sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+      if (!ok) {
+        await recordRejected('whatsapp', 'Invalid X-Hub-Signature-256', raw, 401);
+        throw ApiError.unauthorized('Invalid WhatsApp signature');
+      }
+    }
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse(raw); } catch { /* keep empty */ }
+    // Pull the first message/status id for dedup; fall back to a body hash.
+    const value = (((body.entry as unknown[])?.[0] as Record<string, unknown>)?.changes as unknown[])?.[0] as
+      | { value?: { messages?: Array<{ id?: string }>; statuses?: Array<{ id?: string; status?: string }> } }
+      | undefined;
+    const msgId = value?.value?.messages?.[0]?.id;
+    const statusId = value?.value?.statuses?.[0]?.id;
+    const statusStr = value?.value?.statuses?.[0]?.status;
+    const eventType = msgId ? 'message' : (statusStr ? `status.${statusStr}` : 'event');
+    const externalId = `whatsapp:${msgId || statusId || crypto.createHash('sha256').update(raw).digest('hex')}`;
+    if (await recordEvent('whatsapp', eventType, externalId, body)) {
+      await markProcessed('whatsapp', externalId, 'received');
+    }
+    res.json({ status: 'ok' });
   }),
 );
 

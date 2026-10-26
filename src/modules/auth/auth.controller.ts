@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { ApiError } from '../../utils/ApiError';
 import * as authService from './auth.service';
 import { getStaffPermissions } from '../../middleware/permission';
+import { resolveBranding } from '../tenant/tenant.service';
 
 export async function requestSignupOtp(req: Request, res: Response): Promise<void> {
   const result = await authService.requestSignupOtp(req.body.phone, req.body.email);
@@ -54,7 +55,10 @@ export async function me(req: Request, res: Response): Promise<void> {
   let permissions: string[] | undefined;
   if (user && user.role === 'admin') permissions = ['*'];
   else if (user && user.role === 'staff') permissions = await getStaffPermissions(user.id);
-  res.status(200).json({ user: permissions ? { ...user, permissions } : user });
+  // White-label: the member's tenant brand (or the platform default).
+  const branding = await resolveBranding(req.user.id).catch(() => null);
+  const payload = { ...user, ...(permissions ? { permissions } : {}), ...(branding ? { branding } : {}) };
+  res.status(200).json({ user: payload });
 }
 
 export async function forgotPassword(req: Request, res: Response): Promise<void> {

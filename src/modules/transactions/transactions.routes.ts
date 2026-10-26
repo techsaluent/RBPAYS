@@ -8,6 +8,7 @@ import { query } from '../../../db';
 import { paiseToRupees } from '../../utils/money';
 import { receiptData, receiptHtml } from './receipt';
 import { toCsv, statementHtml } from '../reports/reports.service';
+import { resolveBranding } from '../tenant/tenant.service';
 
 const router = Router();
 router.use(requireAuth);
@@ -247,7 +248,7 @@ router.get(
     const user = userRes.rows[0] ?? { full_name: '-', phone: '-' };
 
     // Statutory tax breakdown recorded against this transaction.
-    const [tdsRes, gstRes, brandRes] = await Promise.all([
+    const [tdsRes, gstRes, branding] = await Promise.all([
       query<{ section: string; gross_paise: string; rate_bps: number; tds_paise: string }>(
         'SELECT section, gross_paise, rate_bps, tds_paise FROM tds_records WHERE service_txn_id = $1 ORDER BY section',
         [txn.service_txn_id],
@@ -258,7 +259,7 @@ router.get(
            FROM gst_invoices WHERE service_txn_id = $1`,
         [txn.service_txn_id],
       ),
-      query<{ value: string }>("SELECT value FROM site_settings WHERE key = 'brand_name'"),
+      resolveBranding((txn as { user_id: string }).user_id),
     ]);
     const tax = {
       tds: tdsRes.rows.map((t) => ({
@@ -276,13 +277,15 @@ router.get(
           }
         : null,
     };
-    const brand = brandRes.rows[0]?.value || 'TutiPays';
+    const brand = branding.brand_name || 'TutiPays';
 
     if (req.query.format === 'json') {
       res.json({ receipt: receiptData(txn as never, detail, user, tax) });
       return;
     }
-    res.type('html').send(receiptHtml(txn as never, detail, user, tax, brand));
+    res.type('html').send(receiptHtml(txn as never, detail, user, tax, brand, {
+      logo_url: branding.logo_url, logo_emoji: branding.logo_emoji, primary_color: branding.primary_color,
+    }));
   }),
 );
 

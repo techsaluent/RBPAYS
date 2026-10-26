@@ -152,8 +152,16 @@ export function receiptHtml(
   user: { full_name: string; phone: string },
   tax?: TaxBreakdown,
   brand = 'TutiPays',
+  theme?: { logo_url?: string | null; logo_emoji?: string | null; primary_color?: string | null },
 ): string {
   const r = receiptData(txn, detail, user, tax);
+  // White-label theming: a tenant colour (hex) + logo mark override the defaults.
+  const hex = (theme?.primary_color || '').trim();
+  const brandColor = /^#?[0-9a-fA-F]{6}$/.test(hex) ? (hex.startsWith('#') ? hex : '#' + hex) : '#7C3AED';
+  const brandColor2 = brandColor === '#7C3AED' ? '#C026D3' : brandColor;
+  const logoMark = theme?.logo_url
+    ? `<img src="${escapeHtml(theme.logo_url)}" alt="" style="width:38px;height:38px;border-radius:11px;object-fit:cover">`
+    : escapeHtml(theme?.logo_emoji || '₹');
   const rows = Object.entries(r.details)
     .filter(([, v]) => v && v !== '-')
     .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(String(v))}</td></tr>`)
@@ -181,7 +189,7 @@ export function receiptHtml(
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap">
 <style>
-  :root { color-scheme: light; --brand:#7C3AED; --brand2:#C026D3; --ink:#14162e; --muted:#6b7488; --line:#e7e9f4; }
+  :root { color-scheme: light; --brand:${brandColor}; --brand2:${brandColor2}; --ink:#14162e; --muted:#6b7488; --line:#e7e9f4; }
   * { box-sizing: border-box; }
   body { font-family:'Plus Jakarta Sans',-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:#eef1f8; margin:0; padding:18px; color:var(--ink); -webkit-font-smoothing:antialiased; }
   .receipt { max-width:350px; margin:0 auto; background:#fff; border:1px solid var(--line); border-radius:16px; overflow:hidden; box-shadow:0 10px 34px rgba(30,34,90,.10); }
@@ -209,7 +217,7 @@ export function receiptHtml(
 <body>
   <div class="receipt">
     <div class="rhead">
-      <div class="logo">₹</div>
+      <div class="logo">${logoMark}</div>
       <h1>${escapeHtml(brand)}</h1>
       <div class="sub">${escapeHtml(r.service_title)} Receipt</div>
       <div class="chip">${escapeHtml(r.status)}</div>
