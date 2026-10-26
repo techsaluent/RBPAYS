@@ -192,6 +192,32 @@ function verifyHmac(raw: string, signature: string, secret: string): boolean {
   );
 }
 
+/** Timing-safe constant comparison of two strings. */
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+
+/**
+ * Verify HTTP Basic Auth on an inbound webhook (`Authorization: Basic base64`).
+ * Used by providers that authenticate their callbacks with a username/password
+ * instead of an HMAC signature (e.g. AeronPay). Timing-safe.
+ */
+function verifyBasic(header: string | undefined, user: string, pass: string): boolean {
+  const h = String(header ?? '');
+  if (!/^basic /i.test(h)) return false;
+  let decoded = '';
+  try {
+    decoded = Buffer.from(h.slice(6).trim(), 'base64').toString('utf8');
+  } catch {
+    return false;
+  }
+  const idx = decoded.indexOf(':');
+  if (idx < 0) return false;
+  return safeEqual(decoded.slice(0, idx), user) && safeEqual(decoded.slice(idx + 1), pass);
+}
+
 /**
  * Shared callback handler. Parses the many field/status variants aggregators
  * use, finds our original `reference`, and settles whichever service that
@@ -228,7 +254,9 @@ async function handleCallback(
   await settleByReference(reference, providerTag, { status, providerRef, utr, message });
 
   await markProcessed(providerTag, externalId);
-  res.json({ status: 'ok', reference, settled: status });
+  // Echo the client reference (required by some providers, e.g. AeronPay) and
+  // acknowledge with HTTP 200 so they mark delivery complete.
+  res.json({ status: 'ok', client_referenceId: reference, reference, acknowledged: true, settled: status });
 }
 
 router.post(
@@ -245,24 +273,44 @@ router.post(
 
 // ---------------------------------------------------------------------
 // Per-provider callback: /webhooks/provider/:id
-//   Each configured provider has its OWN callback URL and its own signing
-//   secret (service_providers.webhook_secret), so multiple aggregators can
-//   post callbacks and each is verified independently. Falls back to the
-//   global aggregator secret when a provider has none set.
+//   Each configured provider has its OWN callback URL and verifies callbacks
+//   with the auth scheme set on its row (service_providers.extra.webhook_auth):
+//     - 'hmac' (default): X-Webhook-Signature = HMAC-SHA256(rawBody, secret),
+//       secret = service_providers.webhook_secret (falls back to the global
+//       aggregator secret).
+//     - 'basic': HTTP Basic Auth against extra.webhook_user / extra.webhook_pass
+//       — for providers that sign callbacks with a username/password (AeronPay).
+//   So multiple providers can post callbacks, each verified independently.
 // ---------------------------------------------------------------------
 router.post(
   '/provider/:id',
   asyncHandler(async (req: Request, res: Response) => {
-    const { rows } = await query<{ label: string; service_code: string; webhook_secret: string | null }>(
-      'SELECT label, service_code, webhook_secret FROM service_providers WHERE id = $1',
+    const { rows } = await query<{
+      label: string; service_code: string; webhook_secret: string | null; extra: Record<string, unknown> | null;
+    }>(
+      'SELECT label, service_code, webhook_secret, extra FROM service_providers WHERE id = $1',
       [req.params.id],
     );
     const provider = rows[0];
     if (!provider) throw ApiError.notFound('Unknown callback endpoint');
-    const secret = (provider.webhook_secret || (await aggregatorWebhookSecret())).trim();
-    if (!secret) throw ApiError.forbidden('Provider webhook secret not configured');
-    if (!verifyHmac(rawText(req), String(req.headers['x-webhook-signature'] ?? ''), secret)) {
-      throw ApiError.unauthorized('Invalid webhook signature');
+
+    const extra = provider.extra ?? {};
+    const authMode = String((extra.webhook_auth as string) ?? 'hmac').toLowerCase();
+
+    if (authMode === 'basic') {
+      const user = String((extra.webhook_user as string) ?? '');
+      const pass = String((extra.webhook_pass as string) ?? '');
+      if (!user || !pass) throw ApiError.forbidden('Provider webhook Basic Auth not configured');
+      if (!verifyBasic(req.headers['authorization'], user, pass)) {
+        res.setHeader('WWW-Authenticate', 'Basic realm="tutipays-webhook"');
+        throw ApiError.unauthorized('Invalid webhook credentials');
+      }
+    } else {
+      const secret = (provider.webhook_secret || (await aggregatorWebhookSecret())).trim();
+      if (!secret) throw ApiError.forbidden('Provider webhook secret not configured');
+      if (!verifyHmac(rawText(req), String(req.headers['x-webhook-signature'] ?? ''), secret)) {
+        throw ApiError.unauthorized('Invalid webhook signature');
+      }
     }
     await handleCallback(req, res, `provider:${req.params.id}`);
   }),

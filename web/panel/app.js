@@ -3790,6 +3790,18 @@ const Actions = {
       <div class="field"><label>Partner / Initiator ID</label><input id="pc_partner_id" value="${esc(c.partner_id || '')}" placeholder="initiator_id"></div>
       <div class="field"><label>Extra config (JSON)</label><textarea id="pc_extra" rows="2" style="width:100%;font-family:monospace">${esc(JSON.stringify(c.extra || {}))}</textarea></div>
       <p class="muted" style="font-size:12px">Eko mapping — API key = developer_key, API secret = access_key, Partner ID = initiator_id, Extra = {"user_code":"…"}.</p>
+      <div class="field"><label>Callback (webhook) auth — how this provider signs the status it posts back</label>
+        <select id="pc_wauth" onchange="document.getElementById('pc_wbasic').hidden = (this.value!=='basic')">
+          <option value="hmac" ${((c.extra||{}).webhook_auth==='basic')?'':'selected'}>HMAC signature (X-Webhook-Signature)</option>
+          <option value="basic" ${((c.extra||{}).webhook_auth==='basic')?'selected':''}>HTTP Basic Auth (username / password) — e.g. AeronPay</option>
+        </select></div>
+      <div id="pc_wbasic" ${((c.extra||{}).webhook_auth==='basic')?'':'hidden'}>
+        <div class="row" style="gap:8px">
+          <div class="field" style="flex:1"><label>Webhook username</label><input id="pc_wuser" value="${esc((c.extra||{}).webhook_user||'')}"></div>
+          <div class="field" style="flex:1"><label>Webhook password</label><input id="pc_wpass" value="${esc((c.extra||{}).webhook_pass||'')}"></div>
+        </div>
+        <p class="muted" style="font-size:12px">Set the same username/password in the provider's dashboard (AeronPay → Developers → Callback URL auth). They'll be Basic-Auth-checked on every callback.</p>
+      </div>
       <div class="field"><label>Services this connection powers</label><div>${svcBoxes}</div></div>
       <div class="field"><label><input type="checkbox" id="pc_activate" checked> Make it the live provider for these services</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveConnection('${id || ''}')">Save connection</button>
@@ -3811,6 +3823,15 @@ const Actions = {
     if (!codes.length) { UI.toast('Pick at least one service', 'err'); return; }
     let extra = {};
     try { const t = $('pc_extra').value.trim(); extra = t ? JSON.parse(t) : {}; } catch (e) { UI.toast('Extra config must be valid JSON', 'err'); return; }
+    // Merge the friendly webhook-auth fields into extra.
+    const wauth = $('pc_wauth') ? $('pc_wauth').value : 'hmac';
+    if (wauth === 'basic') {
+      extra.webhook_auth = 'basic';
+      extra.webhook_user = val('pc_wuser');
+      extra.webhook_pass = val('pc_wpass');
+    } else {
+      delete extra.webhook_auth; delete extra.webhook_user; delete extra.webhook_pass;
+    }
     const body = {
       label: val('pc_label'), driver: val('pc_driver'), base_url: val('pc_base_url'),
       api_key: val('pc_api_key'), api_secret: val('pc_api_secret'), auth_token: val('pc_auth_token'),
