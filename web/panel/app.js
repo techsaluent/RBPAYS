@@ -3547,13 +3547,13 @@ const Actions = {
     const ov = o.overview, s = st.settings || {};
     if (!ov) return UI.toast('Could not load overview', 'err');
     const roleRows = Object.entries(ov.members.by_role).map(([r, v]) => `<tr><td>${esc(r.replace(/_/g, ' '))}</td><td>${v.total}</td><td>${v.active}</td></tr>`).join('') || '<tr><td colspan=3 class=muted>No members yet</td></tr>';
-    const txnRows = Object.entries(ov.transactions.by_status).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v.count}</td><td>${money(v.volume_paise)}</td></tr>`).join('') || '<tr><td colspan=3 class=muted>No transactions</td></tr>';
+    const txnRows = Object.entries(ov.transactions.by_status).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v.count}</td><td>${money(v.volume_paise/100)}</td></tr>`).join('') || '<tr><td colspan=3 class=muted>No transactions</td></tr>';
     UI.modal(`<h3>Overview — ${esc(brand || '')}</h3>
       <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:12px">
         <div class="stat b"><div class="muted">Members</div><b style="font-size:20px">${ov.members.total}</b></div>
-        <div class="stat g"><div class="muted">Wallet balance</div><b style="font-size:20px">${money(ov.wallet_balance_paise)}</b></div>
-        <div class="stat o"><div class="muted">Txns (success vol)</div><b style="font-size:20px">${money(ov.transactions.success_volume_paise)}</b></div>
-        <div class="stat b"><div class="muted">Platform margin</div><b style="font-size:20px">${money(ov.platform_margin_paise)}</b></div>
+        <div class="stat g"><div class="muted">Wallet balance</div><b style="font-size:20px">${money(ov.wallet_balance_paise/100)}</b></div>
+        <div class="stat o"><div class="muted">Txns (success vol)</div><b style="font-size:20px">${money(ov.transactions.success_volume_paise/100)}</b></div>
+        <div class="stat b"><div class="muted">Platform margin</div><b style="font-size:20px">${money(ov.platform_margin_paise/100)}</b></div>
       </div>
       <div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
         <div style="flex:1;min-width:220px"><h4>Network by role</h4>
