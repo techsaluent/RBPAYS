@@ -1924,7 +1924,8 @@ const Screens = {
       <td><button class="btn sm ghost" onclick="Actions.tenantOverview('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Overview</button>
         <button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button>
         <button class="btn sm ghost" onclick="Actions.manageDomains('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Domains</button>
-        <button class="btn sm ghost" onclick="Actions.manageTenantServices('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Services</button></td>
+        <button class="btn sm ghost" onclick="Actions.manageTenantServices('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Services</button>
+        <button class="btn sm ghost" onclick="Actions.manageBilling('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Billing</button></td>
     </tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
         <h2>🏷️ White-label Partners</h2><button class="btn sm" onclick="Actions.newTenant()">+ New partner brand</button></div>
@@ -3535,6 +3536,54 @@ const Actions = {
   async deleteDomain(domainId) {
     if (!confirm('Remove this domain?')) return;
     try { await Api.del(`/admin/tenants/${State._dnTenant}/domains/${domainId}`); Actions.manageDomains(State._dnTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // White-label Stage 5: partner billing — margin statements, issue, settle, void.
+  async manageBilling(id, brand) {
+    State._blTenant = id;
+    const d = await Api.get(`/admin/tenants/${id}/invoices`).catch(() => ({ items: [] }));
+    const badge = { draft: '<span class="tag">draft</span>', issued: '<span class="tag">issued</span>', paid: UI.statusTag('paid'), void: '<span class="tag">void</span>' };
+    const rows = (d.items || []).map(v => `<tr>
+      <td>${esc(v.period_start)} → ${esc(v.period_end)}<br><span class="muted">${v.reference ? esc(v.reference) : '—'} · ${v.txn_count} txns</span></td>
+      <td>${money(v.gross_margin_paise)}</td>
+      <td>${(v.partner_share_bps / 100).toFixed(2)}%</td>
+      <td><b>${money(v.net_payable_paise)}</b></td>
+      <td>${badge[v.status] || esc(v.status)}</td>
+      <td style="white-space:nowrap">
+        ${v.status === 'draft' ? `<button class="btn sm ghost" onclick="Actions.issueInvoice('${v.id}')">Issue</button>` : ''}
+        ${v.status === 'issued' ? `<button class="btn sm ghost" onclick="Actions.payInvoice('${v.id}')">Mark paid</button>` : ''}
+        ${v.status === 'draft' || v.status === 'issued' ? `<button class="btn sm ghost danger" onclick="Actions.voidInvoice('${v.id}')">Void</button>` : ''}
+      </td></tr>`).join('');
+    const today = new Date().toISOString().slice(0, 10);
+    const first = today.slice(0, 8) + '01';
+    UI.modal(`<h3>Billing — ${esc(brand || '')}</h3>
+      <p class="muted">A statement is the net platform margin on this tenant's transactions for the period, split by the partner's revenue share (set <b>partner_share_bps</b> in Overview → policy settings). Generate → Issue → Mark paid when you settle the partner's earning.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Period</th><th>Gross margin</th><th>Share</th><th>Payable</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No statements yet.</td></tr>'}</tbody></table></div>
+      <div class="row" style="gap:8px;margin-top:10px;align-items:flex-end">
+        <div class="field" style="flex:1"><label>From</label><input id="bl_from" type="date" value="${first}"></div>
+        <div class="field" style="flex:1"><label>To</label><input id="bl_to" type="date" value="${today}"></div>
+        <button class="btn" onclick="Actions.generateInvoice()">Generate statement</button></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async generateInvoice() {
+    const period_start = val('bl_from'), period_end = val('bl_to');
+    if (!period_start || !period_end) return UI.toast('Pick a period', 'err');
+    try { await Api.post(`/admin/tenants/${State._blTenant}/invoices`, { period_start, period_end }); UI.toast('Statement generated'); Actions.manageBilling(State._blTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async issueInvoice(invId) {
+    try { await Api.post(`/admin/invoices/${invId}/issue`, {}); UI.toast('Statement issued'); Actions.manageBilling(State._blTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async payInvoice(invId) {
+    const ref = prompt('Settlement reference (bank UTR / wallet credit ref):') || '';
+    try { await Api.post(`/admin/invoices/${invId}/pay`, { settlement_ref: ref }); UI.toast('Marked paid'); Actions.manageBilling(State._blTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async voidInvoice(invId) {
+    if (!confirm('Void this statement?')) return;
+    try { await Api.post(`/admin/invoices/${invId}/void`, {}); UI.toast('Statement voided'); Actions.manageBilling(State._blTenant); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   // White-label Stage 4: super-admin overview of a tenant's whole network + policy settings.

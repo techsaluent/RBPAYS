@@ -28,6 +28,7 @@ import { listTenants, getTenant, createTenant, updateTenant,
   listDomains, addDomain, verifyDomain, updateDomain, deleteDomain,
   tenantServiceMatrix, setTenantServiceVisibility,
   tenantOverview, getTenantSettings, setTenantSetting } from '../tenant/tenant.service';
+import { listInvoices, generateInvoice, issueInvoice, markInvoicePaid, voidInvoice } from '../tenant/tenant.billing.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
@@ -400,6 +401,50 @@ router.put('/tenants/:id/settings',
       targetType: 'tenant', targetId: req.params.id, detail: { key, value: key === 'webhook_secret' ? '•••' : value } });
     res.json({ ok: true });
   }));
+
+// ---- White-label partner billing (Stage 5) -------------------------------
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+
+router.get('/tenants/:id/invoices', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ items: await listInvoices(req.params.id) });
+}));
+
+router.post('/tenants/:id/invoices',
+  validate(z.object({ period_start: isoDate, period_end: isoDate, notes: z.string().max(500).optional() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as { period_start: string; period_end: string; notes?: string };
+    const inv = await generateInvoice(req.params.id, b.period_start, b.period_end, b.notes);
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.invoice.generate',
+      targetType: 'tenant_invoice', targetId: inv.id, detail: { tenant: req.params.id, period: [b.period_start, b.period_end], net_payable_paise: inv.net_payable_paise } });
+    res.status(201).json({ invoice: inv });
+  }));
+
+router.post('/invoices/:invoiceId/issue', asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const inv = await issueInvoice(req.params.invoiceId);
+  await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.invoice.issue',
+    targetType: 'tenant_invoice', targetId: inv.id, detail: { reference: inv.reference } });
+  res.json({ invoice: inv });
+}));
+
+router.post('/invoices/:invoiceId/pay',
+  validate(z.object({ settlement_ref: z.string().trim().max(120).optional() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const inv = await markInvoicePaid(req.params.invoiceId, (req.body as { settlement_ref?: string }).settlement_ref ?? '');
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.invoice.pay',
+      targetType: 'tenant_invoice', targetId: inv.id, detail: { settlement_ref: inv.settlement_ref, net_payable_paise: inv.net_payable_paise } });
+    res.json({ invoice: inv });
+  }));
+
+router.post('/invoices/:invoiceId/void', asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const inv = await voidInvoice(req.params.invoiceId);
+  await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.invoice.void',
+    targetType: 'tenant_invoice', targetId: inv.id, detail: {} });
+  res.json({ invoice: inv });
+}));
 
 // ---- Transaction ops: refund + pending resolution ------------------------
 const txnDecisionSchema = z.object({ remark: z.string().trim().min(1).max(200) });

@@ -306,6 +306,7 @@ const TENANT_SETTING_KEYS = new Set([
   'webhook_secret',          // inbound webhook HMAC secret for this tenant's keys
   'settlement_cycle',        // e.g. 'T+1', 'weekly'
   'min_wallet_balance_paise',// soft floor warning
+  'partner_share_bps',       // revenue share of platform margin paid to the partner (basis points)
   'notes',                   // free text for admins
 ]);
 
