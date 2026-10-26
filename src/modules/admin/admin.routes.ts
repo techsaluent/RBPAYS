@@ -24,6 +24,7 @@ import { draftProviderConfig, analyzeDevRequest } from '../ai/ai.service';
 import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } from '../devdesk/devdesk.service';
 import { postJournal } from '../_shared/ledger';
 import { settleByReference } from '../_shared/settle';
+import { listTenants, getTenant, createTenant, updateTenant } from '../tenant/tenant.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
@@ -280,6 +281,44 @@ router.post(
     res.json({ reprocessed: ok, reference: ev.reference, status });
   }),
 );
+
+// ---- White-label tenants -------------------------------------------------
+const tenantSchema = z.object({
+  brand_name: z.string().trim().min(1).max(80),
+  owner_user_id: z.string().uuid().nullable().optional(),
+  logo_url: z.string().trim().max(500).nullable().optional(),
+  logo_emoji: z.string().trim().max(16).nullable().optional(),
+  primary_color: z.string().trim().max(32).nullable().optional(),
+  tagline: z.string().trim().max(160).nullable().optional(),
+  support_email: z.string().trim().max(120).nullable().optional(),
+  support_phone: z.string().trim().max(20).nullable().optional(),
+  company_name: z.string().trim().max(120).nullable().optional(),
+  status: z.enum(['active', 'suspended']).optional(),
+});
+
+router.get('/tenants', asyncHandler(async (_req: Request, res: Response) => {
+  res.json({ items: await listTenants() });
+}));
+
+router.get('/tenants/:id', asyncHandler(async (req: Request, res: Response) => {
+  res.json({ tenant: await getTenant(req.params.id) });
+}));
+
+router.post('/tenants', validate(tenantSchema), asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const t = await createTenant(req.body as z.infer<typeof tenantSchema>);
+  await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.create',
+    targetType: 'tenant', targetId: t.id, detail: { brand_name: t.brand_name, owner: t.owner_user_id } });
+  res.status(201).json({ tenant: t });
+}));
+
+router.put('/tenants/:id', validate(tenantSchema.partial()), asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const t = await updateTenant(req.params.id, req.body as Partial<z.infer<typeof tenantSchema>>);
+  await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'tenant.update',
+    targetType: 'tenant', targetId: req.params.id, detail: req.body });
+  res.json({ tenant: t });
+}));
 
 // ---- Transaction ops: refund + pending resolution ------------------------
 const txnDecisionSchema = z.object({ remark: z.string().trim().min(1).max(200) });

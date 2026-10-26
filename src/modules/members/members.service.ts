@@ -66,6 +66,14 @@ export async function createMember(input: CreateMemberInput) {
 
     await client.query('INSERT INTO wallets (user_id) VALUES ($1)', [member.id]);
 
+    // White-label: a new member inherits their parent's tenant (brand), if any.
+    if (input.parentId) {
+      await client.query(
+        'UPDATE users SET tenant_id = (SELECT tenant_id FROM users WHERE id = $2) WHERE id = $1',
+        [member.id, input.parentId],
+      );
+    }
+
     // Activate all globally-enabled services for the new member.
     await client.query(
       `INSERT INTO user_services (user_id, service_code)

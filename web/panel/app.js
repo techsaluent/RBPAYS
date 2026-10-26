@@ -281,6 +281,7 @@ const NAV = [
   { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review', section: 'Users & KYC' },
   { key: 'deletionrequests', label: 'Deletion Requests', roles: ['admin', 'staff'], perm: 'users.manage', section: 'Users & KYC' },
+  { key: 'tenants', label: '🏷️ White-label Partners', roles: ['admin', 'staff'], perm: 'users.manage', section: 'Users & KYC' },
   { key: 'topupreview', label: 'Top-up Requests', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
   { key: 'withdrawals', label: 'Withdrawals', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'bankaccounts', label: 'Bank Accounts', roles: ['admin', 'staff'], perm: 'topup.manage', section: 'Finance' },
@@ -324,19 +325,33 @@ function allowed(item) {
 
 // ---------------- App bootstrap + router ----------------
 const App = {
-  async applyBranding() {
+  async applyBranding(override) {
     try {
-      const r = await fetch(Cfg.API + '/site/settings', { cache: 'no-store' });
-      if (!r.ok) return;
-      const { settings: s } = await r.json();
-      if (!s) return;
-      App._site = s;
-      // Reveal the mobile-OTP step on sign-up when the admin requires it.
-      const otpBox = document.getElementById('signup-otp');
-      if (otpBox) otpBox.classList.toggle('hidden', s.security_require_signup_otp !== 'true');
+      let s = override;
+      if (!s) {
+        const r = await fetch(Cfg.API + '/site/settings', { cache: 'no-store' });
+        if (!r.ok) return;
+        const j = await r.json(); s = j.settings;
+        if (!s) return;
+        App._site = s;
+        // Reveal the mobile-OTP step on sign-up when the admin requires it.
+        const otpBox = document.getElementById('signup-otp');
+        if (otpBox) otpBox.classList.toggle('hidden', s.security_require_signup_otp !== 'true');
+        // Login/signup offer poster (super-admin configurable).
+        const poster = document.getElementById('auth-poster');
+        if (poster) {
+          if (s.auth_poster_url) poster.style.backgroundImage = `url("${s.auth_poster_url}")`;
+          const t = document.getElementById('poster-title');
+          const sub = document.getElementById('poster-sub');
+          if (t && s.auth_poster_title) t.textContent = s.auth_poster_title;
+          if (sub && s.auth_poster_subtitle) sub.textContent = s.auth_poster_subtitle;
+          poster.setAttribute('href', s.auth_poster_link || '../');
+          if (!s.auth_poster_link) poster.removeAttribute('href');
+        }
+      }
+      // Brand DOM apply — runs for platform settings AND a tenant override.
       if (s.primary_color) document.documentElement.style.setProperty('--brand', s.primary_color);
       const brand = s.brand_name || 'TutiPays';
-      // Admin-uploaded logo overrides the bundled Tutipays mark (login + sidebar).
       if (s.logo_url) {
         document.querySelectorAll('.auth-logo').forEach(i => { i.src = s.logo_url; });
         document.documentElement.style.setProperty('--logo-icon', `url('${s.logo_url}')`);
@@ -347,18 +362,7 @@ const App = {
         else if (el.querySelector('small') && el.childNodes[0].nodeType === 3) el.childNodes[0].nodeValue = brand + ' ';
         else if (!el.querySelector('small') && !el.querySelector('img')) el.textContent = brand;
       });
-      if (/TutiPays/.test(document.title)) document.title = document.title.replace(/TutiPays/g, brand);
-      // Login/signup offer poster (super-admin configurable).
-      const poster = document.getElementById('auth-poster');
-      if (poster) {
-        if (s.auth_poster_url) poster.style.backgroundImage = `url("${s.auth_poster_url}")`;
-        const t = document.getElementById('poster-title');
-        const sub = document.getElementById('poster-sub');
-        if (t && s.auth_poster_title) t.textContent = s.auth_poster_title;
-        if (sub && s.auth_poster_subtitle) sub.textContent = s.auth_poster_subtitle;
-        poster.setAttribute('href', s.auth_poster_link || '../');
-        if (!s.auth_poster_link) poster.removeAttribute('href');
-      }
+      if (document.title && document.title !== brand) document.title = brand;
     } catch (_) {}
   },
   async boot() {
@@ -378,7 +382,10 @@ const App = {
       }
       return;
     }
-    App.applyBranding();
+    // Apply platform branding first (caches _site, reveals poster/otp), then
+    // let the member's tenant brand win on top when they belong to one.
+    await App.applyBranding();
+    if (State.user.branding && State.user.branding.tenant_id) App.applyBranding(State.user.branding);
     $('auth').style.display = 'none'; $('app').style.display = 'grid';
     $('who-name').textContent = State.user.full_name;
     $('who-role').textContent = State.user.role.replace(/_/g, ' ');
@@ -1890,6 +1897,26 @@ const Screens = {
         <tbody>${rows || '<tr><td colspan=6 class=muted>No pending requests</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Admin: white-label partners — each tenant is a partner brand (name/logo/
+  // colour/support). Members under the tenant owner see that brand.
+  async tenants() {
+    const d = await Api.get('/admin/tenants').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(t => `<tr>
+      <td><span style="display:inline-grid;place-items:center;width:26px;height:26px;border-radius:7px;color:#fff;font-weight:800;background:${esc(t.primary_color || '#7C3AED')}">${t.logo_url ? '<img src="' + esc(t.logo_url) + '" style="width:26px;height:26px;border-radius:7px;object-fit:cover">' : esc(t.logo_emoji || (t.brand_name || '?')[0])}</span>
+        <b style="margin-left:6px">${esc(t.brand_name)}</b></td>
+      <td>${esc(t.owner_name || '')}<br><span class="muted">${esc(t.owner_phone || 'no owner')}</span></td>
+      <td>${t.members || 0}</td>
+      <td>${esc(t.support_email || '')}</td>
+      <td>${t.status === 'active' ? UI.statusTag('active') : '<span class="tag">suspended</span>'}</td>
+      <td><button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button></td>
+    </tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2>🏷️ White-label Partners</h2><button class="btn sm" onclick="Actions.newTenant()">+ New partner brand</button></div>
+      <p class="muted">Each partner brand (tenant) sets its own name, logo, colour and support details. The partner (owner) and everyone in their network see that brand in the panel and on receipts — your platform stays the engine underneath. Assign a partner by picking their <b>owner</b> member; their whole downline inherits the brand.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Brand</th><th>Owner</th><th>Members</th><th>Support email</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No partner brands yet. Create one to start white-labeling.</td></tr>'}</tbody></table></div></div>`;
+  },
+
   // Admin: manage the marketing service cards shown on the public home page.
   // Add / edit / reorder / show-hide / delete — the landing grid renders from
   // this list live (GET /site/services), no code change or redeploy.
@@ -3387,6 +3414,65 @@ const Actions = {
       const r = await Api.post('/admin/provider-events/' + id + '/reprocess', {});
       UI.toast(r.reprocessed ? `Re-processed (${r.status})` : 'Nothing to settle (already final or not found)');
       UI.closeModal(); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ---- White-label tenants ------------------------------------------------
+  _tenantForm(t, members) {
+    const opts = ['<option value="">— no owner yet —</option>'].concat(
+      (members || []).map(m => `<option value="${m.id}" ${t && t.owner_user_id === m.id ? 'selected' : ''}>${esc(m.full_name || m.username || m.phone)} (${esc(m.role)})</option>`)
+    ).join('');
+    return `
+      <div class="field"><label>Brand name</label><input id="tn_name" value="${t ? esc(t.brand_name || '') : ''}" placeholder="PartnerPay"></div>
+      <div class="field"><label>Owner (partner member — their network inherits the brand)</label><select id="tn_owner">${opts}</select></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label>Primary colour (hex)</label><input id="tn_color" value="${t ? esc(t.primary_color || '') : ''}" placeholder="#2563EB"></div>
+        <div class="field" style="flex:1"><label>Logo emoji (fallback)</label><input id="tn_emoji" value="${t ? esc(t.logo_emoji || '') : ''}" placeholder="💠"></div>
+      </div>
+      <div class="field"><label>Logo URL (optional)</label><input id="tn_logo" value="${t ? esc(t.logo_url || '') : ''}" placeholder="https://…/logo.png"></div>
+      <div class="field"><label>Tagline</label><input id="tn_tagline" value="${t ? esc(t.tagline || '') : ''}"></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label>Support email</label><input id="tn_email" value="${t ? esc(t.support_email || '') : ''}"></div>
+        <div class="field" style="flex:1"><label>Support phone</label><input id="tn_phone" value="${t ? esc(t.support_phone || '') : ''}"></div>
+      </div>
+      <div class="field"><label>Company / legal name</label><input id="tn_company" value="${t ? esc(t.company_name || '') : ''}"></div>
+      ${t ? `<div class="field"><label>Status</label><select id="tn_status"><option value="active" ${t.status === 'active' ? 'selected' : ''}>active</option><option value="suspended" ${t.status === 'suspended' ? 'selected' : ''}>suspended</option></select></div>` : ''}`;
+  },
+  _tenantBody() {
+    const b = {
+      brand_name: val('tn_name'),
+      owner_user_id: ($('tn_owner') && $('tn_owner').value) || null,
+      primary_color: val('tn_color') || null,
+      logo_emoji: val('tn_emoji') || null,
+      logo_url: val('tn_logo') || null,
+      tagline: val('tn_tagline') || null,
+      support_email: val('tn_email') || null,
+      support_phone: val('tn_phone') || null,
+      company_name: val('tn_company') || null,
+    };
+    if ($('tn_status')) b.status = $('tn_status').value;
+    return b;
+  },
+  async newTenant() {
+    const m = await Api.get('/admin/users?limit=200').catch(() => ({ items: [] }));
+    State._tnMembers = (m.items || []).filter(u => u.role !== 'admin');
+    UI.modal(`<h3>New partner brand</h3>${Actions._tenantForm(null, State._tnMembers)}
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+      <button class="btn" onclick="Actions.saveTenant()">Create</button></div>`);
+  },
+  async editTenant(id) {
+    const [tr, m] = await Promise.all([Api.get('/admin/tenants/' + id), Api.get('/admin/users?limit=200').catch(() => ({ items: [] }))]);
+    State._tnMembers = (m.items || []).filter(u => u.role !== 'admin');
+    UI.modal(`<h3>Edit brand — ${esc(tr.tenant.brand_name)}</h3>${Actions._tenantForm(tr.tenant, State._tnMembers)}
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+      <button class="btn" onclick="Actions.saveTenant('${id}')">Save</button></div>`);
+  },
+  async saveTenant(id) {
+    const body = Actions._tenantBody();
+    if (!body.brand_name) return UI.toast('Brand name is required', 'err');
+    try {
+      if (id) await Api.put('/admin/tenants/' + id, body);
+      else await Api.post('/admin/tenants', body);
+      UI.closeModal(); UI.toast('Partner brand saved'); App.route();
     } catch (err) { UI.toast(err.message, 'err'); }
   },
   async reviewKyc(id, status) {
