@@ -274,6 +274,7 @@ const NAV = [
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
   { key: 'developer', label: '🧩 Developer API', roles: NETWORK_ROLES },
+  { key: 'mybrand', label: '🎨 My Brand', roles: NETWORK_ROLES, flag: 'manages_brand' },
   { key: 'profile', label: 'Profile', roles: '*' },
   { key: 'security', label: 'Security', roles: '*' },
   // Admin console — grouped into sidebar sections; each maps to a staff permission.
@@ -317,6 +318,7 @@ function hasPerm(p) {
   return perms.includes('*') || perms.includes(p);
 }
 function allowed(item) {
+  if (item.flag && !State.user[item.flag]) return false; // e.g. manages_brand
   if (item.roles === '*') return true;
   if (!item.roles.includes(State.user.role)) return false;
   if (item.perm && State.user.role === 'staff') return hasPerm(item.perm);
@@ -639,6 +641,37 @@ const Screens = {
   },
 
   // My profile: name / email / phone (company details for admin live in Website).
+  // Self-service white-label brand console for a tenant owner (manages_brand).
+  async mybrand() {
+    const r = await Api.get('/brand').catch(() => null);
+    if (!r || !r.tenant) { $('view').innerHTML = '<div class="panel"><p class="muted">You don\'t manage a white-label brand.</p></div>'; return; }
+    const t = r.tenant;
+    State._myBrand = t;
+    const base = (window.TUTIPAYS_API || (location.origin + '/api/v1')).replace(/\/$/, '');
+    $('view').innerHTML = `
+      <div class="panel"><h2>🎨 My Brand</h2>
+        <p class="muted">Your white-label brand. Changes apply to your panel, receipts and (on your custom domain) your marketing site — for your whole network.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <div class="field" style="flex:1;min-width:180px"><label>Brand name</label><input id="mb_name" value="${esc(t.brand_name || '')}"></div>
+          <div class="field" style="flex:1;min-width:120px"><label>Primary colour (hex)</label><input id="mb_color" value="${esc(t.primary_color || '')}" placeholder="#2563EB"></div>
+          <div class="field" style="flex:1;min-width:100px"><label>Logo emoji</label><input id="mb_emoji" value="${esc(t.logo_emoji || '')}" placeholder="💠"></div>
+        </div>
+        <div class="field"><label>Logo URL</label><input id="mb_logo" value="${esc(t.logo_url || '')}" placeholder="https://…/logo.png"></div>
+        <div class="field"><label>Tagline</label><input id="mb_tagline" value="${esc(t.tagline || '')}"></div>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <div class="field" style="flex:1;min-width:160px"><label>Support email</label><input id="mb_email" value="${esc(t.support_email || '')}"></div>
+          <div class="field" style="flex:1;min-width:140px"><label>Support phone</label><input id="mb_phone" value="${esc(t.support_phone || '')}"></div>
+        </div>
+        <div class="field"><label>Company / legal name</label><input id="mb_company" value="${esc(t.company_name || '')}"></div>
+        <button class="btn" onclick="Actions.saveMyBrand()">Save branding</button>
+      </div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+          <h2>Custom domains</h2><button class="btn sm" onclick="Actions.myBrandDomains()">Manage domains</button></div>
+        <p class="muted">Serve your branded panel on your own host (e.g. pay.yourbrand.com). Point its DNS at our server; we verify ownership and provision TLS.</p></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+          <h2>Services on my brand</h2><button class="btn sm" onclick="Actions.myBrandServices()">Choose services</button></div>
+        <p class="muted">Show or hide individual services on your branded site.</p></div>`;
+  },
   async profile() {
     const u = State.user;
     const companyNote = u.role === 'admin'
@@ -3491,6 +3524,60 @@ const Actions = {
       else await Api.post('/admin/tenants', body);
       UI.closeModal(); UI.toast('Partner brand saved'); App.route();
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ---- Self-service brand console (tenant owner, /brand/*) ----
+  async saveMyBrand() {
+    const body = {
+      brand_name: val('mb_name'), primary_color: val('mb_color') || null, logo_emoji: val('mb_emoji') || null,
+      logo_url: val('mb_logo') || null, tagline: val('mb_tagline') || null, support_email: val('mb_email') || null,
+      support_phone: val('mb_phone') || null, company_name: val('mb_company') || null,
+    };
+    if (!body.brand_name) return UI.toast('Brand name is required', 'err');
+    try { await Api.put('/brand', body); UI.toast('Brand saved — reloading'); setTimeout(() => location.reload(), 600); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async myBrandDomains() {
+    const d = await Api.get('/brand/domains').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(x => `<tr>
+      <td><b>${esc(x.domain)}</b>${x.is_primary ? ' <span class="tag">primary</span>' : ''}</td>
+      <td>${x.verified_at ? UI.statusTag('verified') : '<span class="tag">pending DNS</span>'}</td>
+      <td style="white-space:nowrap">
+        ${x.verified_at ? '' : `<button class="btn sm ghost" onclick="Actions.myVerifyDomain('${x.id}')">Check DNS</button>`}
+        <button class="btn sm ghost danger" onclick="Actions.myDeleteDomain('${x.id}')">✕</button></td>
+      ${x.verified_at ? '' : `<tr><td colspan=3 class=muted style="font-size:12px">Add a <b>TXT</b> record <code>_tutipays-verify.${esc(x.domain)}</code> = <code>${esc(x.verify_token)}</code>, then Check DNS. Point the host (A/CNAME) at our server.</td></tr>`}`).join('');
+    UI.modal(`<h3>My custom domains</h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Domain</th><th>Ownership</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=3 class=muted>No domains yet.</td></tr>'}</tbody></table></div>
+      <div class="row" style="gap:8px;margin-top:10px"><input id="mbd_new" placeholder="pay.yourbrand.com" style="flex:1">
+        <button class="btn" onclick="Actions.myAddDomain()">Add domain</button></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async myAddDomain() {
+    const domain = val('mbd_new'); if (!domain) return UI.toast('Enter a domain', 'err');
+    try { await Api.post('/brand/domains', { domain }); UI.toast('Domain added — set the DNS TXT record'); Actions.myBrandDomains(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async myVerifyDomain(domainId) {
+    try { const r = await Api.post(`/brand/domains/${domainId}/verify`, {}); UI.toast(r.verified ? 'Domain verified ✓' : (r.error || 'Not verified yet'), r.verified ? 'ok' : 'err'); Actions.myBrandDomains(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async myDeleteDomain(domainId) {
+    if (!confirm('Remove this domain?')) return;
+    try { await Api.del('/brand/domains/' + domainId); Actions.myBrandDomains(); } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async myBrandServices() {
+    const d = await Api.get('/brand/services').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(s => `<tr>
+      <td><b>${esc(s.name || s.code)}</b> <span class="muted">${esc(s.code)}</span>${s.enabled ? '' : ' <span class="tag">platform-off</span>'}</td>
+      <td style="text-align:right"><label style="cursor:pointer"><input type="checkbox" ${s.visible ? 'checked' : ''} onchange="Actions.myToggleService('${s.code}', this.checked, this)"> <span style="margin-left:4px">${s.visible ? 'shown' : 'hidden'}</span></label></td></tr>`).join('');
+    UI.modal(`<h3>Services on my brand</h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Service</th><th style="text-align:right">Visible</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=2 class=muted>No services.</td></tr>'}</tbody></table></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async myToggleService(code, visible, el) {
+    try { await Api.put(`/brand/services/${encodeURIComponent(code)}`, { visible }); if (el && el.nextElementSibling) el.nextElementSibling.textContent = visible ? 'shown' : 'hidden'; }
+    catch (err) { UI.toast(err.message, 'err'); if (el) el.checked = !visible; }
   },
   // White-label Stage 2: manage a tenant's custom domains.
   async manageDomains(id, brand) {

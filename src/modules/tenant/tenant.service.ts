@@ -370,6 +370,29 @@ export async function getTenant(id: string) {
   return rows[0];
 }
 
+/** The tenant a member owns (owner_user_id = them), or null. owner_user_id is UNIQUE. */
+export async function getTenantByOwner(ownerUserId: string) {
+  const { rows } = await query('SELECT * FROM tenants WHERE owner_user_id = $1', [ownerUserId]);
+  return rows[0] ?? null;
+}
+
+/** True if the member owns a white-label brand (for the panel to show "My Brand"). */
+export async function ownsTenant(ownerUserId: string): Promise<boolean> {
+  const { rows } = await query('SELECT 1 FROM tenants WHERE owner_user_id = $1', [ownerUserId]);
+  return rows.length > 0;
+}
+
+/**
+ * The id of the tenant a member owns, or throw 403. Scopes every self-service
+ * brand operation to the caller's own tenant — the tenant id is derived here,
+ * never trusted from the client.
+ */
+export async function requireOwnedTenantId(ownerUserId: string): Promise<string> {
+  const t = await getTenantByOwner(ownerUserId);
+  if (!t) throw ApiError.forbidden('You do not manage a white-label brand');
+  return t.id;
+}
+
 /** Create a tenant and tag its owner (and the owner's existing downline) with it. */
 export async function createTenant(input: TenantInput) {
   if (!input.brand_name?.trim()) throw ApiError.badRequest('Brand name is required');
