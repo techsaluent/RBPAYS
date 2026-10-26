@@ -174,6 +174,7 @@
     <a href="#partner">Reseller quick-start</a>
     <a href="#partner-endpoints">Partner endpoints</a>
     <a href="#partner-webhooks">Outbound webhooks</a>
+    <a href="#partner-sdk">Code samples</a>
     <div class="grp">Start here</div>
     <a href="#conventions">Conventions</a>
     <a href="#envelope">Response envelope</a>
@@ -288,6 +289,70 @@ const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.headers
         <div class="card"><h4>Test it</h4><p>Panel → Developer API → <b>Test</b> on a key sends a signed <span class="mono">test.ping</span> to the endpoint and logs the result, so you can confirm signature verification before going live.</p></div>
         <div class="card"><h4>Per-key or account default</h4><p>Set a callback URL on each key, or one <b>account default</b> that every key without its own URL falls back to. Each has its own signing secret.</p></div>
         <div class="card"><h4>Events</h4><p><span class="mono">transaction.success</span>, <span class="mono">transaction.failed</span> on settlement; <span class="mono">test.ping</span> from the test button. Switch on the <span class="mono">event</span> field.</p></div>
+      </div>
+    </section>
+
+    <!-- ============ PARTNER SDK / CODE SAMPLES ============ -->
+    <section id="partner-sdk">
+      <h2>Code samples — integrate in minutes</h2>
+      <p class="sub">Every call is a plain HTTPS POST with your key. Copy, paste your <span class="mono">pk_live_…</span> key, and go. These do a recharge; swap the path + body for any service (see <a href="#partner-endpoints">Partner endpoints</a>).</p>
+
+      <h3>cURL</h3>
+      <pre>curl -X POST https://tutipays.com/api/v1/partner/recharge \
+  -H "Authorization: Bearer pk_live_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{"operator":"Airtel","number":"9876543210","amount":199,"reference":"ORDER-10231"}'</pre>
+
+      <h3>Node.js</h3>
+      <pre><span class="c">// npm i node-fetch (or use global fetch on Node 18+)</span>
+const res = await fetch("https://tutipays.com/api/v1/partner/recharge", {
+  method: "POST",
+  headers: { "Authorization": "Bearer pk_live_xxx", "Content-Type": "application/json" },
+  body: JSON.stringify({ operator: "Airtel", number: "9876543210", amount: 199, reference: "ORDER-10231" }),
+});
+const data = await res.json();
+console.log(data.transaction.status, data.transaction.reference);</pre>
+
+      <h3>PHP</h3>
+      <pre>$ch = curl_init("https://tutipays.com/api/v1/partner/recharge");
+curl_setopt_array($ch, [
+  CURLOPT_POST =&gt; true,
+  CURLOPT_RETURNTRANSFER =&gt; true,
+  CURLOPT_HTTPHEADER =&gt; ["Authorization: Bearer pk_live_xxx", "Content-Type: application/json"],
+  CURLOPT_POSTFIELDS =&gt; json_encode(["operator"=&gt;"Airtel","number"=&gt;"9876543210","amount"=&gt;199,"reference"=&gt;"ORDER-10231"]),
+]);
+$data = json_decode(curl_exec($ch), true);
+echo $data["transaction"]["status"];</pre>
+
+      <h3>Python</h3>
+      <pre>import requests
+r = requests.post("https://tutipays.com/api/v1/partner/recharge",
+  headers={"Authorization": "Bearer pk_live_xxx"},
+  json={"operator":"Airtel","number":"9876543210","amount":199,"reference":"ORDER-10231"})
+print(r.json()["transaction"]["status"])</pre>
+
+      <h3 style="margin-top:26px">Check a transaction's status</h3>
+      <pre>curl https://tutipays.com/api/v1/partner/transactions/ORDER-10231 \
+  -H "Authorization: Bearer pk_live_xxx"
+<span class="c">// { "transaction": { "reference":"ORDER-10231", "status":"success", "provider":"…", … } }</span></pre>
+
+      <h3 style="margin-top:26px">Verify an incoming webhook (Node.js / PHP)</h3>
+      <pre><span class="c">// Node.js — compare in constant time against your signing secret</span>
+const crypto = require("crypto");
+const expected = crypto.createHmac("sha256", SIGNING_SECRET).update(rawBody).digest("hex");
+const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.headers["x-tutipays-signature"]));
+if (!ok) return res.status(401).end();          <span class="c">// reject forgeries</span>
+res.status(200).end();                           <span class="c">// ack within a few seconds</span>
+
+<span class="c">// PHP</span>
+$expected = hash_hmac("sha256", $rawBody, $SIGNING_SECRET);
+if (!hash_equals($expected, $_SERVER["HTTP_X_TUTIPAYS_SIGNATURE"])) { http_response_code(401); exit; }
+http_response_code(200);</pre>
+
+      <div class="cards" style="margin-top:14px">
+        <div class="card"><h4>Idempotency</h4><p>Send a unique <span class="mono">reference</span> per transaction. Re-sending the same one returns the original result — safe to retry on a timeout, never a double charge.</p></div>
+        <div class="card"><h4>Status codes</h4><p><span class="mono">201</span> new · <span class="mono">200</span> idempotent replay · <span class="mono">403</span> out of scope · <span class="mono">429</span> rate-limited (with <span class="mono">Retry-After</span>) · <span class="mono">422</span> insufficient balance / validation.</p></div>
+        <div class="card"><h4>Reconcile</h4><p>Trust the <b>webhook</b> for the final outcome; poll <span class="mono">GET /partner/transactions/&lt;reference&gt;</span> as a backstop. A <span class="mono">pending</span> result settles later via the callback.</p></div>
       </div>
     </section>
 

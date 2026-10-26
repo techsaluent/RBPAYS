@@ -342,4 +342,72 @@ router.post(
   }),
 );
 
+// ---------------------------------------------------------------------
+// WhatsApp (Meta Cloud API) webhook: GET verifies the endpoint, POST
+// receives message-status updates + inbound messages. Config lives on the
+// `whatsapp` integration's `extra`:
+//   verify_token — the token you set in Meta's webhook config (GET challenge)
+//   app_secret   — verifies the POST body's X-Hub-Signature-256 (optional but
+//                  recommended). Every event is logged to the webhook monitor.
+// ---------------------------------------------------------------------
+async function whatsappConfig(): Promise<{ verifyToken: string; appSecret: string }> {
+  const { rows } = await query<{ extra: Record<string, unknown> | null }>(
+    "SELECT extra FROM platform_integrations WHERE key = 'whatsapp'",
+  );
+  const e = rows[0]?.extra ?? {};
+  return {
+    verifyToken: String((e.verify_token as string) || (e.whatsapp_verify_token as string) || ''),
+    appSecret: String((e.app_secret as string) || (e.whatsapp_app_secret as string) || ''),
+  };
+}
+
+// GET verification handshake — Meta calls this when you save the webhook URL.
+router.get(
+  '/whatsapp',
+  asyncHandler(async (req: Request, res: Response) => {
+    const mode = String(req.query['hub.mode'] ?? '');
+    const token = String(req.query['hub.verify_token'] ?? '');
+    const challenge = String(req.query['hub.challenge'] ?? '');
+    const { verifyToken } = await whatsappConfig();
+    if (mode === 'subscribe' && verifyToken && token === verifyToken) {
+      res.type('text/plain').send(challenge);
+      return;
+    }
+    throw ApiError.forbidden('WhatsApp webhook verification failed');
+  }),
+);
+
+// POST receiver — delivery statuses + inbound messages. Logged to the monitor.
+router.post(
+  '/whatsapp',
+  asyncHandler(async (req: Request, res: Response) => {
+    const raw = rawText(req);
+    const { appSecret } = await whatsappConfig();
+    if (appSecret) {
+      const sig = String(req.headers['x-hub-signature-256'] ?? '').replace(/^sha256=/i, '');
+      const expected = crypto.createHmac('sha256', appSecret).update(raw).digest('hex');
+      const ok = sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+      if (!ok) {
+        await recordRejected('whatsapp', 'Invalid X-Hub-Signature-256', raw, 401);
+        throw ApiError.unauthorized('Invalid WhatsApp signature');
+      }
+    }
+    let body: Record<string, unknown> = {};
+    try { body = JSON.parse(raw); } catch { /* keep empty */ }
+    // Pull the first message/status id for dedup; fall back to a body hash.
+    const value = (((body.entry as unknown[])?.[0] as Record<string, unknown>)?.changes as unknown[])?.[0] as
+      | { value?: { messages?: Array<{ id?: string }>; statuses?: Array<{ id?: string; status?: string }> } }
+      | undefined;
+    const msgId = value?.value?.messages?.[0]?.id;
+    const statusId = value?.value?.statuses?.[0]?.id;
+    const statusStr = value?.value?.statuses?.[0]?.status;
+    const eventType = msgId ? 'message' : (statusStr ? `status.${statusStr}` : 'event');
+    const externalId = `whatsapp:${msgId || statusId || crypto.createHash('sha256').update(raw).digest('hex')}`;
+    if (await recordEvent('whatsapp', eventType, externalId, body)) {
+      await markProcessed('whatsapp', externalId, 'received');
+    }
+    res.json({ status: 'ok' });
+  }),
+);
+
 export default router;

@@ -1183,7 +1183,7 @@ const Screens = {
         </div></div>
       <p class="muted">Every inbound provider callback — verified, de-duplicated and settled by our reference id. Click a row to see the raw payload and re-process it. Rejected rows are callbacks we refused (bad signature / credentials).</p>
       <div class="box" style="background:#f7f8fb;border:1px solid #e5e9f2;border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13px">
-        <b>Callback URLs</b> — <code>${origin}/api/v1/webhooks/provider/&lt;providerId&gt;</code> (per provider), <code>${origin}/api/v1/webhooks/aggregator</code>, <code>${origin}/api/v1/webhooks/razorpay</code>. Auth: HMAC <code>X-Webhook-Signature</code> or HTTP Basic (set per provider under <a href="#/providerconnections">Provider Connections</a>).
+        <b>Callback URLs</b> — <code>${origin}/api/v1/webhooks/provider/&lt;providerId&gt;</code> (per provider), <code>${origin}/api/v1/webhooks/aggregator</code>, <code>${origin}/api/v1/webhooks/razorpay</code>, <code>${origin}/api/v1/webhooks/whatsapp</code> (Meta Cloud). Auth: HMAC <code>X-Webhook-Signature</code> or HTTP Basic (set per provider under <a href="#/providerconnections">Provider Connections</a>).
       </div>
       <div class="tbl-wrap"><table><thead><tr><th>Received</th><th>Provider</th><th>Event</th><th>Reference</th><th>Outcome</th><th>Detail</th></tr></thead>
       <tbody>${rows || '<tr><td colspan=6 class=muted>No callbacks received yet.</td></tr>'}</tbody></table></div></div>`;
