@@ -26,6 +26,7 @@ import { postJournal } from '../_shared/ledger';
 import { settleByReference } from '../_shared/settle';
 import { listTenants, getTenant, createTenant, updateTenant } from '../tenant/tenant.service';
 import { listErrors, getError, setErrorStatus, diagnoseError } from '../telemetry/error.service';
+import { escalateError } from '../telemetry/escalate.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
@@ -351,6 +352,16 @@ router.post('/errors/:id/diagnose', asyncHandler(async (req: Request, res: Respo
   await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'error.diagnose',
     targetType: 'error_report', targetId: req.params.id, detail: {} });
   res.json({ error_report: r });
+}));
+
+// Escalate to a GitHub issue → a Claude Code workflow opens a draft fix PR.
+// Opens an issue only; never merges or deploys. Needs GITHUB_AUTOFIX_* config.
+router.post('/errors/:id/escalate', asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const r = await escalateError(req.params.id);
+  await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'error.escalate',
+    targetType: 'error_report', targetId: req.params.id, detail: { ref: r.escalated_ref } });
+  res.json(r);
 }));
 
 // ---- Transaction ops: refund + pending resolution ------------------------

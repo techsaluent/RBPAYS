@@ -1,0 +1,47 @@
+# Claude Code auto-fix: when the Error Monitor escalates a production error, it
+# opens an issue labelled "autofix". This workflow asks Claude Code to open a
+# DRAFT pull request with a fix for a human to review. It never merges or
+# deploys — the draft PR goes through normal CI + your review.
+#
+# Setup (one time):
+#   1. Add repo secret ANTHROPIC_API_KEY (Settings → Secrets → Actions).
+#   2. In the app's environment set GITHUB_AUTOFIX_TOKEN (a PAT/app token with
+#      `issues:write` on this repo) and GITHUB_AUTOFIX_REPO = owner/name, so the
+#      Error Monitor's "Open fix PR" button can file the issue.
+#   3. Create the "autofix" label (or change the label below + GITHUB_AUTOFIX_LABEL).
+#
+# This file is a template you own; tune the model, triggers and guardrails.
+
+name: Claude auto-fix
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write        # create a branch + commit
+  pull-requests: write   # open the draft PR
+  issues: write          # comment back on the issue
+
+jobs:
+  autofix:
+    # Only run for the escalation label, and only for issues this repo filed.
+    if: github.event.label.name == 'autofix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Claude Code — draft a fix PR
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Keep the agent narrow: diagnose from the issue, change as little as
+          # possible, add/adjust a test, and open the PR as a DRAFT.
+          prompt: |
+            A production error was escalated from the Error Monitor (see issue #${{ github.event.issue.number }}).
+            Read the issue body (message, stack, route, and the AI diagnosis/suggested fix).
+            Reproduce the root cause in the code, make the SMALLEST correct change to fix it,
+            and add or adjust a test that would have caught it.
+            Do NOT weaken auth, input validation, or money/ledger handling.
+            Run the repo's build and checks. Open the pull request as a DRAFT and link it to this issue.
+            If you cannot pinpoint the cause, comment on the issue with what else to log instead of guessing.
