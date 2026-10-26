@@ -307,6 +307,7 @@ const TENANT_SETTING_KEYS = new Set([
   'settlement_cycle',        // e.g. 'T+1', 'weekly'
   'min_wallet_balance_paise',// soft floor warning
   'partner_share_bps',       // revenue share of platform margin paid to the partner (basis points)
+  'reseller_share_bps',      // a reseller's share of margin left on its sub-tenants (basis points)
   'notes',                   // free text for admins
 ]);
 
@@ -391,6 +392,59 @@ export async function requireOwnedTenantId(ownerUserId: string): Promise<string>
   const t = await getTenantByOwner(ownerUserId);
   if (!t) throw ApiError.forbidden('You do not manage a white-label brand');
   return t.id;
+}
+
+// ---- Multi-level white-label (reseller → sub-tenants) ------------------
+
+/** Is candidateUserId somewhere in ancestorUserId's downline (parent_id tree)? Bounded. */
+export async function isInDownline(ancestorUserId: string, candidateUserId: string): Promise<boolean> {
+  const { rows } = await query<{ ok: boolean }>(
+    `WITH RECURSIVE dn AS (
+        SELECT id, 1 AS depth FROM users WHERE parent_id = $1
+        UNION ALL
+        SELECT u.id, dn.depth + 1 FROM users u JOIN dn ON u.parent_id = dn.id WHERE dn.depth < 25)
+      SELECT true AS ok FROM dn WHERE id = $2 LIMIT 1`,
+    [ancestorUserId, candidateUserId],
+  );
+  return rows.length > 0;
+}
+
+/** Direct sub-tenants of a reseller tenant, with owner + member counts. */
+export async function listSubTenants(parentTenantId: string) {
+  const { rows } = await query(
+    `SELECT t.*, u.full_name AS owner_name, u.phone AS owner_phone,
+            (SELECT count(*) FROM users m WHERE m.tenant_id = t.id) AS members
+       FROM tenants t LEFT JOIN users u ON u.id = t.owner_user_id
+      WHERE t.parent_tenant_id = $1 ORDER BY t.created_at DESC`,
+    [parentTenantId],
+  );
+  return rows;
+}
+
+/**
+ * A reseller (owner of resellerTenant) creates a sub-tenant. The sub-tenant's
+ * owner MUST be within the reseller-owner's own downline, so a reseller can
+ * only brand members of their own network. parent_tenant_id links it back.
+ */
+export async function createSubTenant(
+  resellerOwnerId: string,
+  resellerTenantId: string,
+  input: TenantInput & { partner_share_bps?: number },
+) {
+  if (!input.owner_user_id) throw ApiError.badRequest('Pick a member from your network to own the sub-brand');
+  if (input.owner_user_id === resellerOwnerId) throw ApiError.badRequest('The sub-brand owner must be a member below you, not yourself');
+  if (!(await isInDownline(resellerOwnerId, input.owner_user_id))) {
+    throw ApiError.forbidden('That member is not in your network');
+  }
+  const existing = await getTenantByOwner(input.owner_user_id);
+  if (existing) throw ApiError.conflict('That member already owns a brand');
+
+  const tenant = (await createTenant({ ...input })) as { id: string }; // tags owner + downline with the new tenant_id
+  await query('UPDATE tenants SET parent_tenant_id = $2 WHERE id = $1', [tenant.id, resellerTenantId]);
+  if (input.partner_share_bps != null) {
+    await setTenantSetting(tenant.id, 'partner_share_bps', String(Math.max(0, Math.min(10000, Math.round(input.partner_share_bps)))));
+  }
+  return getTenant(tenant.id); // the full row, now with parent_tenant_id set
 }
 
 /** Create a tenant and tag its owner (and the owner's existing downline) with it. */

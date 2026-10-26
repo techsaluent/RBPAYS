@@ -670,7 +670,12 @@ const Screens = {
         <p class="muted">Serve your branded panel on your own host (e.g. pay.yourbrand.com). Point its DNS at our server; we verify ownership and provision TLS.</p></div>
       <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
           <h2>Services on my brand</h2><button class="btn sm" onclick="Actions.myBrandServices()">Choose services</button></div>
-        <p class="muted">Show or hide individual services on your branded site.</p></div>`;
+        <p class="muted">Show or hide individual services on your branded site.</p></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+          <h2>Sub-brands (reseller)</h2>
+          <span><button class="btn sm ghost" onclick="Actions.resellerEarnings()">My earnings</button>
+          <button class="btn sm" onclick="Actions.resellerSubBrands()">Manage sub-brands</button></span></div>
+        <p class="muted">Turn members of your own network into their own white-label brands and set each one's margin. You earn a share of the platform margin on their activity (your reseller share is set by the platform).</p></div>`;
   },
   async profile() {
     const u = State.user;
@@ -3578,6 +3583,83 @@ const Actions = {
   async myToggleService(code, visible, el) {
     try { await Api.put(`/brand/services/${encodeURIComponent(code)}`, { visible }); if (el && el.nextElementSibling) el.nextElementSibling.textContent = visible ? 'shown' : 'hidden'; }
     catch (err) { UI.toast(err.message, 'err'); if (el) el.checked = !visible; }
+  },
+  // ---- Reseller multi-level: my sub-brands + earnings ----
+  async resellerSubBrands() {
+    const d = await Api.get('/brand/sub-tenants').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(t => `<tr>
+      <td><b>${esc(t.brand_name)}</b><br><span class="muted">${esc(t.owner_name || '')} · ${t.members || 0} members</span></td>
+      <td>${esc(t.status)}</td>
+      <td><button class="btn sm ghost" onclick="Actions.editSubBrand('${t.id}','${esc((t.brand_name||'').replace(/'/g,''))}')">Branding &amp; margin</button></td>
+    </tr>`).join('');
+    UI.modal(`<h3>My sub-brands</h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Brand</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=3 class=muted>No sub-brands yet.</td></tr>'}</tbody></table></div>
+      <h4 style="margin-top:12px">Create a sub-brand</h4>
+      <p class="muted" style="font-size:12px">Pick a member in <b>your</b> network to own it. Their whole sub-network moves under the new brand.</p>
+      <div class="field"><label>Brand name</label><input id="sb_name" placeholder="SubPay"></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:2;min-width:200px"><label>Owner (member user id in your network)</label><input id="sb_owner" placeholder="UUID of the member"></div>
+        <div class="field" style="flex:1;min-width:120px"><label>Their margin % (share)</label><input id="sb_share" type="number" step="0.01" min="0" max="100" placeholder="e.g. 20"></div>
+      </div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button>
+        <button class="btn" onclick="Actions.createSubBrand()">Create sub-brand</button></div>`);
+  },
+  async createSubBrand() {
+    const brand_name = val('sb_name'), owner_user_id = val('sb_owner');
+    if (!brand_name || !owner_user_id) return UI.toast('Brand name and owner id required', 'err');
+    const share = parseFloat(val('sb_share'));
+    const body = { brand_name, owner_user_id };
+    if (Number.isFinite(share)) body.partner_share_bps = Math.round(share * 100);
+    try { await Api.post('/brand/sub-tenants', body); UI.toast('Sub-brand created'); Actions.resellerSubBrands(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async editSubBrand(id, brand) {
+    State._subId = id;
+    UI.modal(`<h3>Sub-brand — ${esc(brand || '')}</h3>
+      <div class="field"><label>Brand name</label><input id="sbe_name" value="${esc(brand || '')}"></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label>Primary colour</label><input id="sbe_color" placeholder="#2563EB"></div>
+        <div class="field" style="flex:1"><label>Their margin % (share)</label><input id="sbe_share" type="number" step="0.01" min="0" max="100"></div>
+      </div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+        <button class="btn" onclick="Actions.saveSubBrand()">Save</button></div>`);
+  },
+  async saveSubBrand() {
+    const body = {};
+    if (val('sbe_name')) body.brand_name = val('sbe_name');
+    if (val('sbe_color')) body.primary_color = val('sbe_color');
+    const share = parseFloat(val('sbe_share'));
+    if (Number.isFinite(share)) body.partner_share_bps = Math.round(share * 100);
+    try { await Api.put('/brand/sub-tenants/' + State._subId, body); UI.closeModal(); UI.toast('Sub-brand updated'); Actions.resellerSubBrands(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async resellerEarnings() {
+    const today = new Date().toISOString().slice(0, 10); const first = today.slice(0, 8) + '01';
+    State._resFrom = first; State._resTo = today;
+    await Actions._loadResellerEarnings(first, today);
+  },
+  async _loadResellerEarnings(from, to) {
+    const e = await Api.get(`/brand/reseller-earnings?from=${from}&to=${to}`).then(r => r.earnings).catch(() => null);
+    const rows = e ? (e.sub_tenants || []).map(s => `<tr><td>${esc(s.brand_name)}</td>
+      <td class="right">${money(s.gross_margin_paise / 100)}</td>
+      <td class="right">${money(s.sub_partner_cut_paise / 100)}</td>
+      <td class="right"><b>${money(s.reseller_earning_paise / 100)}</b></td></tr>`).join('') : '';
+    UI.modal(`<h3>My reseller earnings</h3>
+      <div class="row" style="gap:8px;align-items:flex-end;margin-bottom:10px">
+        <div class="field" style="flex:1"><label>From</label><input id="re_from" type="date" value="${from}"></div>
+        <div class="field" style="flex:1"><label>To</label><input id="re_to" type="date" value="${to}"></div>
+        <button class="btn sm" onclick="Actions._loadResellerEarnings(val('re_from'),val('re_to'))">Recalculate</button></div>
+      ${e ? `<p class="muted">Your share: <b>${(e.reseller_share_bps / 100).toFixed(2)}%</b> of margin left after each sub-partner's cut. Total payable to you: <b>${money(e.total_reseller_earning_paise / 100)}</b>.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Sub-brand</th><th class="right">Gross margin</th><th class="right">Sub-partner cut</th><th class="right">You earn</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=4 class=muted>No sub-brand activity in this period.</td></tr>'}</tbody></table></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button>
+        <button class="btn" onclick="Actions.generateResellerStatement()">Generate statement</button></div>`
+      : '<p class="muted">Could not load earnings.</p><div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>'}`);
+  },
+  async generateResellerStatement() {
+    try { await Api.post('/brand/reseller-statement', { period_start: val('re_from'), period_end: val('re_to') }); UI.toast('Statement generated — the platform will settle it'); UI.closeModal(); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
   // White-label Stage 2: manage a tenant's custom domains.
   async manageDomains(id, brand) {
