@@ -3846,17 +3846,24 @@ const Actions = {
       <div class="field"><label>Partner / Initiator ID</label><input id="pc_partner_id" value="${esc(c.partner_id || '')}" placeholder="initiator_id"></div>
       <div class="field"><label>Extra config (JSON)</label><textarea id="pc_extra" rows="2" style="width:100%;font-family:monospace">${esc(JSON.stringify(c.extra || {}))}</textarea></div>
       <p class="muted" style="font-size:12px">Eko mapping — API key = developer_key, API secret = access_key, Partner ID = initiator_id, Extra = {"user_code":"…"}.</p>
-      <div class="field"><label>Callback (webhook) auth — how this provider signs the status it posts back</label>
-        <select id="pc_wauth" onchange="document.getElementById('pc_wbasic').hidden = (this.value!=='basic')">
-          <option value="hmac" ${((c.extra||{}).webhook_auth==='basic')?'':'selected'}>HMAC signature (X-Webhook-Signature)</option>
-          <option value="basic" ${((c.extra||{}).webhook_auth==='basic')?'selected':''}>HTTP Basic Auth (username / password) — e.g. AeronPay</option>
+      <div class="field"><label>Callback (webhook) auth — how this provider secures the status it posts back</label>
+        <select id="pc_wauth" onchange="var v=this.value;document.getElementById('pc_wbasic').hidden=(v!=='basic');document.getElementById('pc_wipbox').hidden=(v!=='ip')">
+          <option value="hmac" ${((c.extra||{}).webhook_auth && (c.extra||{}).webhook_auth!=='hmac')?'':'selected'}>HMAC signature (X-Webhook-Signature)</option>
+          <option value="basic" ${((c.extra||{}).webhook_auth==='basic')?'selected':''}>HTTP Basic Auth (username / password)</option>
+          <option value="ip" ${((c.extra||{}).webhook_auth==='ip')?'selected':''}>IP allowlist (no signature) — e.g. AeronPay</option>
+          <option value="none" ${((c.extra||{}).webhook_auth==='none')?'selected':''}>None — secret URL only (least secure)</option>
         </select></div>
       <div id="pc_wbasic" ${((c.extra||{}).webhook_auth==='basic')?'':'hidden'}>
         <div class="row" style="gap:8px">
           <div class="field" style="flex:1"><label>Webhook username</label><input id="pc_wuser" value="${esc((c.extra||{}).webhook_user||'')}"></div>
           <div class="field" style="flex:1"><label>Webhook password</label><input id="pc_wpass" value="${esc((c.extra||{}).webhook_pass||'')}"></div>
         </div>
-        <p class="muted" style="font-size:12px">Set the same username/password in the provider's dashboard (AeronPay → Developers → Callback URL auth). They'll be Basic-Auth-checked on every callback.</p>
+        <p class="muted" style="font-size:12px">Set the same username/password in the provider's dashboard. They'll be Basic-Auth-checked on every callback.</p>
+      </div>
+      <div id="pc_wipbox" ${((c.extra||{}).webhook_auth==='ip')?'':'hidden'}>
+        <div class="field"><label>Allowed source IPs / CIDRs (comma-separated)</label>
+          <input id="pc_wips" value="${esc(((c.extra||{}).webhook_ips||[]).join ? ((c.extra||{}).webhook_ips||[]).join(', ') : ((c.extra||{}).webhook_ips||''))}" placeholder="e.g. 13.235.0.0/16, 52.66.12.34"></div>
+        <p class="muted" style="font-size:12px">Ask the provider for the IPs/CIDRs their webhook posts <b>from</b> (AeronPay → Partner Console → Developer → Whitelisting lists these). Callbacks from any other IP are rejected.</p>
       </div>
       <div class="field"><label>Services this connection powers</label><div>${svcBoxes}</div></div>
       <div class="field"><label><input type="checkbox" id="pc_activate" checked> Make it the live provider for these services</label></div>
@@ -3881,12 +3888,18 @@ const Actions = {
     try { const t = $('pc_extra').value.trim(); extra = t ? JSON.parse(t) : {}; } catch (e) { UI.toast('Extra config must be valid JSON', 'err'); return; }
     // Merge the friendly webhook-auth fields into extra.
     const wauth = $('pc_wauth') ? $('pc_wauth').value : 'hmac';
+    delete extra.webhook_user; delete extra.webhook_pass; delete extra.webhook_ips;
     if (wauth === 'basic') {
       extra.webhook_auth = 'basic';
       extra.webhook_user = val('pc_wuser');
       extra.webhook_pass = val('pc_wpass');
+    } else if (wauth === 'ip') {
+      extra.webhook_auth = 'ip';
+      extra.webhook_ips = (val('pc_wips') || '').split(',').map(s => s.trim()).filter(Boolean);
+    } else if (wauth === 'none') {
+      extra.webhook_auth = 'none';
     } else {
-      delete extra.webhook_auth; delete extra.webhook_user; delete extra.webhook_pass;
+      delete extra.webhook_auth;
     }
     const body = {
       label: val('pc_label'), driver: val('pc_driver'), base_url: val('pc_base_url'),

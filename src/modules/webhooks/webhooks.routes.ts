@@ -237,6 +237,32 @@ function verifyBasic(header: string | undefined, user: string, pass: string): bo
   return safeEqual(decoded.slice(0, idx), user) && safeEqual(decoded.slice(idx + 1), pass);
 }
 
+/** Best-effort caller IP: first X-Forwarded-For hop, else the socket address. */
+function callerIp(req: Request): string {
+  const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return (xff || req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+}
+
+const ipv4ToInt = (ip: string): number =>
+  ip.split('.').reduce((a, o) => ((a << 8) + (Number(o) & 255)) >>> 0, 0) >>> 0;
+
+/** Match an IPv4 address against an entry that is an exact IP or a CIDR range. */
+function ipMatches(ip: string, entry: string): boolean {
+  const e = entry.trim();
+  if (!e) return false;
+  if (!e.includes('/')) return e === ip;
+  const [range, bitsStr] = e.split('/');
+  const bits = Number(bitsStr);
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip) || !/^\d+\.\d+\.\d+\.\d+$/.test(range) || !(bits >= 0 && bits <= 32)) return false;
+  const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+  return (ipv4ToInt(ip) & mask) === (ipv4ToInt(range) & mask);
+}
+
+/** True if the caller IP is in the allowlist (exact IPs or CIDR ranges). */
+function ipAllowed(ip: string, list: string[]): boolean {
+  return list.some((e) => ipMatches(ip, e));
+}
+
 /**
  * Shared callback handler. Parses the many field/status variants aggregators
  * use, finds our original `reference`, and settles whichever service that
@@ -330,6 +356,23 @@ router.post(
         res.setHeader('WWW-Authenticate', 'Basic realm="tutipays-webhook"');
         throw ApiError.unauthorized('Invalid webhook credentials');
       }
+    } else if (authMode === 'ip') {
+      // IP allowlist — for providers whose callbacks carry no signature/credential
+      // (e.g. AeronPay, which secures callbacks by posting from static IPs/CIDRs).
+      const raw = extra.webhook_ips;
+      const list = (Array.isArray(raw) ? raw.map(String) : String(raw ?? '').split(','))
+        .map((s) => s.trim()).filter(Boolean);
+      if (list.length === 0) throw ApiError.forbidden('Provider webhook IP allowlist not configured');
+      const ip = callerIp(req);
+      if (!ipAllowed(ip, list)) {
+        await recordRejected(tag, `Caller IP ${ip} not in allowlist`, rawText(req), 401);
+        throw ApiError.unauthorized('Caller IP not allowed');
+      }
+    } else if (authMode === 'none') {
+      // No verification — secured only by the secret callback URL (the provider
+      // id is an unguessable UUID) plus our unguessable transaction reference.
+      // Use only when the provider offers neither signature, credential, nor a
+      // source-IP list; prefer 'ip' whenever the provider publishes its CIDRs.
     } else {
       const secret = (provider.webhook_secret || (await aggregatorWebhookSecret())).trim();
       if (!secret) throw ApiError.forbidden('Provider webhook secret not configured');
