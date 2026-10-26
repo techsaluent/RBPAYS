@@ -2155,6 +2155,79 @@ router.post(
   }),
 );
 
+// Provision step of the "Add API from docs" wizard: after the config is drafted
+// and dry-run tested, create a `dynamic` provider for each chosen service from
+// one config, optionally auto-create its marketing/panel service tile, and
+// optionally activate it — no developer, no deploy.
+const provisionSchema = z.object({
+  label: z.string().trim().min(2).max(120),
+  services: z.array(z.string().trim().min(1).max(40)).min(1).max(14),
+  config: z.record(z.any()),
+  creds: z.object({
+    base_url: z.string().trim().max(300).optional(),
+    api_key: z.string().trim().max(300).optional(),
+    api_secret: z.string().trim().max(300).optional(),
+    auth_token: z.string().trim().max(600).optional(),
+    partner_id: z.string().trim().max(120).optional(),
+    webhook_secret: z.string().trim().max(300).optional(),
+  }).optional(),
+  create_tiles: z.boolean().default(true),
+  activate: z.boolean().default(false),
+});
+router.post(
+  '/integrations/provision',
+  validate(provisionSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof provisionSchema>;
+    const c = b.creds ?? {};
+
+    // Only attach to services that actually exist in the catalog.
+    const known = await query<{ code: string; name: string }>(
+      'SELECT code, name FROM services WHERE code = ANY($1)', [b.services],
+    );
+    const knownCodes = new Set(known.rows.map((r) => r.code));
+    const unknown = b.services.filter((s) => !knownCodes.has(s));
+    if (knownCodes.size === 0) throw ApiError.badRequest(`None of these are known services: ${b.services.join(', ')}`);
+
+    const result = await withTransaction(async (client) => {
+      const providers: unknown[] = [];
+      const tiles: unknown[] = [];
+      for (const row of known.rows) {
+        const code = row.code;
+        if (b.activate) {
+          await client.query('UPDATE service_providers SET is_active = false WHERE service_code = $1 AND is_active = true', [code]);
+        }
+        const p = await client.query(
+          `INSERT INTO service_providers
+             (service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, webhook_secret, extra, is_active, priority)
+           VALUES ($1,$2,'dynamic',$3,$4,$5,$6,$7,$8,$9,$10,0) RETURNING id, service_code, label, driver, is_active`,
+          [code, b.label, c.base_url ?? null, c.api_key ?? null, c.api_secret ?? null, c.auth_token ?? null,
+            c.partner_id ?? null, c.webhook_secret ?? null, JSON.stringify(b.config), b.activate],
+        );
+        providers.push(p.rows[0]);
+        if (b.create_tiles) {
+          // One tile per service, if it doesn't already have one linked.
+          const existing = await client.query('SELECT 1 FROM site_services WHERE code = $1', [code]);
+          if (!existing.rowCount) {
+            const t = await client.query(
+              `INSERT INTO site_services (icon, title, subtitle, category, sort_order, visible, code)
+               VALUES ('💠', $1, $2, 'more', 100, true, $3) RETURNING id, code, title`,
+              [row.name || code, `${b.label} — ${row.name || code}`, code],
+            );
+            tiles.push(t.rows[0]);
+          }
+        }
+      }
+      return { providers, tiles };
+    });
+    await refreshProviderRegistry();
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'integration.provision',
+      targetType: 'service_provider', targetId: b.label, detail: { services: [...knownCodes], activated: b.activate, tiles: result.tiles.length } });
+    res.status(201).json({ ...result, skipped: unknown });
+  }),
+);
+
 // ---------------------------------------------------------------------
 // AI Dev Desk — feature / bug / UI requests: file -> AI plan -> approve ->
 // dispatch to automation (the free-AI coding agent) which opens a PR.
