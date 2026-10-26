@@ -1,3 +1,5 @@
+import { promises as dns } from 'dns';
+import { randomBytes } from 'crypto';
 import { query } from '../../../db';
 import { ApiError } from '../../utils/ApiError';
 
@@ -38,24 +40,14 @@ async function platformDefaults(): Promise<Branding> {
 
 const pick = (a: string | null | undefined, b: string | null): string | null => (a && String(a).trim() ? a : b);
 
-/**
- * Resolve the branding for a member: their tenant's brand merged over the
- * platform defaults (a tenant field overrides the default only when set). A
- * member with no (or a suspended) tenant gets the platform brand.
- */
-export async function resolveBranding(userId: string): Promise<Branding> {
-  const defaults = await platformDefaults();
-  const { rows } = await query<{
-    id: string; brand_name: string; logo_url: string | null; logo_emoji: string | null;
-    primary_color: string | null; tagline: string | null; support_email: string | null;
-    support_phone: string | null; company_name: string | null; status: string;
-  }>(
-    `SELECT t.* FROM users u JOIN tenants t ON t.id = u.tenant_id
-      WHERE u.id = $1 AND t.status = 'active'`,
-    [userId],
-  );
-  const t = rows[0];
-  if (!t) return defaults;
+interface TenantRow {
+  id: string; brand_name: string; logo_url: string | null; logo_emoji: string | null;
+  primary_color: string | null; tagline: string | null; support_email: string | null;
+  support_phone: string | null; company_name: string | null; status: string;
+}
+
+/** Merge an active tenant's brand over the platform defaults (a field wins only when set). */
+function mergeTenant(t: TenantRow, defaults: Branding): Branding {
   return {
     tenant_id: t.id,
     brand_name: pick(t.brand_name, defaults.brand_name) || 'TutiPays',
@@ -67,6 +59,137 @@ export async function resolveBranding(userId: string): Promise<Branding> {
     support_phone: pick(t.support_phone, defaults.support_phone),
     company_name: pick(t.company_name, defaults.company_name),
   };
+}
+
+/**
+ * Resolve the branding for a member: their tenant's brand merged over the
+ * platform defaults (a tenant field overrides the default only when set). A
+ * member with no (or a suspended) tenant gets the platform brand.
+ */
+export async function resolveBranding(userId: string): Promise<Branding> {
+  const defaults = await platformDefaults();
+  const { rows } = await query<TenantRow>(
+    `SELECT t.* FROM users u JOIN tenants t ON t.id = u.tenant_id
+      WHERE u.id = $1 AND t.status = 'active'`,
+    [userId],
+  );
+  return rows[0] ? mergeTenant(rows[0], defaults) : defaults;
+}
+
+// ---- Host → tenant resolution (Stage 2: custom domains) ----------------
+
+/** Normalise a Host header to a bare lowercase hostname (no scheme, port or trailing dot). */
+export function normalizeHost(host: string | undefined | null): string {
+  if (!host) return '';
+  let h = String(host).trim().toLowerCase();
+  h = h.replace(/^https?:\/\//, '').replace(/\/.*$/, ''); // strip scheme + path
+  h = h.replace(/:\d+$/, ''); // strip port
+  h = h.replace(/\.$/, ''); // strip trailing dot
+  return h;
+}
+
+/** The active tenant that owns a verified custom domain, or null. */
+async function tenantByHost(host: string): Promise<TenantRow | null> {
+  const h = normalizeHost(host);
+  if (!h) return null;
+  const { rows } = await query<TenantRow>(
+    `SELECT t.* FROM tenant_domains d JOIN tenants t ON t.id = d.tenant_id
+      WHERE d.domain = $1 AND d.verified_at IS NOT NULL AND t.status = 'active'
+      LIMIT 1`,
+    [h],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Resolve branding for a public request by its Host header — used by the
+ * login / landing page to theme a custom domain before anyone signs in.
+ * Falls back to the platform brand for an unknown or unverified host.
+ */
+export async function brandingForHost(host: string | undefined | null): Promise<Branding> {
+  const defaults = await platformDefaults();
+  const t = host ? await tenantByHost(host) : null;
+  return t ? mergeTenant(t, defaults) : defaults;
+}
+
+// ---- Domain management (admin) -----------------------------------------
+
+const DNS_VERIFY_PREFIX = '_tutipays-verify';
+
+export async function listDomains(tenantId: string) {
+  const { rows } = await query('SELECT * FROM tenant_domains WHERE tenant_id = $1 ORDER BY created_at', [tenantId]);
+  return rows;
+}
+
+/** Register a domain for a tenant and mint its DNS-TXT verification token. */
+export async function addDomain(tenantId: string, domainRaw: string) {
+  const domain = normalizeHost(domainRaw);
+  if (!domain || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) throw ApiError.badRequest('Enter a valid domain, e.g. pay.brand.com');
+  await getTenant(tenantId); // 404 if the tenant does not exist
+  const token = 'tp-verify-' + randomBytes(16).toString('hex');
+  try {
+    const { rows } = await query<Record<string, unknown> & { domain: string }>(
+      `INSERT INTO tenant_domains (tenant_id, domain, verify_token) VALUES ($1,$2,$3) RETURNING *`,
+      [tenantId, domain, token],
+    );
+    return { ...rows[0], dns_record: { host: `${DNS_VERIFY_PREFIX}.${domain}`, type: 'TXT', value: token } };
+  } catch (e) {
+    if ((e as { code?: string }).code === '23505') throw ApiError.conflict('That domain is already registered');
+    throw e;
+  }
+}
+
+/**
+ * Check the DNS TXT record for a pending domain. On success marks it verified
+ * (ssl_status stays 'pending' until ops provision the certificate). Returns the
+ * records seen so the admin can debug a mismatch.
+ */
+export async function verifyDomain(tenantId: string, domainId: string) {
+  const { rows } = await query<{ domain: string; verify_token: string; verified_at: string | null }>(
+    'SELECT domain, verify_token, verified_at FROM tenant_domains WHERE id = $1 AND tenant_id = $2',
+    [domainId, tenantId],
+  );
+  const d = rows[0];
+  if (!d) throw ApiError.notFound('Domain not found');
+  if (d.verified_at) return { verified: true, already: true };
+
+  let found: string[] = [];
+  try {
+    const records = await dns.resolveTxt(`${DNS_VERIFY_PREFIX}.${d.domain}`);
+    found = records.map((parts) => parts.join(''));
+  } catch (e) {
+    return { verified: false, error: `No TXT record found (${(e as Error).message})`, expected: d.verify_token };
+  }
+  if (!found.includes(d.verify_token)) {
+    return { verified: false, error: 'TXT record found but value does not match', expected: d.verify_token, found };
+  }
+  await query('UPDATE tenant_domains SET verified_at = now() WHERE id = $1', [domainId]);
+  return { verified: true };
+}
+
+/** Patch a domain's primary flag or ssl_status (ops/CDN callback). Enforces one primary per tenant. */
+export async function updateDomain(
+  tenantId: string,
+  domainId: string,
+  patch: { is_primary?: boolean; ssl_status?: 'pending' | 'active' | 'error' },
+) {
+  if (patch.is_primary) {
+    await query('UPDATE tenant_domains SET is_primary = false WHERE tenant_id = $1', [tenantId]);
+  }
+  const { rows } = await query(
+    `UPDATE tenant_domains SET
+        is_primary = COALESCE($3, is_primary),
+        ssl_status = COALESCE($4, ssl_status)
+      WHERE id = $1 AND tenant_id = $2 RETURNING *`,
+    [domainId, tenantId, patch.is_primary ?? null, patch.ssl_status ?? null],
+  );
+  if (!rows[0]) throw ApiError.notFound('Domain not found');
+  return rows[0];
+}
+
+export async function deleteDomain(tenantId: string, domainId: string) {
+  const { rowCount } = await query('DELETE FROM tenant_domains WHERE id = $1 AND tenant_id = $2', [domainId, tenantId]);
+  if (!rowCount) throw ApiError.notFound('Domain not found');
 }
 
 // ---- Admin CRUD ---------------------------------------------------------
