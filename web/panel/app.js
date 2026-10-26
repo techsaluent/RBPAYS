@@ -1150,35 +1150,43 @@ const Screens = {
 
   // Incoming provider callbacks / webhooks log.
   async webhooks() {
-    const d = await Api.get('/admin/provider-events?limit=100');
-    const rows = (d.items || []).map(e => `<tr>
+    const f = State._whFilter || { provider: '', status: '' };
+    const qs = `limit=150${f.provider ? '&provider=' + encodeURIComponent(f.provider) : ''}${f.status ? '&status=' + f.status : ''}`;
+    const d = await Api.get('/admin/provider-events?' + qs);
+    const outcome = (e) => {
+      if (!e.auth_ok) return '<span class="tag" style="background:#fde8e8;color:#c0392b">rejected</span>';
+      const s = e.settled_status;
+      if (s === 'success') return '<span class="tag active">success</span>';
+      if (s === 'failed') return '<span class="tag" style="background:#fde8e8;color:#c0392b">failed</span>';
+      if (s === 'pending') return '<span class="tag" style="background:#fff4e5;color:#b26a00">pending</span>';
+      return e.processed ? '<span class="tag active">processed</span>' : '<span class="tag">received</span>';
+    };
+    const rows = (d.items || []).map(e => `<tr style="cursor:pointer" onclick="Actions.webhookDetail('${e.id}')">
       <td class="muted" style="white-space:nowrap">${new Date(e.received_at).toLocaleString('en-IN')}</td>
       <td>${esc(e.provider)}</td><td>${esc(e.event_type||'')}</td>
-      <td class="muted" style="max-width:280px;overflow:hidden;text-overflow:ellipsis">${esc(e.external_id||'')}</td>
-      <td>${e.processed ? '<span class="tag active">processed</span>' : '<span class="tag">received</span>'}</td></tr>`).join('');
+      <td class="muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(e.reference||e.external_id||'')}</td>
+      <td>${outcome(e)}</td>
+      <td>${e.auth_ok ? (e.processed ? '✓' : '<span class="muted">—</span>') : '<span class="muted" title="' + esc(e.error||'') + '">' + esc((e.error||'rejected').slice(0,40)) + '</span>'}</td></tr>`).join('');
     const origin = location.origin;
-    $('view').innerHTML = `<div class="panel"><h2>Webhook / callback log</h2>
-      <p class="muted">Every signed callback from your providers. Each is verified (HMAC-SHA256), de-duplicated and settled — one callback works for <b>every service</b> because it settles by our reference id.</p>
-      <div class="box" style="background:#f7f8fb;border:1px solid #e5e9f2;border-radius:10px;padding:14px 16px;margin:10px 0">
-        <b>Callback URLs</b>
-        <table style="margin-top:8px;font-size:13px"><tbody>
-          <tr><td style="white-space:nowrap"><b>Per provider</b> (recommended)</td><td><code>${origin}/api/v1/webhooks/provider/&lt;providerId&gt;</code> — shown on each row under <a href="#/providers">Providers</a>; uses that provider's own secret.</td></tr>
-          <tr><td style="white-space:nowrap"><b>Shared aggregator</b></td><td><code>${origin}/api/v1/webhooks/aggregator</code> — one URL for all providers, uses the global secret set under <a href="#/website">Website</a>.</td></tr>
-          <tr><td style="white-space:nowrap"><b>Razorpay</b></td><td><code>${origin}/api/v1/webhooks/razorpay</code> — payment + payout events.</td></tr>
-        </tbody></table>
-        <div style="margin-top:10px"><b>Signature header:</b> <code>X-Webhook-Signature: HMAC_SHA256(rawBody, secret)</code> (hex; a <code>sha256=</code> prefix is accepted too).</div>
-        <div style="margin-top:10px"><b>Body</b> — send any of these and we map it. Only <code>reference</code> + <code>status</code> are required:</div>
-        <pre style="background:#fff;border:1px solid #e5e9f2;border-radius:8px;padding:10px;overflow:auto;font-size:12px">{
-  "reference": "2LNYKFTLYRJ5CFF",     // our reference (aliases: client_ref, refid, order_id…)
-  "status":    "success",              // success | pending | failed (many spellings accepted)
-  "utr":       "AXISN1234567890",      // optional bank UTR / RRN (aliases: rrn, bank_ref)
-  "provider_ref": "OP987654",          // optional provider txn id
-  "message":   "Txn successful"        // optional
-}</pre>
-        <div class="muted" style="font-size:12px">success → settle &amp; pay commission · failed → auto-reverse the full wallet deduction · pending → hold, no wallet change until a final callback.</div>
+    const sel = (v, cur) => v === cur ? 'selected' : '';
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2>Webhook monitor</h2>
+        <div class="row" style="gap:8px">
+          <input id="wh_provider" placeholder="filter provider…" value="${esc(f.provider)}" style="width:150px" onkeydown="if(event.key==='Enter')Actions.applyWhFilter()">
+          <select id="wh_status" onchange="Actions.applyWhFilter()">
+            <option value="" ${sel('',f.status)}>All</option>
+            <option value="processed" ${sel('processed',f.status)}>Processed</option>
+            <option value="pending" ${sel('pending',f.status)}>Pending</option>
+            <option value="rejected" ${sel('rejected',f.status)}>Rejected (bad auth)</option>
+          </select>
+          <button class="btn sm ghost" onclick="App.route()">Refresh</button>
+        </div></div>
+      <p class="muted">Every inbound provider callback — verified, de-duplicated and settled by our reference id. Click a row to see the raw payload and re-process it. Rejected rows are callbacks we refused (bad signature / credentials).</p>
+      <div class="box" style="background:#f7f8fb;border:1px solid #e5e9f2;border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13px">
+        <b>Callback URLs</b> — <code>${origin}/api/v1/webhooks/provider/&lt;providerId&gt;</code> (per provider), <code>${origin}/api/v1/webhooks/aggregator</code>, <code>${origin}/api/v1/webhooks/razorpay</code>. Auth: HMAC <code>X-Webhook-Signature</code> or HTTP Basic (set per provider under <a href="#/providerconnections">Provider Connections</a>).
       </div>
-      <div class="tbl-wrap"><table><thead><tr><th>Received</th><th>Provider</th><th>Event</th><th>Ref / id</th><th>Status</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan=5 class=muted>No callbacks received yet.</td></tr>'}</tbody></table></div></div>`;
+      <div class="tbl-wrap"><table><thead><tr><th>Received</th><th>Provider</th><th>Event</th><th>Reference</th><th>Outcome</th><th>Detail</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No callbacks received yet.</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Super admin: activity audit log (who did what).
@@ -2666,12 +2674,23 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   editIntegration(key, label, provider, baseUrl, senderId, isActive) {
+    const isEmail = key === 'email';
+    const smtpHint = isEmail
+      ? `<p class="muted" style="font-size:12px;margin:-4px 0 8px">For a <b>generic SMTP server</b>: set Provider = <code>smtp</code>, Base URL = the SMTP host (e.g. <code>smtp.gmail.com</code>), API key = SMTP username, API secret = SMTP password, Sender/From = the e-mail address. Put the port &amp; TLS in Advanced config, e.g. <code>{"smtp_port":587,"smtp_secure":false}</code> (use 465 + <code>true</code> for SSL).</p>`
+      : '';
+    const extraHint = key === 'whatsapp'
+      ? 'WhatsApp template params, e.g. {"template":"otp_v1","namespace":"…"}'
+      : key === 'sms' ? 'Extra body fields the gateway needs, e.g. {"route":"4","template_id":"…"}'
+      : isEmail ? '{"smtp_port":587,"smtp_secure":false}'
+      : 'Extra JSON merged into each request';
     UI.modal(`<h3>Configure — ${esc(label)}</h3>
-      <div class="field"><label>Provider</label><input id="ig_prov" value="${esc(provider)}" placeholder="MSG91 / SMTP / Protean"></div>
-      <div class="field"><label>Base URL</label><input id="ig_url" value="${esc(baseUrl)}"></div>
-      <div class="field"><label>API key</label><input id="ig_key" placeholder="(leave blank to keep)"></div>
-      <div class="field"><label>API secret</label><input id="ig_secret" placeholder="(leave blank to keep)"></div>
+      <div class="field"><label>Provider</label><input id="ig_prov" value="${esc(provider)}" placeholder="MSG91 / smtp / Protean"></div>
+      ${smtpHint}
+      <div class="field"><label>Base URL${isEmail ? ' / SMTP host' : ''}</label><input id="ig_url" value="${esc(baseUrl)}"></div>
+      <div class="field"><label>API key${isEmail ? ' / SMTP username' : ''}</label><input id="ig_key" placeholder="(leave blank to keep)"></div>
+      <div class="field"><label>API secret${isEmail ? ' / SMTP password' : ''}</label><input id="ig_secret" placeholder="(leave blank to keep)"></div>
       <div class="field"><label>Sender ID / From</label><input id="ig_sender" value="${esc(senderId)}"></div>
+      <div class="field"><label>Advanced config (JSON, optional)</label><input id="ig_extra" placeholder='${esc(extraHint)}'></div>
       <div class="field"><label><input type="checkbox" id="ig_active" ${isActive ? 'checked' : ''}> Active</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveIntegration('${key}')">Save</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
@@ -3321,6 +3340,8 @@ const Actions = {
     if (val('ig_key')) body.api_key = val('ig_key');
     if (val('ig_secret')) body.api_secret = val('ig_secret');
     if (val('ig_sender')) body.sender_id = val('ig_sender');
+    const ex = $('ig_extra') ? val('ig_extra') : '';
+    if (ex) { try { body.extra = JSON.parse(ex); } catch { return UI.toast('Advanced config must be valid JSON', 'err'); } }
     try { await Api.put(`/admin/integrations/${key}`, body); UI.closeModal(); UI.toast('Integration saved'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
@@ -3331,6 +3352,41 @@ const Actions = {
     try {
       const r = await Api.post('/admin/integrations/test', { key, to: to.trim() });
       UI.toast(r.message, r.ok ? 'ok' : 'err');
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // ---- Webhook monitor ----------------------------------------------------
+  applyWhFilter() {
+    State._whFilter = { provider: (val('wh_provider') || '').trim(), status: ($('wh_status') ? $('wh_status').value : '') };
+    App.route();
+  },
+  async webhookDetail(id) {
+    try {
+      const { event: e } = await Api.get('/admin/provider-events/' + id);
+      const payload = JSON.stringify(e.payload, null, 2);
+      const canReprocess = e.auth_ok && e.reference;
+      UI.modal(`<h3>Webhook event</h3>
+        <div class="row" style="gap:16px;flex-wrap:wrap;font-size:13px">
+          <div><div class="muted" style="font-size:12px">Provider</div><b>${esc(e.provider)}</b></div>
+          <div><div class="muted" style="font-size:12px">Event</div>${esc(e.event_type||'—')}</div>
+          <div><div class="muted" style="font-size:12px">Reference</div>${esc(e.reference||'—')}</div>
+          <div><div class="muted" style="font-size:12px">Outcome</div>${e.auth_ok ? esc(e.settled_status || (e.processed?'processed':'received')) : '<b style="color:#c0392b">rejected</b>'}</div>
+          <div><div class="muted" style="font-size:12px">HTTP</div>${e.http_status||'—'}</div>
+          <div><div class="muted" style="font-size:12px">Received</div>${new Date(e.received_at).toLocaleString('en-IN')}</div>
+        </div>
+        ${e.error ? `<p class="msg err" style="margin-top:8px">${esc(e.error)}</p>` : ''}
+        <div class="field mt"><label>Raw payload</label>
+          <pre style="background:#f7f8fb;border:1px solid #e5e9f2;border-radius:8px;padding:10px;overflow:auto;max-height:340px;font-size:12px">${esc(payload)}</pre></div>
+        <div class="foot">
+          ${canReprocess ? `<button class="btn" onclick="Actions.reprocessWebhook('${e.id}')">Re-process settlement</button>` : ''}
+          <button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async reprocessWebhook(id) {
+    if (!confirm('Re-run settlement for this callback? Safe to repeat — settlement is idempotent and never double-settles a final transaction.')) return;
+    try {
+      const r = await Api.post('/admin/provider-events/' + id + '/reprocess', {});
+      UI.toast(r.reprocessed ? `Re-processed (${r.status})` : 'Nothing to settle (already final or not found)');
+      UI.closeModal(); App.route();
     } catch (err) { UI.toast(err.message, 'err'); }
   },
   async reviewKyc(id, status) {

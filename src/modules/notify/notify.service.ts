@@ -1,4 +1,5 @@
 import { query } from '../../../db';
+import nodemailer from 'nodemailer';
 import { httpJson } from '../../providers/http';
 import { logger } from '../../config/logger';
 
@@ -97,13 +98,49 @@ export async function sendWhatsApp(phone: string, text: string): Promise<boolean
 }
 
 /**
- * Email best-effort via the active `email` integration (a JSON email API such
- * as SendGrid / Mailgun / Postmark, or an SMTP-to-HTTP bridge). `sender_id`
- * is the From address. Sends both text and a minimal html part.
+ * Email best-effort via the active `email` integration. Two transports:
+ *   - Generic SMTP (provider = 'smtp', or extra.transport = 'smtp'): a standard
+ *     mail server via nodemailer. Mapping — host = extra.smtp_host || base_url,
+ *     port = extra.smtp_port (587), secure = extra.smtp_secure (true for 465),
+ *     user = api_key, pass = api_secret, From = sender_id.
+ *   - JSON email API (default): SendGrid / Mailgun / Postmark / SMTP-to-HTTP
+ *     bridge — POSTs to base_url.
+ * `sender_id` is the From address. Sends both text and a minimal html part.
  */
+function htmlPart(text: string): string {
+  return `<p>${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>`;
+}
+
+async function sendEmailSmtp(cfg: MessagingConfig, to: string, subject: string, text: string): Promise<boolean> {
+  const host = String((cfg.extra?.smtp_host as string) || cfg.baseUrl || '').trim();
+  if (!host) {
+    logger.warn('SMTP email selected but no host (set base_url or extra.smtp_host)');
+    return false;
+  }
+  const port = Number(cfg.extra?.smtp_port) || 587;
+  const secure = cfg.extra?.smtp_secure === true || cfg.extra?.smtp_secure === 'true' || port === 465;
+  const from = cfg.senderId || cfg.apiKey || 'no-reply@localhost';
+  try {
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure,
+      auth: cfg.apiKey ? { user: cfg.apiKey, pass: cfg.apiSecret || '' } : undefined,
+    });
+    await transporter.sendMail({ from, to, subject, text, html: htmlPart(text) });
+    return true;
+  } catch (err) {
+    logger.error({ err: (err as Error).message, host }, 'SMTP email send failed');
+    return false;
+  }
+}
+
 export async function sendEmail(to: string, subject: string, text: string): Promise<boolean> {
   const cfg = await integrationConfig(['email']);
-  if (!cfg?.baseUrl || !to) return false;
+  if (!cfg || !to) return false;
+  const isSmtp = (cfg.provider || '').toLowerCase() === 'smtp' || String(cfg.extra?.transport || '').toLowerCase() === 'smtp';
+  if (isSmtp) return sendEmailSmtp(cfg, to, subject, text);
+  if (!cfg.baseUrl) return false;
   try {
     await httpJson(cfg.baseUrl, {
       method: 'POST',
@@ -113,7 +150,7 @@ export async function sendEmail(to: string, subject: string, text: string): Prom
         to,
         subject,
         text,
-        html: `<p>${text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>`,
+        html: htmlPart(text),
         ...(cfg.extra || {}),
       },
     });

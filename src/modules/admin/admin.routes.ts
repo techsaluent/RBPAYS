@@ -23,6 +23,7 @@ import { toCsv } from '../reports/reports.service';
 import { draftProviderConfig, analyzeDevRequest } from '../ai/ai.service';
 import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } from '../devdesk/devdesk.service';
 import { postJournal } from '../_shared/ledger';
+import { settleByReference } from '../_shared/settle';
 import { runReconciliation, MisRow } from '../recon/recon.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
@@ -224,19 +225,59 @@ router.post(
 router.get(
   '/provider-events',
   validate(z.object({
-    provider: z.string().trim().max(40).optional(),
+    provider: z.string().trim().max(60).optional(),
+    status: z.enum(['processed', 'rejected', 'pending']).optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),
   }), 'query'),
   asyncHandler(async (req: Request, res: Response) => {
-    const q = req.query as unknown as { provider?: string; limit: number };
+    const q = req.query as unknown as { provider?: string; status?: string; limit: number };
+    const statusFilter =
+      q.status === 'rejected' ? 'AND auth_ok = false'
+      : q.status === 'processed' ? 'AND auth_ok = true AND processed = true'
+      : q.status === 'pending' ? 'AND auth_ok = true AND processed = false'
+      : '';
     const { rows } = await query(
-      `SELECT id, provider, event_type, external_id, processed, received_at
+      `SELECT id, provider, event_type, external_id, reference, settled_status,
+              processed, auth_ok, error, http_status, received_at
          FROM provider_events
-        WHERE ($1::text IS NULL OR provider = $1)
+        WHERE ($1::text IS NULL OR provider = $1) ${statusFilter}
         ORDER BY received_at DESC LIMIT $2`,
       [q.provider ?? null, q.limit],
     );
     res.json({ items: rows });
+  }),
+);
+
+// Full detail of one webhook event, including the raw payload.
+router.get(
+  '/provider-events/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query('SELECT * FROM provider_events WHERE id = $1', [req.params.id]);
+    if (!rows[0]) throw ApiError.notFound('Event not found');
+    res.json({ event: rows[0] });
+  }),
+);
+
+// Reprocess: re-run settlement for an event's reference (idempotent/terminal-safe).
+router.post(
+  '/provider-events/:id/reprocess',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const { rows } = await query<{ provider: string; reference: string | null; payload: Record<string, unknown> | null; settled_status: string | null }>(
+      'SELECT provider, reference, payload, settled_status FROM provider_events WHERE id = $1',
+      [req.params.id],
+    );
+    const ev = rows[0];
+    if (!ev) throw ApiError.notFound('Event not found');
+    if (!ev.reference) throw ApiError.badRequest('Event has no reference to reprocess');
+    const p = ev.payload ?? {};
+    const status = (ev.settled_status as 'success' | 'failed' | 'pending' | null) ?? 'pending';
+    const providerRef = (p.transactionId ?? p.transaction_id ?? p.providerRef ?? p.opr_referenceId) as string | undefined;
+    const utr = (p.utr ?? p.bank_ref ?? p.rrn) as string | undefined;
+    const ok = await settleByReference(ev.reference, ev.provider, { status, providerRef, utr, message: 'reprocessed by admin' });
+    await logAudit({ actorId: req.user.id, actorRole: req.user.role, action: 'webhook.reprocess',
+      targetType: 'provider_event', targetId: req.params.id, detail: { reference: ev.reference, status } });
+    res.json({ reprocessed: ok, reference: ev.reference, status });
   }),
 );
 

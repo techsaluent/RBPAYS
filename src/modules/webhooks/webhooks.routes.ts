@@ -26,21 +26,39 @@ async function recordEvent(
   eventType: string | undefined,
   externalId: string,
   payload: unknown,
+  reference?: string,
 ): Promise<boolean> {
   const { rowCount } = await query(
-    `INSERT INTO provider_events (provider, event_type, external_id, payload)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO provider_events (provider, event_type, external_id, payload, reference, auth_ok)
+     VALUES ($1, $2, $3, $4, $5, true)
      ON CONFLICT (provider, external_id) DO NOTHING`,
-    [provider, eventType ?? null, externalId, JSON.stringify(payload)],
+    [provider, eventType ?? null, externalId, JSON.stringify(payload), reference ?? null],
   );
   return rowCount === 1;
 }
 
-async function markProcessed(provider: string, externalId: string): Promise<void> {
+async function markProcessed(provider: string, externalId: string, settledStatus?: string): Promise<void> {
   await query(
-    'UPDATE provider_events SET processed = true WHERE provider = $1 AND external_id = $2',
-    [provider, externalId],
+    'UPDATE provider_events SET processed = true, settled_status = COALESCE($3, settled_status), http_status = 200 WHERE provider = $1 AND external_id = $2',
+    [provider, externalId, settledStatus ?? null],
   );
+}
+
+/**
+ * Log a callback we REFUSED (bad signature / credentials / missing reference) so
+ * the admin monitor shows rejected attempts. Best-effort and never throws. The
+ * payload snippet is truncated to bound storage from a hostile flood.
+ */
+async function recordRejected(provider: string, error: string, rawSnippet: string, httpStatus: number): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO provider_events (provider, event_type, external_id, payload, auth_ok, error, http_status)
+       VALUES ($1, 'rejected', NULL, $2, false, $3, $4)`,
+      [provider, JSON.stringify({ snippet: rawSnippet.slice(0, 2000) }), error.slice(0, 300), httpStatus],
+    );
+  } catch {
+    /* never block the response on an audit write */
+  }
 }
 
 /** Credit a wallet-topup order captured via webhook (idempotent by order status). */
@@ -84,6 +102,7 @@ router.post(
     const raw = rawText(req);
     const signature = String(req.headers['x-razorpay-signature'] ?? '');
     if (!getGatewayProvider().verifyWebhook(raw, signature)) {
+      await recordRejected('razorpay', 'Invalid webhook signature', raw, 401);
       throw ApiError.unauthorized('Invalid webhook signature');
     }
     const event = JSON.parse(raw) as {
@@ -235,7 +254,10 @@ async function handleCallback(
   // Accept the many names aggregators use for the client reference / status.
   const reference = pick(body, ['reference', 'client_ref', 'clientRef', 'client_reference', 'client_referenceId', 'client_reference_id', 'client_ref_id', 'reference_id', 'referenceId', 'refid', 'ref', 'orderid', 'order_id', 'clientReferenceNo']);
   const rawStatus = pick(body, ['status', 'txn_status', 'txnStatus', 'transaction_status', 'state', 'response_status']);
-  if (!reference) throw ApiError.badRequest('Missing transaction reference in callback');
+  if (!reference) {
+    await recordRejected(providerTag, 'Missing transaction reference in callback', raw, 400);
+    throw ApiError.badRequest('Missing transaction reference in callback');
+  }
 
   // `service` is optional and only used to label the event — settlement finds
   // the real service from the reference itself.
@@ -246,14 +268,14 @@ async function handleCallback(
   const message = pick(body, ['message', 'msg', 'remark', 'status_message', 'response_message', 'txstatus_desc', 'description']);
 
   const externalId = `${providerTag}:${reference}:${status}`;
-  if (!(await recordEvent(providerTag, service, externalId, body))) {
+  if (!(await recordEvent(providerTag, service, externalId, body, reference))) {
     res.json({ status: 'duplicate' });
     return;
   }
 
   await settleByReference(reference, providerTag, { status, providerRef, utr, message });
 
-  await markProcessed(providerTag, externalId);
+  await markProcessed(providerTag, externalId, status);
   // Echo the client reference (required by some providers, e.g. AeronPay) and
   // acknowledge with HTTP 200 so they mark delivery complete.
   res.json({ status: 'ok', client_referenceId: reference, reference, acknowledged: true, settled: status });
@@ -265,6 +287,7 @@ router.post(
     const secret = await aggregatorWebhookSecret();
     if (!secret) throw ApiError.forbidden('Aggregator webhook secret not configured');
     if (!verifyHmac(rawText(req), String(req.headers['x-webhook-signature'] ?? ''), secret)) {
+      await recordRejected('aggregator', 'Invalid webhook signature', rawText(req), 401);
       throw ApiError.unauthorized('Invalid webhook signature');
     }
     await handleCallback(req, res, 'aggregator');
@@ -296,12 +319,14 @@ router.post(
 
     const extra = provider.extra ?? {};
     const authMode = String((extra.webhook_auth as string) ?? 'hmac').toLowerCase();
+    const tag = `provider:${req.params.id}`;
 
     if (authMode === 'basic') {
       const user = String((extra.webhook_user as string) ?? '');
       const pass = String((extra.webhook_pass as string) ?? '');
       if (!user || !pass) throw ApiError.forbidden('Provider webhook Basic Auth not configured');
       if (!verifyBasic(req.headers['authorization'], user, pass)) {
+        await recordRejected(tag, 'Invalid webhook credentials (Basic Auth)', rawText(req), 401);
         res.setHeader('WWW-Authenticate', 'Basic realm="tutipays-webhook"');
         throw ApiError.unauthorized('Invalid webhook credentials');
       }
@@ -309,10 +334,11 @@ router.post(
       const secret = (provider.webhook_secret || (await aggregatorWebhookSecret())).trim();
       if (!secret) throw ApiError.forbidden('Provider webhook secret not configured');
       if (!verifyHmac(rawText(req), String(req.headers['x-webhook-signature'] ?? ''), secret)) {
+        await recordRejected(tag, 'Invalid webhook signature', rawText(req), 401);
         throw ApiError.unauthorized('Invalid webhook signature');
       }
     }
-    await handleCallback(req, res, `provider:${req.params.id}`);
+    await handleCallback(req, res, tag);
   }),
 );
 
