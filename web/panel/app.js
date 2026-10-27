@@ -4583,6 +4583,26 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   // ----- provider connections (one credential → many services) -----
+  // Per-driver field guidance so the form stops showing Eko hints for every driver.
+  _drvHint(driver) {
+    const H = {
+      eko: { base: 'https://api.eko.in/ekoicici/v3', partner: 'initiator_id', map: 'Eko — API key = developer_key, API secret = access_key, Partner ID = initiator_id, Extra = {"user_code":"…"}.' },
+      aeronpay: { base: 'https://api.aeronpay.in/api/serviceapi-prod/api', partner: '— not used —', map: 'AeronPay — API key = <b>client-id</b>, API secret = <b>client-secret</b> (sent as request headers). Base URL optional. Secure the callback by <b>IP allowlist</b> below (Partner Console → Developer → Whitelisting lists the IPs).' },
+      razorpay: { base: 'https://api.razorpay.com/v1', partner: '— not used —', map: 'Razorpay — API key = <b>key_id</b>, API secret = <b>key_secret</b>. Callback uses HMAC (X-Razorpay-Signature).' },
+      aggregator: { base: 'https://your-aggregator/api', partner: 'partner / merchant id', map: 'Aggregator — set Base URL + API key/secret from your aggregator; map any extra fields in Extra config.' },
+      generic: { base: 'https://api.provider.com', partner: 'partner id (if any)', map: 'Generic REST — put endpoints + field mappings in Extra config.' },
+      dynamic: { base: 'https://api.provider.com', partner: 'partner id (if any)', map: 'Dynamic — build the config in 🤖 AI Integration Studio (or the Add-API wizard) and paste it into Extra config.' },
+      sandbox: { base: '(none — test driver)', partner: '(none)', map: 'Sandbox — test driver, no real credentials needed.' },
+    };
+    return H[driver] || H.generic;
+  },
+  pcDriverHint() {
+    const d = $('pc_driver') && $('pc_driver').value; if (!d) return;
+    const h = Actions._drvHint(d);
+    if ($('pc_base_url')) $('pc_base_url').placeholder = h.base;
+    if ($('pc_partner_id')) $('pc_partner_id').placeholder = h.partner;
+    if ($('pc_maphint')) $('pc_maphint').innerHTML = h.map;
+  },
   async editConnection(id) {
     const svcList = Actions._pcServices || ((await Api.get('/admin/services')).items.map(s => ({ code: s.code, name: s.name })));
     const dir = Actions._pcDir || [];
@@ -4593,17 +4613,18 @@ const Actions = {
     const diropt = ['<option value="">— start from a known provider —</option>'].concat(dir.map(p => `<option value="${esc(p.key)}">${esc(p.name)}${p.services ? ' — ' + esc(p.services) : ''}</option>`)).join('');
     const svcBoxes = svcList.map(s => `<label style="display:inline-flex;gap:6px;align-items:center;margin:3px 12px 3px 0;font-size:13px"><input type="checkbox" id="pc_svc_${s.code}" ${activeCodes.has(s.code) ? 'checked' : ''}> ${esc(s.code)}</label>`).join('');
     const keepPh = id ? 'leave blank to keep' : '';
+    const h = Actions._drvHint(c.driver);
     UI.modal(`<h3>${id ? 'Edit' : 'New'} provider connection</h3>
       ${id ? '' : `<div class="field"><label>Start from a known provider (optional)</label><select id="pc_dir" onchange="Actions.pcPrefill()">${diropt}</select></div>`}
       <div class="field"><label>Name / label</label><input id="pc_label" value="${esc(c.label || '')}" placeholder="Eko"></div>
-      <div class="field"><label>Driver</label><select id="pc_driver">${dopt}</select></div>
-      <div class="field"><label>Base URL (optional)</label><input id="pc_base_url" value="${esc(c.base_url || '')}" placeholder="https://api.eko.in/ekoicici/v3"></div>
+      <div class="field"><label>Driver</label><select id="pc_driver" onchange="Actions.pcDriverHint()">${dopt}</select></div>
+      <div class="field"><label>Base URL (optional)</label><input id="pc_base_url" value="${esc(c.base_url || '')}" placeholder="${esc(h.base)}"></div>
       <div class="field"><label>API key / Developer key</label><input id="pc_api_key" placeholder="${keepPh}"></div>
       <div class="field"><label>API secret / Access key</label><input id="pc_api_secret" placeholder="${keepPh}"></div>
       <div class="field"><label>Auth token (optional)</label><input id="pc_auth_token" placeholder="${keepPh}"></div>
-      <div class="field"><label>Partner / Initiator ID</label><input id="pc_partner_id" value="${esc(c.partner_id || '')}" placeholder="initiator_id"></div>
+      <div class="field"><label>Partner / Initiator ID</label><input id="pc_partner_id" value="${esc(c.partner_id || '')}" placeholder="${esc(h.partner)}"></div>
       <div class="field"><label>Extra config (JSON)</label><textarea id="pc_extra" rows="2" style="width:100%;font-family:monospace">${esc(JSON.stringify(c.extra || {}))}</textarea></div>
-      <p class="muted" style="font-size:12px">Eko mapping — API key = developer_key, API secret = access_key, Partner ID = initiator_id, Extra = {"user_code":"…"}.</p>
+      <p class="muted" id="pc_maphint" style="font-size:12px">${h.map}</p>
       <div class="field"><label>Callback (webhook) auth — how this provider secures the status it posts back</label>
         <select id="pc_wauth" onchange="var v=this.value;document.getElementById('pc_wbasic').hidden=(v!=='basic');document.getElementById('pc_wipbox').hidden=(v!=='ip')">
           <option value="hmac" ${((c.extra||{}).webhook_auth && (c.extra||{}).webhook_auth!=='hmac')?'':'selected'}>HMAC signature (X-Webhook-Signature)</option>
