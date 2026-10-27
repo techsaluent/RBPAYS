@@ -3373,6 +3373,8 @@ const Actions = {
   },
   editIntegration(key) {
     const cur = (Actions._intCache && Actions._intCache[key]) || {};
+    // Email gets a dedicated, friendly SMTP form (no JSON to hand-edit).
+    if (key === 'email') return Actions.editEmailIntegration(cur);
     const isNew = !key;
     const label = cur.label || '';
     const presets = Actions._intPresets(key);
@@ -3396,6 +3398,47 @@ const Actions = {
       <div class="field"><label><input type="checkbox" id="ig_active" ${cur.is_active ? 'checked' : ''}> Active</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveIntegration('${key}')">Save</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  // Dedicated SMTP email form — plain labelled fields, no JSON.
+  editEmailIntegration(cur) {
+    const port = cur.smtp_port || 465;
+    const ssl = cur.smtp_secure != null ? !!cur.smtp_secure : (Number(port) === 465);
+    UI.modal(`<h3>Configure — Email (SMTP)</h3>
+      <p class="muted" style="font-size:12px;margin:-4px 0 10px">Your mailbox's outgoing (SMTP) details. For cPanel use the server host (e.g. <code>linux898.defaultserverdns.com</code>), port <b>465</b> with SSL on.</p>
+      <div class="row">
+        <div class="field" style="flex:2;min-width:220px"><label>SMTP host</label><input id="em_host" value="${esc(cur.base_url || '')}" placeholder="linux898.defaultserverdns.com"></div>
+        <div class="field" style="max-width:120px"><label>Port</label><input id="em_port" inputmode="numeric" value="${esc(String(port))}" oninput="Actions.emPortSync()"></div>
+      </div>
+      <div class="field"><label><input type="checkbox" id="em_ssl" ${ssl ? 'checked' : ''}> SSL/TLS (use for port 465; off = STARTTLS on 587)</label></div>
+      <div class="field"><label>Username (full email) ${cur.has_key ? '<span class="tag active">set — leave blank to keep</span>' : ''}</label><input id="em_user" value="${esc(cur.has_key ? '' : (cur.sender_id || ''))}" placeholder="${cur.has_key ? '•••••• (leave blank to keep)' : 'no-reply@yourdomain.com'}"></div>
+      <div class="field"><label>Password ${cur.has_secret ? '<span class="tag active">set</span>' : ''}</label><input id="em_pass" type="password" placeholder="${cur.has_secret ? '•••••• (leave blank to keep)' : 'mailbox password'}"></div>
+      <div class="row">
+        <div class="field" style="flex:2;min-width:220px"><label>From email</label><input id="em_from" value="${esc(cur.sender_id || '')}" placeholder="no-reply@yourdomain.com"></div>
+        <div class="field" style="flex:1;min-width:120px"><label>From name (optional)</label><input id="em_fromname" value="${esc(cur.from_name || '')}" placeholder="TutiPays"></div>
+      </div>
+      <div class="field"><label><input type="checkbox" id="em_active" ${cur.is_active ? 'checked' : ''}> Active</label></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveEmailIntegration()">Save</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  emPortSync() {
+    const p = Number(val('em_port')); const ssl = $('em_ssl');
+    if (ssl && (p === 465 || p === 587)) ssl.checked = (p === 465);
+  },
+  async saveEmailIntegration() {
+    const host = (val('em_host') || '').trim();
+    if (!host) return UI.toast('Enter the SMTP host', 'err');
+    const port = Math.max(1, parseInt(val('em_port')) || 465);
+    const body = {
+      provider: 'smtp', base_url: host,
+      sender_id: (val('em_from') || val('em_user') || '').trim(),
+      is_active: $('em_active').checked,
+      extra: { smtp_port: port, smtp_secure: !!($('em_ssl') && $('em_ssl').checked) },
+    };
+    const fromName = (val('em_fromname') || '').trim(); if (fromName) body.extra.from_name = fromName;
+    const user = (val('em_user') || '').trim(); if (user) body.api_key = user;
+    const pass = val('em_pass'); if (pass) body.api_secret = pass;
+    try { await Api.put('/admin/integrations/email', body); UI.closeModal(); UI.toast('Email settings saved — now Send test'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
   async runRecon() {
     let rows;

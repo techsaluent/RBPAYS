@@ -1875,7 +1875,11 @@ router.get(
     const { rows } = await query(
       `SELECT key, label, category, provider, base_url, sender_id, is_active, updated_at,
               (api_key IS NOT NULL AND api_key <> '') AS has_key,
-              (api_secret IS NOT NULL AND api_secret <> '') AS has_secret
+              (api_secret IS NOT NULL AND api_secret <> '') AS has_secret,
+              -- Non-sensitive SMTP settings so the email form can pre-fill.
+              (extra->>'smtp_port')::int AS smtp_port,
+              (extra->>'smtp_secure') = 'true' AS smtp_secure,
+              extra->>'from_name' AS from_name
          FROM platform_integrations ORDER BY category, key`,
     );
     res.json({ items: rows });
