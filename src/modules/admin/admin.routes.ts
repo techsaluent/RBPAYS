@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+import http from 'http';
 import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
@@ -3180,6 +3182,169 @@ router.get(
       live_count: items.filter((i) => i.live).length,
       sandbox_count: items.filter((i) => i.status === 'sandbox').length,
       none_count: items.filter((i) => i.status === 'none_active').length,
+    });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// AML / banned-business blocklist (Risk & AML). Admin-managed screening list;
+// matched payees are blocked or flagged before a transaction commits.
+// ---------------------------------------------------------------------
+function normAmlValue(kind: string, value: string): string {
+  const v = value.trim().toLowerCase();
+  return kind === 'name' || kind === 'keyword' ? v.replace(/\s+/g, ' ') : v.replace(/\s+/g, '');
+}
+
+router.get(
+  '/aml/blocklist',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      'SELECT id, kind, value_norm, label, action, reason, is_active, created_at FROM aml_blocklist ORDER BY created_at DESC LIMIT 500',
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const amlSchema = z.object({
+  kind: z.enum(['account', 'ifsc', 'upi', 'mobile', 'pan', 'name', 'keyword']),
+  value: z.string().trim().min(2).max(200),
+  action: z.enum(['block', 'flag']).default('block'),
+  reason: z.string().trim().max(300).optional(),
+});
+
+router.post(
+  '/aml/blocklist',
+  validate(amlSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof amlSchema>;
+    const valueNorm = normAmlValue(b.kind, b.value);
+    const { rows } = await query(
+      `INSERT INTO aml_blocklist (kind, value_norm, label, action, reason, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (kind, value_norm) DO UPDATE SET
+         label = EXCLUDED.label, action = EXCLUDED.action, reason = EXCLUDED.reason, is_active = true
+       RETURNING id, kind, value_norm, label, action, reason, is_active, created_at`,
+      [b.kind, valueNorm, b.value.trim(), b.action, b.reason ?? null, req.user?.id ?? null],
+    );
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'aml.blocklist.add',
+      targetType: 'aml_blocklist', targetId: rows[0].id as string, detail: { kind: b.kind, action: b.action } });
+    res.status(201).json({ entry: rows[0] });
+  }),
+);
+
+router.patch(
+  '/aml/blocklist/:id',
+  validate(z.object({ is_active: z.boolean() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query(
+      'UPDATE aml_blocklist SET is_active = $2 WHERE id = $1 RETURNING id, is_active',
+      [req.params.id, (req.body as { is_active: boolean }).is_active],
+    );
+    if (!rows[0]) throw ApiError.notFound('Entry not found');
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'aml.blocklist.toggle',
+      targetType: 'aml_blocklist', targetId: req.params.id, detail: { is_active: rows[0].is_active } });
+    res.json({ entry: rows[0] });
+  }),
+);
+
+router.delete(
+  '/aml/blocklist/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    await query('DELETE FROM aml_blocklist WHERE id = $1', [req.params.id]);
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'aml.blocklist.delete',
+      targetType: 'aml_blocklist', targetId: req.params.id, detail: {} });
+    res.json({ ok: true });
+  }),
+);
+
+// Recent AML flags/blocks (from the risk event log).
+router.get(
+  '/aml/flags',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      `SELECT r.id, r.user_id, u.full_name AS member_name, r.service_code, r.reference, r.action, r.score, r.detail, r.created_at
+         FROM risk_events r LEFT JOIN users u ON u.id = r.user_id
+        WHERE r.kind = 'aml_blocklist'
+        ORDER BY r.created_at DESC LIMIT 100`,
+    );
+    res.json({ items: rows });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Webhook self-test — fire a signed sample callback at a provider's OWN
+// callback URL (locally) and report whether it was accepted. Uses a sentinel
+// reference so settlement finds no transaction and nothing moves; the attempt
+// shows in the webhook monitor. Exercises the real auth path (HMAC / Basic),
+// so it proves the callback security config end-to-end. Secret never leaves
+// the server.
+// ---------------------------------------------------------------------
+async function selfPostWebhook(path: string, body: string, headers: Record<string, string>): Promise<{ status: number; body: string }> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      { host: '127.0.0.1', port: env.PORT, path, method: 'POST', headers: { ...headers, 'content-length': Buffer.byteLength(body) }, timeout: 5000 },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => { data += c; });
+        res.on('end', () => resolve({ status: res.statusCode || 0, body: data.slice(0, 1000) }));
+      },
+    );
+    req.on('error', (e) => resolve({ status: 0, body: String((e as Error).message) }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: 'timeout reaching local API' }); });
+    req.write(body);
+    req.end();
+  });
+}
+
+router.post(
+  '/providers/:id/test-webhook',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query<{ label: string; service_code: string; webhook_secret: string | null; extra: Record<string, unknown> | null }>(
+      'SELECT label, service_code, webhook_secret, extra FROM service_providers WHERE id = $1',
+      [req.params.id],
+    );
+    const p = rows[0];
+    if (!p) throw ApiError.notFound('Provider not found');
+    const extra = p.extra ?? {};
+    const mode = String((extra.webhook_auth as string) ?? 'hmac').toLowerCase();
+    const reference = 'SELFTEST-' + crypto.randomUUID();
+    const payload = JSON.stringify({ reference, status: 'success', amount: 1, service: p.service_code, message: 'TutiPays webhook self-test', test: true });
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+
+    if (mode === 'hmac') {
+      let secret = (p.webhook_secret || '').trim();
+      if (!secret) {
+        const g = await query<{ value: string }>("SELECT value FROM site_settings WHERE key = 'aggregator_webhook_secret'");
+        secret = (g.rows[0]?.value || '').trim();
+      }
+      if (!secret) {
+        res.json({ ok: false, auth_mode: mode, reason: 'No webhook secret set for this provider (and no global secret). Set a secret before going live, or your real callbacks will be rejected.' });
+        return;
+      }
+      headers['x-webhook-signature'] = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    } else if (mode === 'basic') {
+      const user = String((extra.webhook_user as string) ?? ''); const pass = String((extra.webhook_pass as string) ?? '');
+      if (!user || !pass) { res.json({ ok: false, auth_mode: mode, reason: 'Basic-auth webhook has no user/pass configured.' }); return; }
+      headers['authorization'] = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+    } else if (mode === 'ip') {
+      const raw = extra.webhook_ips;
+      const list = (Array.isArray(raw) ? raw.map(String) : String(raw ?? '').split(',')).map((s) => s.trim()).filter(Boolean);
+      res.json({ ok: list.length > 0, auth_mode: mode, skipped: true,
+        reason: list.length
+          ? `IP-allowlist mode (${list.length} entr${list.length === 1 ? 'y' : 'ies'}). A server self-test posts from 127.0.0.1, which your allowlist would reject — a real call from the provider's IPs is what proves this path. Config looks set.`
+          : 'IP-allowlist mode but no IPs configured — add the provider\'s callback IPs/CIDRs.' });
+      return;
+    } // 'none' → post with no auth (insecure; reported below)
+
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'webhook.selftest', targetType: 'service_provider', targetId: req.params.id, detail: { mode } });
+    const out = await selfPostWebhook(`/api/v1/webhooks/provider/${req.params.id}`, payload, headers);
+    const ok = out.status >= 200 && out.status < 300;
+    res.json({
+      ok, auth_mode: mode, http_status: out.status, reference, response: out.body,
+      insecure: mode === 'none',
+      reason: ok
+        ? (mode === 'none' ? 'Accepted — but this provider has NO webhook auth (mode "none"). Anyone who learns the URL could post. Add HMAC/Basic/IP auth.' : 'Accepted — your callback URL, raw-body parsing and signature verification all work. (No transaction matched the test reference, so nothing settled.)')
+        : out.status === 0 ? `Could not reach the API locally: ${out.body}` : `Rejected (HTTP ${out.status}). Check the secret/credentials match what the provider will send. ${out.body}`,
     });
   }),
 );

@@ -3,7 +3,7 @@ import { PoolClient } from 'pg';
 import { query, withTransaction } from '../../../db';
 import { debit, WalletSource } from '../wallet/wallet.service';
 import { computeDistribution } from '../commission/commission.service';
-import { assessTransaction } from '../risk/risk.service';
+import { assessTransaction, screenTargets as amlScreen, ScreenTarget } from '../risk/risk.service';
 import { settleByReference } from './settle';
 import { makeReference } from '../../utils/reference';
 import { ApiError } from '../../utils/ApiError';
@@ -39,6 +39,12 @@ export interface RunOptions {
    * the admin-configured window. Falls back to `description` when not given.
    */
   dedupeKey?: string;
+  /**
+   * Payee identifiers to screen against the AML blocklist (account, IFSC, UPI,
+   * mobile, PAN, name, free text). A 'block' match rejects (422); a 'flag'
+   * match is logged but allowed. Omit for services with no external payee.
+   */
+  screenTargets?: ScreenTarget[];
   /** Insert the service detail row (pending). Return its id. */
   insertServiceRow: (client: PoolClient, ctx: { reference: string; chargePaise: number }) => Promise<string>;
   /** Call the external provider (runs after the debit commits). */
@@ -214,6 +220,18 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
     amountPaise: opts.amountPaise,
     reference,
   });
+
+  // 1b-ii) AML / banned-business screening of the payee (throws 422 on a
+  //        'block' match; a 'flag' match is logged but allowed).
+  if (opts.screenTargets && opts.screenTargets.length) {
+    await amlScreen({
+      userId: opts.userId,
+      service: opts.serviceCode,
+      amountPaise: opts.amountPaise,
+      reference,
+      targets: opts.screenTargets,
+    });
+  }
 
   // 2) Compute the money split up front so the retailer is netted.
   const flow = opts.flow ?? 'debit';

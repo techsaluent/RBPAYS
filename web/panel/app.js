@@ -304,6 +304,8 @@ const NAV = [
   { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'connectedbanking', label: '🏦 Connected Banking', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
+  { key: 'apiconfig', label: '⚙️ API Configuration', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'blueprint', label: '🗺️ Blueprint & Advisor', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providerconnections', label: '🔌 Provider Connections', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
@@ -419,13 +421,15 @@ const App = {
     $('who-name').textContent = State.user.full_name;
     $('who-role').textContent = State.user.role.replace(/_/g, ' ');
     // Render nav, inserting a section header whenever the group changes.
+    // A feature search box at the top filters the whole menu as you type.
     let lastSection = null;
-    $('nav').innerHTML = NAV.filter(allowed).map(i => {
+    const navItems = NAV.filter(allowed).map(i => {
       let head = '';
       if (i.section && i.section !== lastSection) { head = `<div class="nav-sec">${esc(i.section)}</div>`; lastSection = i.section; }
       else if (!i.section) lastSection = null;
-      return `${head}<a href="#/${i.key}" data-k="${i.key}">${i.label}</a>`;
+      return `${head}<a href="#/${i.key}" data-k="${i.key}" data-label="${esc((i.label || '').toLowerCase())} ${esc((i.section || '').toLowerCase())}">${i.label}</a>`;
     }).join('');
+    $('nav').innerHTML = `<input id="nav-search" class="nav-search" type="search" placeholder="🔍 Search features…" oninput="App.filterNav(this.value)" autocomplete="off">${navItems}`;
     await App.refreshWallet();
     App.refreshNotifBadge();
     if (!App._notifTimer) App._notifTimer = setInterval(App.refreshNotifBadge, 60000);
@@ -454,6 +458,20 @@ const App = {
     $('page-title').textContent = item.label;
     $('view').innerHTML = '<div class="muted">Loading…</div>';
     (Screens[item.key] || (() => {}))();
+  },
+  // Live-filter the sidebar menu by feature name / section.
+  filterNav(q) {
+    const term = (q || '').trim().toLowerCase();
+    const links = document.querySelectorAll('#nav a');
+    links.forEach(a => { a.style.display = (!term || (a.dataset.label || '').includes(term)) ? '' : 'none'; });
+    // Hide a section header when none of its items match.
+    document.querySelectorAll('#nav .nav-sec').forEach(sec => {
+      let any = false;
+      for (let el = sec.nextElementSibling; el && !el.classList.contains('nav-sec'); el = el.nextElementSibling) {
+        if (el.tagName === 'A' && el.style.display !== 'none') { any = true; break; }
+      }
+      sec.style.display = any ? '' : 'none';
+    });
   },
 };
 
@@ -490,45 +508,49 @@ const Screens = {
         { label: 'Pending', value: d.txn_pending_count || 0, color: '#bd7a00' },
         { label: 'Failed', value: d.txn_failed_count || 0, color: '#d43c3c' },
       ];
-      $('view').innerHTML = `
-        <div class="stats">
-          ${UI.stat('b','💳','Today\'s volume', money((d.today_amount_paise||0)/100), `<b>${d.today_count||0}</b> transactions today`)}
-          ${UI.stat('t','📈','This month GTV', money((d.month_amount_paise||0)/100), 'Successful value, MTD')}
-          ${UI.stat('g','🏦','Wallet float', money(d.wallet_float_paise/100), 'Across all wallets')}
-          ${UI.stat('p','🎯','Success rate', (d.txn_success_rate??0)+'%', `<b>${d.txn_success_count||0}</b> of ${d.txn_total_count||0} txns`)}
-          ${UI.stat('o','👥','Total users', (d.total_users||0), roles || '—')}
-          ${UI.stat('t','💰','Commission paid', money(d.commission_paid_paise/100), 'To the network, lifetime')}
-          ${UI.stat('r','🪪','Pending KYC', d.pending_kyc, d.pending_kyc ? '<a href="#/kycreview">Review now →</a>' : 'All clear')}
-          ${UI.stat('o','⏳','Pending txns', (d.txn_pending_count||0), 'Awaiting settlement')}
-        </div>
-        <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Transaction volume — last 14 days</h2>
-          <span class="muted" style="font-size:12px">Successful ₹ per day (IST)</span></div>
-          ${Charts.area(trend, { fmt: Charts.money })}</div>
-        <div class="chart-2 mt">
-          <div class="panel"><h2>Top services by value</h2>${Charts.hbars(topSvc, { fmt: Charts.money })}</div>
-          <div class="panel"><h2>Transaction status</h2>${Charts.donut(statusSeg)}</div>
-        </div>
-        <div class="panel mt"><h2>Command consoles</h2>
-          <div class="row" style="flex-wrap:wrap;gap:8px">
-            <a class="btn sm ghost" href="#/members">Users</a>
-            <a class="btn sm ghost" href="#/staff">Staff &amp; Roles</a>
-            <a class="btn sm ghost" href="#/kycreview">KYC Review</a>
-            <a class="btn sm ghost" href="#/topupreview">Top-up Requests</a>
-            <a class="btn sm ghost" href="#/plans">Commission</a>
-            <a class="btn sm ghost" href="#/providers">Providers</a>
-            <a class="btn sm ghost" href="#/integrations">Integrations</a>
-            <a class="btn sm ghost" href="#/website">Website</a>
-            <a class="btn sm ghost" href="#/taxdesk">Tax (TDS/GST)</a>
-            <a class="btn sm ghost" href="#/risk">Risk &amp; AML</a>
-            <a class="btn sm ghost" href="#/recon">Reconciliation</a>
-            <a class="btn sm ghost" href="#/batchpayout">Batch Payouts</a>
-            <a class="btn sm ghost" href="#/treasury">Treasury</a>
-            <a class="btn sm ghost" href="#/opsdesk">Ops Desk</a>
-            <a class="btn sm ghost" href="#/ledger">Ledger</a>
-          </div></div>
-        <div class="panel mt"><h2>Service volume</h2>
-          <div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Success</th><th class="right">Total</th><th class="right">Amount</th></tr></thead>
-          <tbody>${vol || '<tr><td colspan=4 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>`;
+      // Tile catalog — each tile is a draggable/toggleable card. size: s=stat
+      // (span 3), h=half panel (span 6), f=full panel (span 12).
+      const tiles = {
+        today_volume:  { size: 's', html: UI.stat('b','💳','Today\'s volume', money((d.today_amount_paise||0)/100), `<b>${d.today_count||0}</b> transactions today`) },
+        month_gtv:     { size: 's', html: UI.stat('t','📈','This month GTV', money((d.month_amount_paise||0)/100), 'Successful value, MTD') },
+        wallet_float:  { size: 's', html: UI.stat('g','🏦','Wallet float', money(d.wallet_float_paise/100), 'Across all wallets') },
+        success_rate:  { size: 's', html: UI.stat('p','🎯','Success rate', (d.txn_success_rate??0)+'%', `<b>${d.txn_success_count||0}</b> of ${d.txn_total_count||0} txns`) },
+        total_users:   { size: 's', html: UI.stat('o','👥','Total users', (d.total_users||0), roles || '—') },
+        commission:    { size: 's', html: UI.stat('t','💰','Commission paid', money(d.commission_paid_paise/100), 'To the network, lifetime') },
+        pending_kyc:   { size: 's', html: UI.stat('r','🪪','Pending KYC', d.pending_kyc, d.pending_kyc ? '<a href="#/kycreview">Review now →</a>' : 'All clear') },
+        pending_txns:  { size: 's', html: UI.stat('o','⏳','Pending txns', (d.txn_pending_count||0), 'Awaiting settlement') },
+        trend_chart:   { size: 'f', html: `<div class="panel" style="margin:0"><div class="row" style="justify-content:space-between"><h2>Transaction volume — last 14 days</h2><span class="muted" style="font-size:12px">Successful ₹ per day (IST)</span></div>${Charts.area(trend, { fmt: Charts.money })}</div>` },
+        top_services:  { size: 'h', html: `<div class="panel" style="margin:0"><h2>Top services by value</h2>${Charts.hbars(topSvc, { fmt: Charts.money })}</div>` },
+        txn_status:    { size: 'h', html: `<div class="panel" style="margin:0"><h2>Transaction status</h2>${Charts.donut(statusSeg)}</div>` },
+        consoles:      { size: 'f', html: `<div class="panel" style="margin:0"><h2>Command consoles</h2><div class="row" style="flex-wrap:wrap;gap:8px">
+            <a class="btn sm ghost" href="#/members">Users</a><a class="btn sm ghost" href="#/staff">Staff &amp; Roles</a>
+            <a class="btn sm ghost" href="#/kycreview">KYC Review</a><a class="btn sm ghost" href="#/topupreview">Top-up Requests</a>
+            <a class="btn sm ghost" href="#/plans">Commission</a><a class="btn sm ghost" href="#/apiconfig">API Configuration</a>
+            <a class="btn sm ghost" href="#/providers">Providers</a><a class="btn sm ghost" href="#/integrations">API Hub</a>
+            <a class="btn sm ghost" href="#/website">Website</a><a class="btn sm ghost" href="#/taxdesk">Tax (TDS/GST)</a>
+            <a class="btn sm ghost" href="#/risk">Risk &amp; AML</a><a class="btn sm ghost" href="#/recon">Reconciliation</a>
+            <a class="btn sm ghost" href="#/batchpayout">Batch Payouts</a><a class="btn sm ghost" href="#/treasury">Treasury</a>
+            <a class="btn sm ghost" href="#/opsdesk">Ops Desk</a><a class="btn sm ghost" href="#/ledger">Ledger</a>
+          </div></div>` },
+        service_volume:{ size: 'f', html: `<div class="panel" style="margin:0"><h2>Service volume</h2><div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Success</th><th class="right">Total</th><th class="right">Amount</th></tr></thead><tbody>${vol || '<tr><td colspan=4 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>` },
+      };
+      const DEFAULT_ORDER = ['today_volume','month_gtv','wallet_float','success_rate','total_users','commission','pending_kyc','pending_txns','trend_chart','top_services','txn_status','consoles','service_volume'];
+      Actions._dashTiles = tiles;
+      Actions._dashDefault = DEFAULT_ORDER;
+      // Saved layout (server-side, shared) with a localStorage fallback.
+      let order = null;
+      try {
+        const s = await Api.get('/admin/site/settings').catch(() => null);
+        const row = s && (s.items || []).find(x => x.key === 'admin_dash_layout');
+        if (row && row.value) order = JSON.parse(row.value);
+      } catch { order = null; }
+      if (!Array.isArray(order) || !order.length) {
+        try { order = JSON.parse(localStorage.getItem('admin_dash_layout') || 'null'); } catch { order = null; }
+      }
+      // Keep only known tiles; drop unknowns (catalog may change across releases).
+      Actions._dashOrder = (Array.isArray(order) && order.length ? order : DEFAULT_ORDER).filter(id => tiles[id]);
+      Actions._dashEdit = false;
+      Actions.renderDash();
     } else if (MGMT_ROLES.includes(State.user.role)) {
       // Distributor / Master distributor — network, earnings & downline.
       const isMD = State.user.role === 'master_distributor';
@@ -2030,7 +2052,11 @@ const Screens = {
 
   // Admin: risk & AML flagged events.
   async risk() {
-    const d = await Api.get('/admin/risk-events?limit=80');
+    const [d, bl, flags] = await Promise.all([
+      Api.get('/admin/risk-events?limit=80'),
+      Api.get('/admin/aml/blocklist').catch(() => ({ items: [] })),
+      Api.get('/admin/aml/flags').catch(() => ({ items: [] })),
+    ]);
     const badge = (a) => a === 'block' ? '<span class="tag blocked">block</span>'
       : a === 'hold' ? '<span class="tag" style="background:#fef3c7;color:#92400e">hold</span>'
       : '<span class="tag" style="background:#e0e7ff;color:#3730a3">review</span>';
@@ -2039,11 +2065,47 @@ const Screens = {
       <td class="right">${r.score}</td><td>${badge(r.action)}</td>
       <td class="muted">${esc(JSON.stringify(r.detail||{}))}</td>
       <td class="muted">${new Date(r.created_at).toLocaleString('en-IN')}</td></tr>`).join('');
-    $('view').innerHTML = `<div class="panel"><h2>Risk &amp; AML events</h2>
-      <p class="muted">Velocity, off-hours, AePS split (commission stripped) and DMT structuring (blocked) flags.</p>
-      <div class="tbl-wrap"><table>
-      <thead><tr><th>Member</th><th>Service</th><th>Kind</th><th class="right">Score</th><th>Action</th><th>Detail</th><th>When</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan=7 class=muted>No flags</td></tr>'}</tbody></table></div></div>`;
+    // AML blocklist rows
+    const blRows = (bl.items || []).map(e => `<tr>
+      <td>${esc(e.kind)}</td><td><code>${esc(e.label || e.value_norm)}</code></td>
+      <td>${e.action === 'block' ? '<span class="tag blocked">block</span>' : '<span class="tag" style="background:#fef3c7;color:#92400e">flag</span>'}</td>
+      <td class="muted">${esc(e.reason||'')}</td>
+      <td>${e.is_active ? '<span class="tag active">on</span>' : '<span class="muted">off</span>'}</td>
+      <td><button class="btn sm ghost" onclick="Actions.amlToggle('${e.id}',${!e.is_active})">${e.is_active?'Disable':'Enable'}</button>
+          <button class="btn sm ghost" onclick="Actions.amlDelete('${e.id}')">Delete</button></td></tr>`).join('');
+    const flagRows = (flags.items || []).map(f => {
+      const m = ((f.detail||{}).matches||[]).map(x=>`${x.kind}:${x.value}`).join(', ');
+      return `<tr><td>${esc(f.member_name||'—')}</td><td>${esc(f.service_code||'')}</td>
+        <td>${badge(f.action==='block'?'block':'review')}</td><td class="muted">${esc(m)}</td>
+        <td class="muted">${new Date(f.created_at).toLocaleString('en-IN')}</td></tr>`;
+    }).join('');
+    $('view').innerHTML = `
+      <div class="panel"><h2>🛡️ AML / banned-business blocklist</h2>
+        <p class="muted">Block or flag transactions to banned payees — by bank account, IFSC, UPI, mobile, PAN, name or keyword. <b>Block</b> rejects the transaction (payout, DMT…); <b>Flag</b> lets it through but records it here for review. Screening runs before any money moves.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div class="field" style="margin:0"><label>Type</label><select id="aml_kind">
+            <option value="account">Bank account</option><option value="ifsc">IFSC</option>
+            <option value="upi">UPI ID</option><option value="mobile">Mobile</option>
+            <option value="pan">PAN</option><option value="name">Payee name</option>
+            <option value="keyword">Keyword</option></select></div>
+          <div class="field" style="margin:0;flex:1;min-width:180px"><label>Value</label><input id="aml_value" placeholder="e.g. 123456789012 / gambling / SUSPECT NAME"></div>
+          <div class="field" style="margin:0"><label>Action</label><select id="aml_action"><option value="block">Block</option><option value="flag">Flag only</option></select></div>
+          <div class="field" style="margin:0;flex:1;min-width:140px"><label>Reason</label><input id="aml_reason" placeholder="why (optional)"></div>
+          <button class="btn" onclick="Actions.amlAdd()">Add</button>
+        </div>
+        <div class="tbl-wrap mt"><table>
+          <thead><tr><th>Type</th><th>Value</th><th>Action</th><th>Reason</th><th>Status</th><th></th></tr></thead>
+          <tbody>${blRows || '<tr><td colspan=6 class=muted>No entries — add a banned account, name or keyword.</td></tr>'}</tbody></table></div>
+      </div>
+      <div class="panel mt"><h2>Recent AML flags &amp; blocks</h2>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Member</th><th>Service</th><th>Action</th><th>Matched</th><th>When</th></tr></thead>
+          <tbody>${flagRows || '<tr><td colspan=5 class=muted>No AML flags yet.</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><h2>Risk engine events</h2>
+        <p class="muted">Velocity, off-hours, AePS split (commission stripped) and DMT structuring (blocked) flags.</p>
+        <div class="tbl-wrap"><table>
+        <thead><tr><th>Member</th><th>Service</th><th>Kind</th><th class="right">Score</th><th>Action</th><th>Detail</th><th>When</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=7 class=muted>No flags</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Admin: website branding + custom pages CMS.
@@ -2441,6 +2503,147 @@ const Screens = {
   },
 
   // Admin: manage upstream providers per service (multiple, one active).
+  // Admin: API Configuration — one pane of glass for every service's API.
+  // Transaction rails (from the services catalog + go-live readiness) and the
+  // API Hub (messaging / KYC / verification) in one place, each row linking to
+  // where it is configured. No code, no VPS — all from the panel.
+  async apiconfig() {
+    const [svcs, gl, ints] = await Promise.all([
+      Api.get('/admin/services').catch(() => ({ items: [] })),
+      Api.get('/admin/go-live').catch(() => ({ items: [], live_count: 0, sandbox_count: 0, none_count: 0 })),
+      Api.get('/admin/integrations').catch(() => ({ items: [] })),
+    ]);
+    const glMap = {};
+    (gl.items || []).forEach(i => { glMap[i.service_code] = i; });
+    // Every service in the catalog (so zero-provider services show as "not set").
+    const svcRows = (svcs.items || []).map(s => {
+      const g = glMap[s.code] || { status: 'none_active', active_provider: null, driver: null, total_providers: 0 };
+      const badge = g.status === 'live' ? '<span class="tag active">live</span>'
+        : g.status === 'sandbox' ? '<span class="tag" style="background:#fef7e0;color:#b26a00">sandbox</span>'
+        : '<span class="tag" style="background:#fce8e6;color:#c5221f">not set</span>';
+      return `<tr>
+        <td><b>${esc(s.name || s.code)}</b><div class="muted" style="font-size:11px">${esc(s.code)}</div></td>
+        <td>${g.active_provider ? esc(g.active_provider) : '<span class="muted">—</span>'}${g.driver ? ` <span class="muted" style="font-size:11px">(${esc(g.driver)})</span>` : ''}</td>
+        <td>${g.total_providers || 0}</td>
+        <td>${badge}</td>
+        <td><button class="btn sm" onclick="Actions.gotoProvider('${esc(s.code)}')">Configure</button></td></tr>`;
+    }).join('');
+    // API Hub rows grouped compactly by category.
+    const hubCats = { messaging: '📣 Messaging & OTP', identity: '🪪 Identity (KYC)', verification: '🔎 Verification', other: '🧩 Other' };
+    const hubRows = (ints.items || []).map(i => `<tr>
+        <td><b>${esc(i.label)}</b><div class="muted" style="font-size:11px">${esc(hubCats[i.category] || i.category || '')}</div></td>
+        <td>${i.provider ? esc(i.provider) : '<span class="muted">—</span>'}</td>
+        <td>${i.has_key ? '🔑' : '<span class="muted">no key</span>'}</td>
+        <td>${i.is_active ? '<span class="tag active">active</span>' : '<span class="tag" style="background:#fce8e6;color:#c5221f">off</span>'}</td>
+        <td><button class="btn sm" onclick="location.hash='#/integrations'">Configure</button></td></tr>`).join('');
+    const hubActive = (ints.items || []).filter(i => i.is_active).length;
+    const emailActive = (ints.items || []).some(i => i.key === 'email' && i.is_active);
+    $('view').innerHTML = `<div class="panel">
+      <h2 style="margin:0 0 4px">⚙️ API Configuration</h2>
+      <p class="muted">Every service's API, configured from here — no code, no server access. Transaction rails plug in under <a href="#/providerconnections">Provider Connections</a> (one credential → many services) or per-service <a href="#/providers">Providers</a>; messaging, KYC &amp; verification plug in under the <a href="#/integrations">API Hub</a>.</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap;font-size:12px">
+        <span class="tag active">${gl.live_count || 0} services live</span>
+        <span class="tag" style="background:#fef7e0;color:#b26a00">${gl.sandbox_count || 0} sandbox</span>
+        <span class="tag" style="background:#fce8e6;color:#c5221f">${(svcs.items||[]).length - (gl.live_count||0) - (gl.sandbox_count||0)} not set</span>
+        <span class="tag ${hubActive?'active':''}">${hubActive} hub APIs active</span>
+      </div>
+      ${emailActive ? '' : '<p class="msg err" style="margin-top:12px">⚠️ The <b>Email</b> API is not active. Email OTP at login is mandatory — activate it in the <a href="#/integrations">API Hub</a> or members cannot sign in.</p>'}
+    </div>
+    <div class="panel mt"><h3 style="margin:0 0 8px">Transaction services</h3>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th>Active provider</th><th>Providers</th><th>Status</th><th></th></tr></thead>
+        <tbody>${svcRows || '<tr><td colspan=5 class=muted>No services.</td></tr>'}</tbody></table></div>
+    </div>
+    <div class="panel mt"><h3 style="margin:0 0 8px">API Hub — messaging, KYC &amp; verification</h3>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th>Provider</th><th>Key</th><th>Status</th><th></th></tr></thead>
+        <tbody>${hubRows || '<tr><td colspan=5 class=muted>No hub APIs.</td></tr>'}</tbody></table></div>
+    </div>`;
+  },
+
+  // Admin: Blueprint & Advisor — a live map of how money/data flows
+  // (service → active provider → webhook callback) plus an AI-style readiness,
+  // advantage & security advisor that reads the live config and flags fixes.
+  async blueprint() {
+    const [svcs, gl, ints, settings] = await Promise.all([
+      Api.get('/admin/services').catch(() => ({ items: [] })),
+      Api.get('/admin/go-live').catch(() => ({ items: [] })),
+      Api.get('/admin/integrations').catch(() => ({ items: [] })),
+      Api.get('/admin/site/settings').catch(() => ({ items: [] })),
+    ]);
+    const glMap = {}; (gl.items || []).forEach(i => { glMap[i.service_code] = i; });
+    const setVal = (k) => { const r = (settings.items || []).find(x => x.key === k); return r ? (r.value || '') : ''; };
+    const intBy = (k) => (ints.items || []).find(i => i.key === k) || {};
+    const anyActive = (keys) => keys.some(k => intBy(k).is_active);
+
+    // ---- Advisor: deterministic readiness / advantage / security checks ----
+    const adv = [];
+    const add = (level, title, detail) => adv.push({ level, title, detail });
+    const notSet = (svcs.items || []).filter(s => (glMap[s.code]?.status || 'none_active') === 'none_active').map(s => s.code);
+    const sandbox = (svcs.items || []).filter(s => glMap[s.code]?.status === 'sandbox').map(s => s.code);
+    const live = (svcs.items || []).filter(s => glMap[s.code]?.status === 'live').map(s => s.code);
+    // Security
+    if (!anyActive(['email'])) add('crit', 'Email API is OFF — logins will break', 'Email OTP at login is mandatory. Activate the Email slot in the API Hub or no one (including admins) can sign in.');
+    else add('ok', 'Email OTP delivery is active', 'Login two-factor can reach members.');
+    add(setVal('security_require_login_otp') === 'false' ? 'warn' : 'ok',
+      setVal('security_require_login_otp') === 'false' ? 'Login OTP (2FA) is disabled' : 'Login OTP (2FA) is enforced',
+      setVal('security_require_login_otp') === 'false' ? 'Turn it on in Website → Security for mandatory email 2FA.' : 'Every login needs an emailed code — strong account protection.');
+    add(setVal('security_admin_ip_allowlist').trim() ? 'ok' : 'tip',
+      setVal('security_admin_ip_allowlist').trim() ? 'Admin IP allowlist is set' : 'Set an admin IP allowlist',
+      setVal('security_admin_ip_allowlist').trim() ? 'Admin logins are restricted to your network.' : 'Advantage: block admin login from anywhere but your office/VPN. Website → Security → admin IP allowlist.');
+    add(setVal('security_require_signup_otp') === 'true' ? 'ok' : 'tip',
+      setVal('security_require_signup_otp') === 'true' ? 'Signup OTP verification is on' : 'Enable signup OTP',
+      setVal('security_require_signup_otp') === 'true' ? 'New accounts verify a mobile/email before creation.' : 'Stops fake/bulk signups — turn on in Website → Security.');
+    // AML / screening
+    add(anyActive(['cybercrime']) ? 'ok' : 'tip',
+      anyActive(['cybercrime']) ? 'Negative-list / cyber-crime screening active' : 'Enable negative-list (AML) screening',
+      anyActive(['cybercrime']) ? 'Payouts can be screened against watchlists.' : 'Advantage + compliance: screen payees against negative/cyber-crime lists. Configure in the API Hub (cyber-crime slot), then enable AML rules in Risk & AML.');
+    // Readiness / advantage
+    if (notSet.length) add('warn', `${notSet.length} service(s) have no provider`, `Not earning yet: ${notSet.join(', ')}. Assign a provider in API Configuration to switch them on.`);
+    if (sandbox.length) add('warn', `${sandbox.length} service(s) in sandbox`, `Test mode only: ${sandbox.join(', ')}. Add live keys + activate to go live.`);
+    if (live.length) add('ok', `${live.length} service(s) live`, `Earning now: ${live.join(', ')}.`);
+    // KYC
+    add(anyActive(['pan_nsdl', 'aadhaar_kyc']) ? 'ok' : 'tip',
+      anyActive(['pan_nsdl', 'aadhaar_kyc']) ? 'KYC verification provider active' : 'Plug in a KYC provider',
+      anyActive(['pan_nsdl', 'aadhaar_kyc']) ? 'PAN/Aadhaar verified instantly at onboarding.' : 'Faster onboarding + compliance — add Signzy/Protean etc. in the API Hub.');
+
+    const rank = { crit: 0, warn: 1, tip: 2, ok: 3 };
+    adv.sort((a, b) => rank[a.level] - rank[b.level]);
+    const ico = { crit: '🔴', warn: '🟠', tip: '💡', ok: '🟢' };
+    const advCards = adv.map(a => `<div class="box" style="border:1px solid var(--line,#e5e9f2);border-radius:10px;padding:10px 14px;margin-bottom:8px">
+      <b>${ico[a.level]} ${esc(a.title)}</b><div class="muted" style="font-size:12.5px;margin-top:3px">${a.detail}</div></div>`).join('');
+
+    // ---- Blueprint rows: service → active provider → webhook ----
+    const bpRows = (svcs.items || []).map(s => {
+      const g = glMap[s.code] || {};
+      const st = g.status || 'none_active';
+      const dot = st === 'live' ? '🟢 live' : st === 'sandbox' ? '🟠 sandbox' : '⚪ not set';
+      const prov = g.active_provider ? `${esc(g.active_provider)}${g.driver ? ` <span class="muted">(${esc(g.driver)})</span>` : ''}` : '<span class="muted">—</span>';
+      const wh = g.provider_id
+        ? `<button class="btn sm ghost" onclick="Actions.testProviderWebhook('${g.provider_id}','${esc(s.code)}')">Test webhook</button>`
+        : '<span class="muted" style="font-size:12px">no provider</span>';
+      return `<tr><td><b>${esc(s.name || s.code)}</b><div class="muted" style="font-size:11px">${esc(s.code)}</div></td>
+        <td style="text-align:center">→</td><td>${prov}</td>
+        <td style="text-align:center">→</td><td>${dot}</td><td>${wh}</td></tr>`;
+    }).join('');
+
+    $('view').innerHTML = `<div class="panel">
+      <h2 style="margin:0 0 4px">🗺️ Blueprint & Advisor</h2>
+      <p class="muted">A live map of how every service connects — <b>service → active provider → webhook callback</b> — with an advisor that reads your real config and tells you what to fix, where you gain advantage, and where you're exposed. All from here; no code.</p>
+    </div>
+    <div class="panel mt"><h3 style="margin:0 0 8px">Advisor — readiness, advantage &amp; security</h3>${advCards}</div>
+    <div class="panel mt"><h3 style="margin:0 0 4px">Connection blueprint</h3>
+      <p class="muted" style="font-size:12px">Each row is the live route for a service. "Test webhook" fires a signed sample at that provider's own callback URL (nothing settles — a sentinel reference is used) to prove the callback + signature work.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th></th><th>Active provider</th><th></th><th>Status</th><th>Webhook</th></tr></thead>
+        <tbody>${bpRows || '<tr><td colspan=6 class=muted>No services.</td></tr>'}</tbody></table></div>
+    </div>
+    <div class="panel mt"><h3 style="margin:0 0 8px">Messaging, KYC &amp; verification hub</h3>
+      <div class="row" style="flex-wrap:wrap;gap:6px">
+        ${(ints.items || []).map(i => `<span class="tag ${i.is_active ? 'active' : ''}" style="font-size:11px;${i.is_active ? '' : 'background:#fce8e6;color:#c5221f'}" title="${esc(i.provider || 'not configured')}">${esc(i.label)}: ${i.is_active ? 'on' : 'off'}</span>`).join('')}
+      </div></div>`;
+  },
+
   // Admin: Provider Connections — one credential set across many services.
   async providerconnections() {
     const [conns, svcs, dir] = await Promise.all([
@@ -4723,6 +4926,117 @@ const Actions = {
   },
   // ----- provider connections (one credential → many services) -----
   // Per-driver field guidance so the form stops showing Eko hints for every driver.
+  // Jump to the per-service Providers screen with that service pre-selected.
+  gotoProvider(code) { Actions._provService = code; location.hash = '#/providers'; if ((location.hash.replace('#/','')) === 'providers') App.route(); },
+
+  // Fire a signed sample callback at a provider's own webhook URL (safe:
+  // sentinel reference, nothing settles) and show the verified result.
+  async testProviderWebhook(providerId, code) {
+    UI.toast('Firing test webhook…');
+    try {
+      const r = await Api.post(`/admin/providers/${providerId}/test-webhook`, {});
+      const icon = r.ok ? '✅' : (r.skipped ? 'ℹ️' : '❌');
+      UI.modal(`<h3>${icon} Webhook test — ${esc(code || '')}</h3>
+        <p><b>Auth mode:</b> ${esc(r.auth_mode || '—')}${r.http_status ? ` · <b>HTTP:</b> ${r.http_status}` : ''}</p>
+        <p style="font-size:13px">${esc(r.reason || '')}</p>
+        ${r.insecure ? '<p class="msg err" style="font-size:12px">This callback has no authentication — add HMAC/Basic/IP in Provider Connections.</p>' : ''}
+        <div class="foot"><button class="btn" onclick="UI.closeModal()">Close</button></div>`);
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+
+  // ---- AML blocklist -----------------------------------------------------
+  async amlAdd() {
+    const value = (val('aml_value') || '').trim();
+    if (!value) return UI.toast('Enter a value to block/flag', 'err');
+    const body = { kind: $('aml_kind').value, value, action: $('aml_action').value };
+    const reason = (val('aml_reason') || '').trim(); if (reason) body.reason = reason;
+    try { await Api.post('/admin/aml/blocklist', body); UI.toast('AML entry saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async amlToggle(id, active) {
+    try { await Api.patch('/admin/aml/blocklist/' + id, { is_active: active }); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async amlDelete(id) {
+    if (!confirm('Delete this AML blocklist entry?')) return;
+    try { await Api.del('/admin/aml/blocklist/' + id); UI.toast('Deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+
+  // ---- Admin dashboard designer (customizable tiles) ---------------------
+  _dashLabel(id) {
+    return ({ today_volume:'Today\'s volume', month_gtv:'This month GTV', wallet_float:'Wallet float',
+      success_rate:'Success rate', total_users:'Total users', commission:'Commission paid',
+      pending_kyc:'Pending KYC', pending_txns:'Pending txns', trend_chart:'Volume trend chart',
+      top_services:'Top services', txn_status:'Transaction status', consoles:'Command consoles',
+      service_volume:'Service volume table' })[id] || id;
+  },
+  renderDash() {
+    const tiles = Actions._dashTiles || {}, order = Actions._dashOrder || [], edit = Actions._dashEdit;
+    const span = { s: 3, h: 6, f: 12 };
+    const items = order.map(id => {
+      const t = tiles[id]; if (!t) return '';
+      const cols = span[t.size] || 3;
+      const tools = edit ? `<div class="dash-tools"><span class="dash-grip" title="Drag to reorder">⠿</span>
+        <button class="dash-x" title="Hide" onclick="Actions.dashHide('${id}')">✕</button></div>` : '';
+      return `<div class="dash-tile" data-id="${id}" style="grid-column:span ${cols}" ${edit ? `draggable="true" ondragstart="Actions.dashDragStart(event,'${id}')" ondragover="event.preventDefault()" ondrop="Actions.dashDrop(event,'${id}')"` : ''}>
+        ${tools}${t.html}</div>`;
+    }).join('');
+    const hidden = Object.keys(tiles).filter(id => !order.includes(id));
+    const tray = edit ? `<div class="panel mt"><h3 style="margin:0 0 8px">Hidden tiles</h3>
+      <div class="row" style="flex-wrap:wrap;gap:8px">${hidden.length
+        ? hidden.map(id => `<button class="btn sm ghost" onclick="Actions.dashShow('${id}')">+ ${esc(Actions._dashLabel(id))}</button>`).join('')
+        : '<span class="muted">All tiles shown.</span>'}</div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">Drag tiles to reorder. Changes are saved for all admins when you click <b>Save layout</b>.</p></div>` : '';
+    const bar = `<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="margin:0">Dashboard</h2>
+      <div class="row" style="gap:8px">
+        ${edit
+          ? `<button class="btn sm" onclick="Actions.dashSave()">Save layout</button>
+             <button class="btn sm ghost" onclick="Actions.dashReset()">Reset</button>
+             <button class="btn sm ghost" onclick="Actions.dashToggleEdit(false)">Done</button>`
+          : `<button class="btn sm ghost" onclick="Actions.dashToggleEdit(true)">🎨 Customize</button>`}
+      </div></div>`;
+    $('view').innerHTML = `
+      <style>
+        .dash-grid { display:grid; grid-template-columns:repeat(12,1fr); gap:14px; align-items:start; }
+        .dash-tile { position:relative; min-width:0; }
+        .dash-tile[draggable="true"] { cursor:grab; outline:1.5px dashed var(--line); outline-offset:3px; border-radius:var(--radius); }
+        .dash-tile.dragover { outline-color:var(--brand,#7a3cf0); }
+        .dash-tools { position:absolute; top:4px; right:6px; z-index:3; display:flex; gap:4px; align-items:center; }
+        .dash-grip { font-size:14px; opacity:.5; }
+        .dash-x { border:none; background:#fce8e6; color:#c5221f; border-radius:6px; cursor:pointer; font-size:11px; line-height:1; padding:3px 5px; }
+        @media (max-width:760px){ .dash-grid > .dash-tile { grid-column:span 12 !important; } }
+      </style>
+      ${bar}
+      <div class="dash-grid">${items || '<span class="muted">No tiles — add some from Customize.</span>'}</div>
+      ${tray}`;
+  },
+  dashToggleEdit(on) { Actions._dashEdit = !!on; Actions.renderDash(); },
+  dashHide(id) { Actions._dashOrder = (Actions._dashOrder || []).filter(x => x !== id); Actions.renderDash(); },
+  dashShow(id) { if (!(Actions._dashOrder || []).includes(id)) Actions._dashOrder.push(id); Actions.renderDash(); },
+  dashDragStart(e, id) { Actions._dashDrag = id; try { e.dataTransfer.effectAllowed = 'move'; } catch {} },
+  dashDrop(e, targetId) {
+    e.preventDefault();
+    const from = Actions._dashDrag; if (!from || from === targetId) return;
+    const o = Actions._dashOrder.filter(x => x !== from);
+    const at = o.indexOf(targetId);
+    o.splice(at < 0 ? o.length : at, 0, from);
+    Actions._dashOrder = o; Actions._dashDrag = null; Actions.renderDash();
+  },
+  async dashSave() {
+    const json = JSON.stringify(Actions._dashOrder || []);
+    try { localStorage.setItem('admin_dash_layout', json); } catch {}
+    try {
+      await Api.put('/admin/site/settings', { values: { admin_dash_layout: json } });
+      UI.toast('Dashboard layout saved');
+    } catch (err) { UI.toast('Saved on this device (server save failed: ' + err.message + ')', 'err'); }
+    Actions._dashEdit = false; Actions.renderDash();
+  },
+  dashReset() {
+    Actions._dashOrder = (Actions._dashDefault || []).slice();
+    Actions.renderDash();
+  },
   _drvHint(driver) {
     const H = {
       eko: { base: 'https://api.eko.in/ekoicici/v3', partner: 'initiator_id', map: 'Eko — API key = developer_key, API secret = access_key, Partner ID = initiator_id, Extra = {"user_code":"…"}.' },

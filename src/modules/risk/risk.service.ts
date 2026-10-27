@@ -142,6 +142,79 @@ export async function assessTransaction(p: {
 }
 
 /**
+ * AML / banned-business screening against the admin-managed blocklist.
+ *
+ * `targets` are the payee identifiers a transaction carries (account, IFSC,
+ * UPI, mobile, PAN, name) plus free text (description). Exact-id kinds match
+ * the normalized value exactly; `name` / `keyword` rules match as a substring
+ * of any name/text target. A matched 'block' rule logs a risk event and throws
+ * 422; 'flag' rules are logged (review) but allow the transaction through.
+ * No rules configured → no-op (and no DB round-trip beyond the single query).
+ */
+export interface ScreenTarget { kind: 'account' | 'ifsc' | 'upi' | 'mobile' | 'pan' | 'name' | 'text'; value: string }
+
+function normId(v: string): string {
+  return v.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+export async function screenTargets(p: {
+  userId: string;
+  service: string;
+  amountPaise: number;
+  reference?: string;
+  targets: ScreenTarget[];
+}): Promise<{ action: 'allow' | 'flag' | 'block'; matches: Array<{ kind: string; value: string; reason: string | null }> }> {
+  if (!env.RISK_ENGINE_ENABLED) return { action: 'allow', matches: [] };
+  const targets = (p.targets || []).filter((t) => t.value && t.value.trim());
+  if (!targets.length) return { action: 'allow', matches: [] };
+
+  // All active rules (the list is small and admin-curated).
+  const { rows } = await query<{ kind: string; value_norm: string; action: 'block' | 'flag'; reason: string | null; label: string | null }>(
+    'SELECT kind, value_norm, action, reason, label FROM aml_blocklist WHERE is_active = true',
+  );
+  if (!rows.length) return { action: 'allow', matches: [] };
+
+  // Exact-id targets by kind, and the concatenated free-text for name/keyword.
+  const exact: Record<string, Set<string>> = {};
+  const textParts: string[] = [];
+  for (const t of targets) {
+    if (t.kind === 'name' || t.kind === 'text') textParts.push(t.value.toLowerCase());
+    else { (exact[t.kind] ??= new Set()).add(normId(t.value)); }
+    // A name is also matched by exact `name` rules, and appears in free text.
+    if (t.kind === 'name') (exact.name ??= new Set()).add(normId(t.value));
+  }
+  const text = textParts.join(' ');
+
+  const matches: Array<{ kind: string; value: string; reason: string | null; action: 'block' | 'flag' }> = [];
+  for (const r of rows) {
+    let hit = false;
+    if (r.kind === 'keyword' || r.kind === 'name') {
+      if (r.value_norm && text.includes(r.value_norm)) hit = true;
+      if (!hit && exact.name && exact.name.has(r.value_norm)) hit = true;
+    } else if (exact[r.kind] && exact[r.kind].has(r.value_norm)) {
+      hit = true;
+    }
+    if (hit) matches.push({ kind: r.kind, value: r.label || r.value_norm, reason: r.reason, action: r.action });
+  }
+  if (!matches.length) return { action: 'allow', matches: [] };
+
+  const blocked = matches.some((m) => m.action === 'block');
+  const action = blocked ? 'block' : 'flag';
+  await query(
+    `INSERT INTO risk_events (user_id, service_code, reference, kind, score, action, detail)
+     VALUES ($1,$2,$3,'aml_blocklist',$4,$5,$6)`,
+    [p.userId, p.service, p.reference ?? null, blocked ? 100 : 50, blocked ? 'block' : 'review',
+     JSON.stringify({ matches: matches.map((m) => ({ kind: m.kind, value: m.value, reason: m.reason, action: m.action })), amount_paise: p.amountPaise })],
+  );
+  if (blocked) {
+    throw ApiError.unprocessable('Transaction blocked by AML screening (banned/blocked payee). Contact compliance.', {
+      matches: matches.filter((m) => m.action === 'block').map((m) => ({ kind: m.kind, reason: m.reason })),
+    });
+  }
+  return { action, matches: matches.map((m) => ({ kind: m.kind, value: m.value, reason: m.reason })) };
+}
+
+/**
  * AePS split-transaction / commission-farming guard: if the same Aadhaar ref
  * was already charged by this retailer within the window, the transaction is
  * allowed but hierarchy commission is stripped. Returns true to suppress.
