@@ -55,6 +55,11 @@ router.post(
       clientChargePaise: rupeesToPaise(body.charge),
       dedupeKey: `${body.account_number}|${body.ifsc}|${body.mode}`,
       description: `Payout to ${body.beneficiary_name} via ${body.mode}`,
+      screenTargets: [
+        { kind: 'account', value: body.account_number },
+        { kind: 'ifsc', value: body.ifsc },
+        { kind: 'name', value: body.beneficiary_name },
+      ],
       providerName: provider.name,
       insertServiceRow: async (client, ctx) => {
         const { rows } = await client.query<{ id: string }>(

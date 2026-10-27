@@ -3187,6 +3187,91 @@ router.get(
 );
 
 // ---------------------------------------------------------------------
+// AML / banned-business blocklist (Risk & AML). Admin-managed screening list;
+// matched payees are blocked or flagged before a transaction commits.
+// ---------------------------------------------------------------------
+function normAmlValue(kind: string, value: string): string {
+  const v = value.trim().toLowerCase();
+  return kind === 'name' || kind === 'keyword' ? v.replace(/\s+/g, ' ') : v.replace(/\s+/g, '');
+}
+
+router.get(
+  '/aml/blocklist',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      'SELECT id, kind, value_norm, label, action, reason, is_active, created_at FROM aml_blocklist ORDER BY created_at DESC LIMIT 500',
+    );
+    res.json({ items: rows });
+  }),
+);
+
+const amlSchema = z.object({
+  kind: z.enum(['account', 'ifsc', 'upi', 'mobile', 'pan', 'name', 'keyword']),
+  value: z.string().trim().min(2).max(200),
+  action: z.enum(['block', 'flag']).default('block'),
+  reason: z.string().trim().max(300).optional(),
+});
+
+router.post(
+  '/aml/blocklist',
+  validate(amlSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as z.infer<typeof amlSchema>;
+    const valueNorm = normAmlValue(b.kind, b.value);
+    const { rows } = await query(
+      `INSERT INTO aml_blocklist (kind, value_norm, label, action, reason, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (kind, value_norm) DO UPDATE SET
+         label = EXCLUDED.label, action = EXCLUDED.action, reason = EXCLUDED.reason, is_active = true
+       RETURNING id, kind, value_norm, label, action, reason, is_active, created_at`,
+      [b.kind, valueNorm, b.value.trim(), b.action, b.reason ?? null, req.user?.id ?? null],
+    );
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'aml.blocklist.add',
+      targetType: 'aml_blocklist', targetId: rows[0].id as string, detail: { kind: b.kind, action: b.action } });
+    res.status(201).json({ entry: rows[0] });
+  }),
+);
+
+router.patch(
+  '/aml/blocklist/:id',
+  validate(z.object({ is_active: z.boolean() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query(
+      'UPDATE aml_blocklist SET is_active = $2 WHERE id = $1 RETURNING id, is_active',
+      [req.params.id, (req.body as { is_active: boolean }).is_active],
+    );
+    if (!rows[0]) throw ApiError.notFound('Entry not found');
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'aml.blocklist.toggle',
+      targetType: 'aml_blocklist', targetId: req.params.id, detail: { is_active: rows[0].is_active } });
+    res.json({ entry: rows[0] });
+  }),
+);
+
+router.delete(
+  '/aml/blocklist/:id',
+  asyncHandler(async (req: Request, res: Response) => {
+    await query('DELETE FROM aml_blocklist WHERE id = $1', [req.params.id]);
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'aml.blocklist.delete',
+      targetType: 'aml_blocklist', targetId: req.params.id, detail: {} });
+    res.json({ ok: true });
+  }),
+);
+
+// Recent AML flags/blocks (from the risk event log).
+router.get(
+  '/aml/flags',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query(
+      `SELECT r.id, r.user_id, u.full_name AS member_name, r.service_code, r.reference, r.action, r.score, r.detail, r.created_at
+         FROM risk_events r LEFT JOIN users u ON u.id = r.user_id
+        WHERE r.kind = 'aml_blocklist'
+        ORDER BY r.created_at DESC LIMIT 100`,
+    );
+    res.json({ items: rows });
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Webhook self-test — fire a signed sample callback at a provider's OWN
 // callback URL (locally) and report whether it was accepted. Uses a sentinel
 // reference so settlement finds no transaction and nothing moves; the attempt

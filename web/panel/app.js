@@ -2052,7 +2052,11 @@ const Screens = {
 
   // Admin: risk & AML flagged events.
   async risk() {
-    const d = await Api.get('/admin/risk-events?limit=80');
+    const [d, bl, flags] = await Promise.all([
+      Api.get('/admin/risk-events?limit=80'),
+      Api.get('/admin/aml/blocklist').catch(() => ({ items: [] })),
+      Api.get('/admin/aml/flags').catch(() => ({ items: [] })),
+    ]);
     const badge = (a) => a === 'block' ? '<span class="tag blocked">block</span>'
       : a === 'hold' ? '<span class="tag" style="background:#fef3c7;color:#92400e">hold</span>'
       : '<span class="tag" style="background:#e0e7ff;color:#3730a3">review</span>';
@@ -2061,11 +2065,47 @@ const Screens = {
       <td class="right">${r.score}</td><td>${badge(r.action)}</td>
       <td class="muted">${esc(JSON.stringify(r.detail||{}))}</td>
       <td class="muted">${new Date(r.created_at).toLocaleString('en-IN')}</td></tr>`).join('');
-    $('view').innerHTML = `<div class="panel"><h2>Risk &amp; AML events</h2>
-      <p class="muted">Velocity, off-hours, AePS split (commission stripped) and DMT structuring (blocked) flags.</p>
-      <div class="tbl-wrap"><table>
-      <thead><tr><th>Member</th><th>Service</th><th>Kind</th><th class="right">Score</th><th>Action</th><th>Detail</th><th>When</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan=7 class=muted>No flags</td></tr>'}</tbody></table></div></div>`;
+    // AML blocklist rows
+    const blRows = (bl.items || []).map(e => `<tr>
+      <td>${esc(e.kind)}</td><td><code>${esc(e.label || e.value_norm)}</code></td>
+      <td>${e.action === 'block' ? '<span class="tag blocked">block</span>' : '<span class="tag" style="background:#fef3c7;color:#92400e">flag</span>'}</td>
+      <td class="muted">${esc(e.reason||'')}</td>
+      <td>${e.is_active ? '<span class="tag active">on</span>' : '<span class="muted">off</span>'}</td>
+      <td><button class="btn sm ghost" onclick="Actions.amlToggle('${e.id}',${!e.is_active})">${e.is_active?'Disable':'Enable'}</button>
+          <button class="btn sm ghost" onclick="Actions.amlDelete('${e.id}')">Delete</button></td></tr>`).join('');
+    const flagRows = (flags.items || []).map(f => {
+      const m = ((f.detail||{}).matches||[]).map(x=>`${x.kind}:${x.value}`).join(', ');
+      return `<tr><td>${esc(f.member_name||'—')}</td><td>${esc(f.service_code||'')}</td>
+        <td>${badge(f.action==='block'?'block':'review')}</td><td class="muted">${esc(m)}</td>
+        <td class="muted">${new Date(f.created_at).toLocaleString('en-IN')}</td></tr>`;
+    }).join('');
+    $('view').innerHTML = `
+      <div class="panel"><h2>🛡️ AML / banned-business blocklist</h2>
+        <p class="muted">Block or flag transactions to banned payees — by bank account, IFSC, UPI, mobile, PAN, name or keyword. <b>Block</b> rejects the transaction (payout, DMT…); <b>Flag</b> lets it through but records it here for review. Screening runs before any money moves.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div class="field" style="margin:0"><label>Type</label><select id="aml_kind">
+            <option value="account">Bank account</option><option value="ifsc">IFSC</option>
+            <option value="upi">UPI ID</option><option value="mobile">Mobile</option>
+            <option value="pan">PAN</option><option value="name">Payee name</option>
+            <option value="keyword">Keyword</option></select></div>
+          <div class="field" style="margin:0;flex:1;min-width:180px"><label>Value</label><input id="aml_value" placeholder="e.g. 123456789012 / gambling / SUSPECT NAME"></div>
+          <div class="field" style="margin:0"><label>Action</label><select id="aml_action"><option value="block">Block</option><option value="flag">Flag only</option></select></div>
+          <div class="field" style="margin:0;flex:1;min-width:140px"><label>Reason</label><input id="aml_reason" placeholder="why (optional)"></div>
+          <button class="btn" onclick="Actions.amlAdd()">Add</button>
+        </div>
+        <div class="tbl-wrap mt"><table>
+          <thead><tr><th>Type</th><th>Value</th><th>Action</th><th>Reason</th><th>Status</th><th></th></tr></thead>
+          <tbody>${blRows || '<tr><td colspan=6 class=muted>No entries — add a banned account, name or keyword.</td></tr>'}</tbody></table></div>
+      </div>
+      <div class="panel mt"><h2>Recent AML flags &amp; blocks</h2>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Member</th><th>Service</th><th>Action</th><th>Matched</th><th>When</th></tr></thead>
+          <tbody>${flagRows || '<tr><td colspan=5 class=muted>No AML flags yet.</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><h2>Risk engine events</h2>
+        <p class="muted">Velocity, off-hours, AePS split (commission stripped) and DMT structuring (blocked) flags.</p>
+        <div class="tbl-wrap"><table>
+        <thead><tr><th>Member</th><th>Service</th><th>Kind</th><th class="right">Score</th><th>Action</th><th>Detail</th><th>When</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan=7 class=muted>No flags</td></tr>'}</tbody></table></div></div>`;
   },
 
   // Admin: website branding + custom pages CMS.
@@ -4902,6 +4942,25 @@ const Actions = {
         ${r.insecure ? '<p class="msg err" style="font-size:12px">This callback has no authentication — add HMAC/Basic/IP in Provider Connections.</p>' : ''}
         <div class="foot"><button class="btn" onclick="UI.closeModal()">Close</button></div>`);
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+
+  // ---- AML blocklist -----------------------------------------------------
+  async amlAdd() {
+    const value = (val('aml_value') || '').trim();
+    if (!value) return UI.toast('Enter a value to block/flag', 'err');
+    const body = { kind: $('aml_kind').value, value, action: $('aml_action').value };
+    const reason = (val('aml_reason') || '').trim(); if (reason) body.reason = reason;
+    try { await Api.post('/admin/aml/blocklist', body); UI.toast('AML entry saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async amlToggle(id, active) {
+    try { await Api.patch('/admin/aml/blocklist/' + id, { is_active: active }); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async amlDelete(id) {
+    if (!confirm('Delete this AML blocklist entry?')) return;
+    try { await Api.del('/admin/aml/blocklist/' + id); UI.toast('Deleted'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
 
   // ---- Admin dashboard designer (customizable tiles) ---------------------
