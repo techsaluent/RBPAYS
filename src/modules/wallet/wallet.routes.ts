@@ -6,7 +6,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { withTransaction } from '../../../db';
 import { rupeesToPaise, paiseToRupees } from '../../utils/money';
-import { toCsv, statementHtml } from '../reports/reports.service';
+import { toCsv, statementHtml, sendXlsx } from '../reports/reports.service';
 import { getWalletByUser, listLedger, credit } from './wallet.service';
 import { subBalances, debitSub } from './subwallet.service';
 import { postJournal } from '../_shared/ledger';
@@ -127,7 +127,7 @@ router.get(
 const passSchema = z.object({
   from: z.string().trim().optional(),
   to: z.string().trim().optional(),
-  format: z.enum(['csv', 'html']).default('html'),
+  format: z.enum(['csv', 'html', 'xlsx']).default('html'),
 });
 router.get(
   '/statement',
@@ -156,6 +156,19 @@ router.get(
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="passbook_${q.from || 'all'}_${q.to || 'now'}.csv"`);
       res.send(csv);
+      return;
+    }
+    if (q.format === 'xlsx') {
+      sendXlsx(
+        res,
+        `passbook_${q.from || 'all'}_${q.to || 'now'}.xlsx`,
+        ['Date', 'Type', 'Source', 'Description', 'Amount (₹)', 'Balance (₹)'],
+        rows.map((t) => [
+          new Date(t.created_at).toLocaleString('en-IN'), t.direction, String(t.source).replace(/_/g, ' '),
+          t.description || '', Number(r(t.amount_paise)) * (t.direction === 'credit' ? 1 : -1), Number(r(t.balance_after_paise)),
+        ]),
+        'Passbook',
+      );
       return;
     }
     res.type('html').send(

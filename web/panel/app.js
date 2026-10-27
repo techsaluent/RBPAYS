@@ -968,6 +968,7 @@ const Screens = {
         <div class="row" style="gap:8px">
           <button class="btn sm ghost" onclick="Actions.openDoc('/wallet/statement?format=html')">🧾 Passbook</button>
           <button class="btn sm ghost" onclick="Actions.dl('/wallet/statement?format=csv','passbook.csv')">⬇ CSV</button>
+          <button class="btn sm ghost" onclick="Actions.dl('/wallet/statement?format=xlsx','passbook.xlsx')">⬇ Excel</button>
           <button class="btn sm" onclick="Actions.topup()">Top up (test gateway)</button></div></div>
         <div class="tbl-wrap"><table><thead><tr><th>Amount</th><th>Source</th><th>Description</th><th class="right">Balance</th><th>When</th></tr></thead>
         <tbody>${rows || '<tr><td colspan=5 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>
@@ -1023,7 +1024,8 @@ const Screens = {
         <div class="row" style="gap:6px">
           <select id="tx_fy" style="max-width:150px">${taxFyOptions()}</select>
           <button class="btn sm ghost" onclick="Actions.openDoc('/tax/tds/statement?format=html&fy='+val('tx_fy'))">🧾 Certificate</button>
-          <button class="btn sm" onclick="Actions.dl('/tax/tds/statement?format=csv&fy='+val('tx_fy'),'tds_'+val('tx_fy')+'.csv')">⬇ CSV</button>
+          <button class="btn sm ghost" onclick="Actions.dl('/tax/tds/statement?format=csv&fy='+val('tx_fy'),'tds_'+val('tx_fy')+'.csv')">⬇ CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/tax/tds/statement?format=xlsx&fy='+val('tx_fy'),'tds_'+val('tx_fy')+'.xlsx')">⬇ Excel</button>
         </div></div>
         <div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th class="right">Net</th><th>When</th></tr></thead>
@@ -1102,7 +1104,8 @@ const Screens = {
           <div class="field" style="margin:0"><label>From</label><input id="st_from" type="date"></div>
           <div class="field" style="margin:0"><label>To</label><input id="st_to" type="date"></div>
           <button class="btn sm ghost" onclick="Actions.openDoc('/transactions/statement?format=html&'+Actions._range('st'))">🧾 Print statement</button>
-          <button class="btn sm" onclick="Actions.dl('/transactions/statement?format=csv&'+Actions._range('st'),'statement.csv')">⬇ CSV</button>
+          <button class="btn sm ghost" onclick="Actions.dl('/transactions/statement?format=csv&'+Actions._range('st'),'statement.csv')">⬇ CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/transactions/statement?format=xlsx&'+Actions._range('st'),'statement.xlsx')">⬇ Excel</button>
         </div></div>
       <div class="tbl-wrap mt"><table>
       <thead><tr><th>Service</th><th>Dir</th><th class="right">Amount</th><th class="right">Net</th><th>Status</th><th>Reference</th><th>When</th><th></th></tr></thead>
@@ -1541,13 +1544,15 @@ const Screens = {
       <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <h2 style="margin:0">TDS records (Section 194H / 194N)</h2>
           ${_rangeCtl('tx')}
-          <button class="btn sm" onclick="Actions.dl('/admin/tds?format=csv&'+Actions._range('tx'),'tds_26q.csv')">⬇ 26Q CSV</button></div>
+          <button class="btn sm ghost" onclick="Actions.dl('/admin/tds?format=csv&'+Actions._range('tx'),'tds_26q.csv')">⬇ 26Q CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/admin/tds?format=xlsx&'+Actions._range('tx'),'tds_26q.xlsx')">⬇ 26Q Excel</button></div>
         <div class="tbl-wrap"><table>
         <thead><tr><th>Member</th><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th>When</th></tr></thead>
         <tbody>${trows || '<tr><td colspan=7 class=muted>No TDS yet</td></tr>'}</tbody></table></div></div>
       <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <h2 style="margin:0">GST invoices (18% on platform margin)</h2>
-          <button class="btn sm" onclick="Actions.dl('/admin/gst?format=csv&'+Actions._range('tx'),'gst.csv')">⬇ GST CSV</button></div>
+          <button class="btn sm ghost" onclick="Actions.dl('/admin/gst?format=csv&'+Actions._range('tx'),'gst.csv')">⬇ GST CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/admin/gst?format=xlsx&'+Actions._range('tx'),'gst.xlsx')">⬇ GST Excel</button></div>
         <div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th class="right">Base</th><th class="right">CGST</th><th class="right">SGST</th><th class="right">IGST</th><th>PoS</th></tr></thead>
         <tbody>${grows || '<tr><td colspan=6 class=muted>No GST yet</td></tr>'}</tbody></table></div>
@@ -2578,7 +2583,8 @@ const Screens = {
         <div><h2 style="margin:0">Settlement report</h2><p class="muted" style="margin:2px 0 0">Per-member summary of successful transactions for <b>${esc(d.date||'yesterday')}</b> (T+1). Blank date = yesterday.</p></div>
         <div class="row" style="gap:8px;align-items:end">
           <div class="field" style="margin:0"><label>Date</label><input id="se_date" type="date" value="${esc(date)}" onchange="Actions._settleDate=this.value;App.route()"></div>
-          <button class="btn sm" onclick="Actions.dl('/admin/settlement-report?format=csv'+(Actions._settleDate?'&date='+Actions._settleDate:''),'settlement.csv')">⬇ CSV</button>
+          <button class="btn sm ghost" onclick="Actions.dl('/admin/settlement-report?format=csv'+(Actions._settleDate?'&date='+Actions._settleDate:''),'settlement.csv')">⬇ CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/admin/settlement-report?format=xlsx'+(Actions._settleDate?'&date='+Actions._settleDate:''),'settlement.xlsx')">⬇ Excel</button>
         </div></div>
       <div class="stats mt">
         ${UI.stat('b','🧾','Transactions', t.txns||0, 'Successful, that day')}
