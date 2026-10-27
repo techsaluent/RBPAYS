@@ -323,6 +323,7 @@ const NAV = [
   { key: 'broadcast', label: '📣 Broadcast', roles: ['admin', 'staff'], perm: 'broadcast.manage', section: 'Risk & Ops' },
   { key: 'adminrewards', label: '🎁 Rewards', roles: ['admin', 'staff'], perm: 'rewards.manage', section: 'Risk & Ops' },
   { key: 'audit', label: 'Audit Log', roles: ['admin'], section: 'Risk & Ops' },
+  { key: 'backup', label: '💾 Backup & DR', roles: ['admin'], section: 'Risk & Ops' },
   { key: 'homeservices', label: '🧩 Home-page Services', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'frontend', label: '🖥️ Front-end Visibility', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
   { key: 'website', label: 'Website', roles: ['admin', 'staff'], perm: 'website.manage', section: 'Settings' },
@@ -2373,7 +2374,7 @@ const Screens = {
     const canTest = (k) => ['sms','otp','whatsapp','email'].includes(k);
     const ICON = { email:'✉️', sms:'💬', otp:'🔑', whatsapp:'🟢', aadhaar_kyc:'🪪', pan_nsdl:'🆔',
       penny_drop:'🏦', ifsc_lookup:'🏛️', pincode:'📮', upi_verify:'🆚', gst_verify:'🧾',
-      cybercrime:'🚨', vahan:'🚗', ai_coder:'🤖' };
+      cybercrime:'🚨', vahan:'🚗', ai_coder:'🤖', telegram:'📨' };
     // Each integration is a tile: status, provider, Configure + Test, inline toggle.
     const tile = (i) => {
       const ready = i.has_key || i.base_url || canTest(i.key);
@@ -2413,6 +2414,26 @@ const Screens = {
       <p class="muted" style="font-size:12px">Transaction rails — recharge, BBPS, DMT, AePS, payout, <b>travel / ticket booking</b>, <b>insurance</b>, loans, credit-card — are configured per service under <a href="#/providerconnections">Provider Connections</a>. This hub holds OTP/messaging, KYC and verification APIs.</p>
       </div>${sections}`;
   },
+  // ---- Backup & DR -------------------------------------------------------
+  async backupSaveSettings() {
+    const h = val('bk_hour');
+    const body = { daily_hour: h === '' ? null : Number(h), include_env: $('bk_env').checked };
+    try { await Api.put('/admin/backup/settings', body); UI.toast('Backup schedule saved'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async backupRunNow() {
+    if (!confirm('Run a backup now and push it to Telegram?')) return;
+    UI.toast('Backing up… this can take a moment');
+    try { const r = await Api.post('/admin/backup/run', { include_env: $('bk_env') && $('bk_env').checked });
+      UI.toast(r.message, r.ok ? 'ok' : 'err'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async backupTestTelegram() {
+    UI.toast('Sending test…');
+    try { const r = await Api.post('/admin/backup/test-telegram', {}); UI.toast(r.message, r.ok ? 'ok' : 'err'); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+
   // Quick activate/deactivate from a hub tile (no modal).
   async toggleIntegration(key, active) {
     try { await Api.put('/admin/integrations/' + key, { is_active: active }); UI.toast(active ? 'Activated' : 'Turned off'); App.route(); }
@@ -2608,6 +2629,41 @@ const Screens = {
         <thead><tr><th>Service</th><th>Provider</th><th>Key</th><th>Status</th><th></th></tr></thead>
         <tbody>${hubRows || '<tr><td colspan=5 class=muted>No hub APIs.</td></tr>'}</tbody></table></div>
     </div>`;
+  },
+
+  // Admin: Backup & Disaster Recovery — daily DB dump to Telegram so the
+  // platform can be rebuilt after a VPS loss (code is on GitHub).
+  async backup() {
+    const st = await Api.get('/admin/backup/status').catch(() => ({}));
+    const hourOpts = ['<option value="">Disabled</option>']
+      .concat(Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${st.daily_hour === h ? 'selected' : ''}>${String(h).padStart(2,'0')}:00 IST</option>`))
+      .join('');
+    const last = st.last_status;
+    const lastLine = last
+      ? `${last.ok ? '✅' : '❌'} ${esc(last.message || '')}${last.sizeBytes ? ` (${(last.sizeBytes/1048576).toFixed(2)} MB)` : ''} <span class="muted">— ${last.at ? new Date(last.at).toLocaleString('en-IN') : ''}</span>`
+      : '<span class="muted">No backup run yet.</span>';
+    $('view').innerHTML = `
+      <div class="panel"><h2 style="margin:0 0 4px">💾 Backup & Disaster Recovery</h2>
+        <p class="muted">A daily <b>database dump</b> is pushed to your <b>Telegram</b> bot, so even if the VPS is wiped you can rebuild: the code lives on GitHub, this is your data (and optionally the <code>.env</code>). Configure the Telegram bot in the <a href="#/integrations">API Hub</a> (📨 Telegram tile) first.</p>
+        <p>Telegram bot: ${st.telegram_active ? '<span class="tag active">connected</span>' : '<span class="tag" style="background:#fce8e6;color:#c5221f">not configured</span>'}
+          <button class="btn sm ghost" onclick="Actions.backupTestTelegram()">Send test message</button></p>
+      </div>
+      <div class="panel mt" style="max-width:560px"><h3 style="margin:0 0 10px">Daily backup</h3>
+        <div class="field"><label>Run every day at</label><select id="bk_hour">${hourOpts}</select></div>
+        <div class="field"><label><input type="checkbox" id="bk_env" ${st.include_env ? 'checked' : ''}> Also attach <code>.env</code> (secrets — keep the Telegram chat private)</label></div>
+        <button class="btn" onclick="Actions.backupSaveSettings()">Save schedule</button>
+        <button class="btn ghost" onclick="Actions.backupRunNow()">Back up now</button>
+        <p class="muted" style="font-size:12px;margin-top:10px">Last: ${lastLine}</p>
+        <p class="muted" style="font-size:12px">Telegram caps files at ~50 MB; a larger DB needs an off-server store (ask me to add S3/Drive).</p>
+      </div>
+      <div class="panel mt"><h3 style="margin:0 0 6px">Restore after a VPS loss</h3>
+        <ol class="muted" style="font-size:13px;line-height:1.7;margin:0;padding-left:18px">
+          <li>Provision a fresh VPS with Node 20 + Postgres 16.</li>
+          <li><code>git clone</code> the repo from GitHub into <code>/opt/rbpays-api</code>.</li>
+          <li>Create a new empty database, then restore the dump from Telegram: <code>gunzip -c rbpays-db-*.sql.gz | psql "$DATABASE_URL"</code>.</li>
+          <li>Restore <code>.env</code> (from the attached backup, or your own copy).</li>
+          <li><code>npm ci && npm run build &amp;&amp; npm run migrate</code>, then start the service.</li>
+        </ol></div>`;
   },
 
   // Admin: Blueprint & Advisor — a live map of how money/data flows
@@ -3403,11 +3459,16 @@ const Actions = {
       { id: 'signzy_gst', label: 'Signzy GST', provider: 'Signzy', base: 'https://api.signzy.app/api/v3', sender: '', extra: '{}', hint: 'Signzy — API key / secret from dashboard.' },
       G,
     ];
+    const TELEGRAM = [
+      { id: 'telegram', label: 'Telegram Bot', provider: 'Telegram', base: 'https://api.telegram.org', sender: '', extra: '{"chat_id":"123456789"}', hint: 'Telegram — API key = <b>bot token</b> from @BotFather. Put your <b>chat_id</b> in Advanced config: <code>{"chat_id":"123456789"}</code>. Start the bot (or add it to your group) first so it can message you.' },
+      G,
+    ];
     const MAP = {
       otp: SMS, sms: SMS, whatsapp: WA, email: EMAIL,
       aadhaar_kyc: KYC_AADHAAR, pan_nsdl: KYC_PAN,
       penny_drop: PENNY, vahan: VAHAN,
       ifsc_lookup: IFSC, pincode: PIN, upi_verify: UPI, gst_verify: GST,
+      telegram: TELEGRAM,
     };
     return MAP[key] || [G];
   },
