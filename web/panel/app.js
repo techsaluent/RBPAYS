@@ -491,45 +491,49 @@ const Screens = {
         { label: 'Pending', value: d.txn_pending_count || 0, color: '#bd7a00' },
         { label: 'Failed', value: d.txn_failed_count || 0, color: '#d43c3c' },
       ];
-      $('view').innerHTML = `
-        <div class="stats">
-          ${UI.stat('b','💳','Today\'s volume', money((d.today_amount_paise||0)/100), `<b>${d.today_count||0}</b> transactions today`)}
-          ${UI.stat('t','📈','This month GTV', money((d.month_amount_paise||0)/100), 'Successful value, MTD')}
-          ${UI.stat('g','🏦','Wallet float', money(d.wallet_float_paise/100), 'Across all wallets')}
-          ${UI.stat('p','🎯','Success rate', (d.txn_success_rate??0)+'%', `<b>${d.txn_success_count||0}</b> of ${d.txn_total_count||0} txns`)}
-          ${UI.stat('o','👥','Total users', (d.total_users||0), roles || '—')}
-          ${UI.stat('t','💰','Commission paid', money(d.commission_paid_paise/100), 'To the network, lifetime')}
-          ${UI.stat('r','🪪','Pending KYC', d.pending_kyc, d.pending_kyc ? '<a href="#/kycreview">Review now →</a>' : 'All clear')}
-          ${UI.stat('o','⏳','Pending txns', (d.txn_pending_count||0), 'Awaiting settlement')}
-        </div>
-        <div class="panel mt"><div class="row" style="justify-content:space-between"><h2>Transaction volume — last 14 days</h2>
-          <span class="muted" style="font-size:12px">Successful ₹ per day (IST)</span></div>
-          ${Charts.area(trend, { fmt: Charts.money })}</div>
-        <div class="chart-2 mt">
-          <div class="panel"><h2>Top services by value</h2>${Charts.hbars(topSvc, { fmt: Charts.money })}</div>
-          <div class="panel"><h2>Transaction status</h2>${Charts.donut(statusSeg)}</div>
-        </div>
-        <div class="panel mt"><h2>Command consoles</h2>
-          <div class="row" style="flex-wrap:wrap;gap:8px">
-            <a class="btn sm ghost" href="#/members">Users</a>
-            <a class="btn sm ghost" href="#/staff">Staff &amp; Roles</a>
-            <a class="btn sm ghost" href="#/kycreview">KYC Review</a>
-            <a class="btn sm ghost" href="#/topupreview">Top-up Requests</a>
-            <a class="btn sm ghost" href="#/plans">Commission</a>
-            <a class="btn sm ghost" href="#/providers">Providers</a>
-            <a class="btn sm ghost" href="#/integrations">Integrations</a>
-            <a class="btn sm ghost" href="#/website">Website</a>
-            <a class="btn sm ghost" href="#/taxdesk">Tax (TDS/GST)</a>
-            <a class="btn sm ghost" href="#/risk">Risk &amp; AML</a>
-            <a class="btn sm ghost" href="#/recon">Reconciliation</a>
-            <a class="btn sm ghost" href="#/batchpayout">Batch Payouts</a>
-            <a class="btn sm ghost" href="#/treasury">Treasury</a>
-            <a class="btn sm ghost" href="#/opsdesk">Ops Desk</a>
-            <a class="btn sm ghost" href="#/ledger">Ledger</a>
-          </div></div>
-        <div class="panel mt"><h2>Service volume</h2>
-          <div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Success</th><th class="right">Total</th><th class="right">Amount</th></tr></thead>
-          <tbody>${vol || '<tr><td colspan=4 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>`;
+      // Tile catalog — each tile is a draggable/toggleable card. size: s=stat
+      // (span 3), h=half panel (span 6), f=full panel (span 12).
+      const tiles = {
+        today_volume:  { size: 's', html: UI.stat('b','💳','Today\'s volume', money((d.today_amount_paise||0)/100), `<b>${d.today_count||0}</b> transactions today`) },
+        month_gtv:     { size: 's', html: UI.stat('t','📈','This month GTV', money((d.month_amount_paise||0)/100), 'Successful value, MTD') },
+        wallet_float:  { size: 's', html: UI.stat('g','🏦','Wallet float', money(d.wallet_float_paise/100), 'Across all wallets') },
+        success_rate:  { size: 's', html: UI.stat('p','🎯','Success rate', (d.txn_success_rate??0)+'%', `<b>${d.txn_success_count||0}</b> of ${d.txn_total_count||0} txns`) },
+        total_users:   { size: 's', html: UI.stat('o','👥','Total users', (d.total_users||0), roles || '—') },
+        commission:    { size: 's', html: UI.stat('t','💰','Commission paid', money(d.commission_paid_paise/100), 'To the network, lifetime') },
+        pending_kyc:   { size: 's', html: UI.stat('r','🪪','Pending KYC', d.pending_kyc, d.pending_kyc ? '<a href="#/kycreview">Review now →</a>' : 'All clear') },
+        pending_txns:  { size: 's', html: UI.stat('o','⏳','Pending txns', (d.txn_pending_count||0), 'Awaiting settlement') },
+        trend_chart:   { size: 'f', html: `<div class="panel" style="margin:0"><div class="row" style="justify-content:space-between"><h2>Transaction volume — last 14 days</h2><span class="muted" style="font-size:12px">Successful ₹ per day (IST)</span></div>${Charts.area(trend, { fmt: Charts.money })}</div>` },
+        top_services:  { size: 'h', html: `<div class="panel" style="margin:0"><h2>Top services by value</h2>${Charts.hbars(topSvc, { fmt: Charts.money })}</div>` },
+        txn_status:    { size: 'h', html: `<div class="panel" style="margin:0"><h2>Transaction status</h2>${Charts.donut(statusSeg)}</div>` },
+        consoles:      { size: 'f', html: `<div class="panel" style="margin:0"><h2>Command consoles</h2><div class="row" style="flex-wrap:wrap;gap:8px">
+            <a class="btn sm ghost" href="#/members">Users</a><a class="btn sm ghost" href="#/staff">Staff &amp; Roles</a>
+            <a class="btn sm ghost" href="#/kycreview">KYC Review</a><a class="btn sm ghost" href="#/topupreview">Top-up Requests</a>
+            <a class="btn sm ghost" href="#/plans">Commission</a><a class="btn sm ghost" href="#/apiconfig">API Configuration</a>
+            <a class="btn sm ghost" href="#/providers">Providers</a><a class="btn sm ghost" href="#/integrations">API Hub</a>
+            <a class="btn sm ghost" href="#/website">Website</a><a class="btn sm ghost" href="#/taxdesk">Tax (TDS/GST)</a>
+            <a class="btn sm ghost" href="#/risk">Risk &amp; AML</a><a class="btn sm ghost" href="#/recon">Reconciliation</a>
+            <a class="btn sm ghost" href="#/batchpayout">Batch Payouts</a><a class="btn sm ghost" href="#/treasury">Treasury</a>
+            <a class="btn sm ghost" href="#/opsdesk">Ops Desk</a><a class="btn sm ghost" href="#/ledger">Ledger</a>
+          </div></div>` },
+        service_volume:{ size: 'f', html: `<div class="panel" style="margin:0"><h2>Service volume</h2><div class="tbl-wrap"><table><thead><tr><th>Service</th><th class="right">Success</th><th class="right">Total</th><th class="right">Amount</th></tr></thead><tbody>${vol || '<tr><td colspan=4 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>` },
+      };
+      const DEFAULT_ORDER = ['today_volume','month_gtv','wallet_float','success_rate','total_users','commission','pending_kyc','pending_txns','trend_chart','top_services','txn_status','consoles','service_volume'];
+      Actions._dashTiles = tiles;
+      Actions._dashDefault = DEFAULT_ORDER;
+      // Saved layout (server-side, shared) with a localStorage fallback.
+      let order = null;
+      try {
+        const s = await Api.get('/admin/site/settings').catch(() => null);
+        const row = s && (s.items || []).find(x => x.key === 'admin_dash_layout');
+        if (row && row.value) order = JSON.parse(row.value);
+      } catch { order = null; }
+      if (!Array.isArray(order) || !order.length) {
+        try { order = JSON.parse(localStorage.getItem('admin_dash_layout') || 'null'); } catch { order = null; }
+      }
+      // Keep only known tiles; drop unknowns (catalog may change across releases).
+      Actions._dashOrder = (Array.isArray(order) && order.length ? order : DEFAULT_ORDER).filter(id => tiles[id]);
+      Actions._dashEdit = false;
+      Actions.renderDash();
     } else if (MGMT_ROLES.includes(State.user.role)) {
       // Distributor / Master distributor — network, earnings & downline.
       const isMD = State.user.role === 'master_distributor';
@@ -4784,6 +4788,81 @@ const Actions = {
   // Per-driver field guidance so the form stops showing Eko hints for every driver.
   // Jump to the per-service Providers screen with that service pre-selected.
   gotoProvider(code) { Actions._provService = code; location.hash = '#/providers'; if ((location.hash.replace('#/','')) === 'providers') App.route(); },
+
+  // ---- Admin dashboard designer (customizable tiles) ---------------------
+  _dashLabel(id) {
+    return ({ today_volume:'Today\'s volume', month_gtv:'This month GTV', wallet_float:'Wallet float',
+      success_rate:'Success rate', total_users:'Total users', commission:'Commission paid',
+      pending_kyc:'Pending KYC', pending_txns:'Pending txns', trend_chart:'Volume trend chart',
+      top_services:'Top services', txn_status:'Transaction status', consoles:'Command consoles',
+      service_volume:'Service volume table' })[id] || id;
+  },
+  renderDash() {
+    const tiles = Actions._dashTiles || {}, order = Actions._dashOrder || [], edit = Actions._dashEdit;
+    const span = { s: 3, h: 6, f: 12 };
+    const items = order.map(id => {
+      const t = tiles[id]; if (!t) return '';
+      const cols = span[t.size] || 3;
+      const tools = edit ? `<div class="dash-tools"><span class="dash-grip" title="Drag to reorder">⠿</span>
+        <button class="dash-x" title="Hide" onclick="Actions.dashHide('${id}')">✕</button></div>` : '';
+      return `<div class="dash-tile" data-id="${id}" style="grid-column:span ${cols}" ${edit ? `draggable="true" ondragstart="Actions.dashDragStart(event,'${id}')" ondragover="event.preventDefault()" ondrop="Actions.dashDrop(event,'${id}')"` : ''}>
+        ${tools}${t.html}</div>`;
+    }).join('');
+    const hidden = Object.keys(tiles).filter(id => !order.includes(id));
+    const tray = edit ? `<div class="panel mt"><h3 style="margin:0 0 8px">Hidden tiles</h3>
+      <div class="row" style="flex-wrap:wrap;gap:8px">${hidden.length
+        ? hidden.map(id => `<button class="btn sm ghost" onclick="Actions.dashShow('${id}')">+ ${esc(Actions._dashLabel(id))}</button>`).join('')
+        : '<span class="muted">All tiles shown.</span>'}</div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">Drag tiles to reorder. Changes are saved for all admins when you click <b>Save layout</b>.</p></div>` : '';
+    const bar = `<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="margin:0">Dashboard</h2>
+      <div class="row" style="gap:8px">
+        ${edit
+          ? `<button class="btn sm" onclick="Actions.dashSave()">Save layout</button>
+             <button class="btn sm ghost" onclick="Actions.dashReset()">Reset</button>
+             <button class="btn sm ghost" onclick="Actions.dashToggleEdit(false)">Done</button>`
+          : `<button class="btn sm ghost" onclick="Actions.dashToggleEdit(true)">🎨 Customize</button>`}
+      </div></div>`;
+    $('view').innerHTML = `
+      <style>
+        .dash-grid { display:grid; grid-template-columns:repeat(12,1fr); gap:14px; align-items:start; }
+        .dash-tile { position:relative; min-width:0; }
+        .dash-tile[draggable="true"] { cursor:grab; outline:1.5px dashed var(--line); outline-offset:3px; border-radius:var(--radius); }
+        .dash-tile.dragover { outline-color:var(--brand,#7a3cf0); }
+        .dash-tools { position:absolute; top:4px; right:6px; z-index:3; display:flex; gap:4px; align-items:center; }
+        .dash-grip { font-size:14px; opacity:.5; }
+        .dash-x { border:none; background:#fce8e6; color:#c5221f; border-radius:6px; cursor:pointer; font-size:11px; line-height:1; padding:3px 5px; }
+        @media (max-width:760px){ .dash-grid > .dash-tile { grid-column:span 12 !important; } }
+      </style>
+      ${bar}
+      <div class="dash-grid">${items || '<span class="muted">No tiles — add some from Customize.</span>'}</div>
+      ${tray}`;
+  },
+  dashToggleEdit(on) { Actions._dashEdit = !!on; Actions.renderDash(); },
+  dashHide(id) { Actions._dashOrder = (Actions._dashOrder || []).filter(x => x !== id); Actions.renderDash(); },
+  dashShow(id) { if (!(Actions._dashOrder || []).includes(id)) Actions._dashOrder.push(id); Actions.renderDash(); },
+  dashDragStart(e, id) { Actions._dashDrag = id; try { e.dataTransfer.effectAllowed = 'move'; } catch {} },
+  dashDrop(e, targetId) {
+    e.preventDefault();
+    const from = Actions._dashDrag; if (!from || from === targetId) return;
+    const o = Actions._dashOrder.filter(x => x !== from);
+    const at = o.indexOf(targetId);
+    o.splice(at < 0 ? o.length : at, 0, from);
+    Actions._dashOrder = o; Actions._dashDrag = null; Actions.renderDash();
+  },
+  async dashSave() {
+    const json = JSON.stringify(Actions._dashOrder || []);
+    try { localStorage.setItem('admin_dash_layout', json); } catch {}
+    try {
+      await Api.put('/admin/site/settings', { values: { admin_dash_layout: json } });
+      UI.toast('Dashboard layout saved');
+    } catch (err) { UI.toast('Saved on this device (server save failed: ' + err.message + ')', 'err'); }
+    Actions._dashEdit = false; Actions.renderDash();
+  },
+  dashReset() {
+    Actions._dashOrder = (Actions._dashDefault || []).slice();
+    Actions.renderDash();
+  },
   _drvHint(driver) {
     const H = {
       eko: { base: 'https://api.eko.in/ekoicici/v3', partner: 'initiator_id', map: 'Eko — API key = developer_key, API secret = access_key, Partner ID = initiator_id, Extra = {"user_code":"…"}.' },
