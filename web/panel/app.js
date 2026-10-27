@@ -2612,6 +2612,9 @@ const Screens = {
     const ico = { crit: '🔴', warn: '🟠', tip: '💡', ok: '🟢' };
     const advCards = adv.map(a => `<div class="box" style="border:1px solid var(--line,#e5e9f2);border-radius:10px;padding:10px 14px;margin-bottom:8px">
       <b>${ico[a.level]} ${esc(a.title)}</b><div class="muted" style="font-size:12.5px;margin-top:3px">${a.detail}</div></div>`).join('');
+    // Stash plain-text findings so the AI narrative has the same grounding.
+    const stripTags = (s) => String(s).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&');
+    Actions._advFindings = adv.map(a => ({ level: a.level, title: a.title, detail: stripTags(a.detail) }));
 
     // ---- Blueprint rows: service → active provider → webhook ----
     const bpRows = (svcs.items || []).map(s => {
@@ -2631,7 +2634,13 @@ const Screens = {
       <h2 style="margin:0 0 4px">🗺️ Blueprint & Advisor</h2>
       <p class="muted">A live map of how every service connects — <b>service → active provider → webhook callback</b> — with an advisor that reads your real config and tells you what to fix, where you gain advantage, and where you're exposed. All from here; no code.</p>
     </div>
-    <div class="panel mt"><h3 style="margin:0 0 8px">Advisor — readiness, advantage &amp; security</h3>${advCards}</div>
+    <div class="panel mt">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 style="margin:0">Advisor — readiness, advantage &amp; security</h3>
+        <button class="btn sm" onclick="Actions.aiAdvisorReview()">✨ AI review</button>
+      </div>
+      <div id="ai_adv_out"></div>
+      ${advCards}</div>
     <div class="panel mt"><h3 style="margin:0 0 4px">Connection blueprint</h3>
       <p class="muted" style="font-size:12px">Each row is the live route for a service. "Test webhook" fires a signed sample at that provider's own callback URL (nothing settles — a sentinel reference is used) to prove the callback + signature work.</p>
       <div class="tbl-wrap"><table>
@@ -4942,6 +4951,33 @@ const Actions = {
         ${r.insecure ? '<p class="msg err" style="font-size:12px">This callback has no authentication — add HMAC/Basic/IP in Provider Connections.</p>' : ''}
         <div class="foot"><button class="btn" onclick="UI.closeModal()">Close</button></div>`);
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+
+  // Ask the configured AI model to turn the advisor findings into a
+  // prioritized plain-language review (Do first / Grow / Secure & comply).
+  async aiAdvisorReview() {
+    const out = $('ai_adv_out'); if (!out) return;
+    const findings = Actions._advFindings || [];
+    if (!findings.length) { out.innerHTML = '<p class="muted">Nothing to review.</p>'; return; }
+    out.innerHTML = '<div class="box" style="background:#eef2ff;border-radius:10px;padding:12px 14px;margin-bottom:10px">✨ Asking AI to review your setup…</div>';
+    try {
+      const r = await Api.post('/admin/advisor/ai-review', { findings });
+      if (!r.ai) {
+        out.innerHTML = `<div class="msg" style="background:#fef7e0;color:#8a5a00">${esc(r.message || 'AI not configured.')} <a href="#/aistudio">Open AI Studio →</a></div>`;
+        return;
+      }
+      // Render the narrative: basic markdown-ish (bullets, bold, line breaks).
+      const html = esc(r.narrative)
+        .replace(/^\s*[-*]\s+(.*)$/gm, '• $1')
+        .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+        .replace(/\n/g, '<br>');
+      out.innerHTML = `<div class="box" style="border:1px solid var(--line,#e5e9f2);border-left:3px solid #7a3cf0;border-radius:10px;padding:12px 16px;margin-bottom:10px">
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px"><b>✨ AI review</b>
+          <button class="btn sm ghost" onclick="Actions.aiAdvisorReview()">Regenerate</button></div>
+        <div style="font-size:13px;line-height:1.55">${html}</div></div>`;
+    } catch (err) {
+      out.innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+    }
   },
 
   // ---- AML blocklist -----------------------------------------------------
