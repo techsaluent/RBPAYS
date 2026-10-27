@@ -35,6 +35,8 @@ import * as bank from '../bank/bank.service';
 import { listErrors, getError, setErrorStatus, diagnoseError } from '../telemetry/error.service';
 import { escalateError } from '../telemetry/escalate.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
+import { trialBalance, walletReconciliation } from '../recon/ledgerReport.service';
+import { statementHtml } from '../reports/reports.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
 import { adminResetPassword } from '../auth/auth.service';
@@ -1521,6 +1523,103 @@ router.get(
       [req.params.id],
     );
     res.json({ batch: batch.rows[0], records: records.rows });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Ledger integrity: trial balance + journal↔wallet reconciliation.
+// These prove the double-entry books balance and that the fast wallet
+// tables agree with the journal. JSON for the console; HTML/XLSX export.
+// ---------------------------------------------------------------------
+const trialBalSchema = z.object({
+  as_of: z.string().trim().optional(), // YYYY-MM-DD; end-of-day cut-off
+  format: z.enum(['json', 'html', 'xlsx']).default('json'),
+});
+router.get(
+  '/ledger/trial-balance',
+  validate(trialBalSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof trialBalSchema>;
+    const tb = await trialBalance(q.as_of);
+    const r = (p: number) => paiseToRupees(String(p));
+    if (q.format === 'xlsx') {
+      sendXlsx(
+        res,
+        `trial_balance_${q.as_of || 'now'}.xlsx`,
+        ['Account', 'Code', 'Type', 'Normal', 'Debit (₹)', 'Credit (₹)', 'Balance (₹)'],
+        tb.rows.map((x) => [x.name, x.code, x.type, x.normal_balance, Number(r(x.debit_paise)), Number(r(x.credit_paise)), Number(r(x.balance_paise))]),
+        'Trial balance',
+      );
+      return;
+    }
+    if (q.format === 'html') {
+      res.type('html').send(
+        statementHtml({
+          title: 'Trial balance',
+          subtitle: q.as_of ? `As of ${q.as_of}` : 'All time',
+          meta: [
+            ['Total debit', '₹' + r(tb.total_debit_paise)],
+            ['Total credit', '₹' + r(tb.total_credit_paise)],
+            ['Status', tb.balanced ? 'BALANCED ✓' : `OUT BY ₹${r(Math.abs(tb.difference_paise))} ✗`],
+          ],
+          columns: [
+            { label: 'Account' }, { label: 'Type' }, { label: 'Normal' },
+            { label: 'Debit', align: 'right' }, { label: 'Credit', align: 'right' }, { label: 'Balance', align: 'right' },
+          ],
+          rows: tb.rows.map((x) => [
+            x.name, x.type, x.normal_balance,
+            '₹' + r(x.debit_paise), '₹' + r(x.credit_paise), '₹' + r(x.balance_paise),
+          ]),
+          totals: ['Total', '', '', '₹' + r(tb.total_debit_paise), '₹' + r(tb.total_credit_paise), tb.balanced ? '✓' : '✗'],
+        }),
+      );
+      return;
+    }
+    res.json(tb);
+  }),
+);
+
+router.get(
+  '/ledger/wallet-recon',
+  validate(z.object({ format: z.enum(['json', 'html', 'xlsx']).default('json') }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { format: 'json' | 'html' | 'xlsx' };
+    const rec = await walletReconciliation();
+    const r = (p: number) => paiseToRupees(String(p));
+    if (q.format === 'xlsx') {
+      sendXlsx(
+        res,
+        'wallet_reconciliation.xlsx',
+        ['Member', 'User ID', 'Account', 'Ledger (₹)', 'Wallet (₹)', 'Drift (₹)'],
+        rec.drift_rows.map((x) => [x.full_name || '', x.user_id, x.account, Number(r(x.ledger_paise)), Number(r(x.balance_paise)), Number(r(x.drift_paise))]),
+        'Wallet drift',
+      );
+      return;
+    }
+    if (q.format === 'html') {
+      res.type('html').send(
+        statementHtml({
+          title: 'Wallet reconciliation',
+          subtitle: 'Journal balances vs live wallet tables',
+          meta: [
+            ['Accounts checked', String(rec.checked)],
+            ['Reconciled', String(rec.reconciled)],
+            ['Drifted', String(rec.drifted)],
+            ['Total drift', '₹' + r(rec.total_drift_paise)],
+          ],
+          columns: [
+            { label: 'Member' }, { label: 'Account' },
+            { label: 'Ledger', align: 'right' }, { label: 'Wallet', align: 'right' }, { label: 'Drift', align: 'right' },
+          ],
+          rows: rec.drift_rows.map((x) => [
+            x.full_name || x.user_id, x.account,
+            '₹' + r(x.ledger_paise), '₹' + r(x.balance_paise), '₹' + r(x.drift_paise),
+          ]),
+        }),
+      );
+      return;
+    }
+    res.json(rec);
   }),
 );
 

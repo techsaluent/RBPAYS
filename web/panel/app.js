@@ -1580,7 +1580,39 @@ const Screens = {
         <div id="stale_out" class="muted mt">Preview to see how many pendings are stale.</div></div>
       <div class="panel mt"><h2>Recent batches</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Label</th><th>Records</th><th class="right">Matched</th><th class="right">Force-settled</th><th class="right">Exceptions</th><th>When</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan=6 class=muted>No batches yet</td></tr>'}</tbody></table></div></div>`;
+        <tbody>${rows || '<tr><td colspan=6 class=muted>No batches yet</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div><h2 style="margin:0">Ledger integrity</h2><p class="muted" style="margin:2px 0 0">Trial balance + journal↔wallet reconciliation from the double-entry books.</p></div>
+          <div class="row" style="gap:8px">
+            <button class="btn sm ghost" onclick="Actions.openDoc('/admin/ledger/trial-balance?format=html')">🧾 Trial balance</button>
+            <button class="btn sm ghost" onclick="Actions.dl('/admin/ledger/trial-balance?format=xlsx','trial_balance.xlsx')">⬇ Excel</button>
+            <button class="btn sm ghost" onclick="Actions.openDoc('/admin/ledger/wallet-recon?format=html')">🧾 Wallet recon</button>
+            <button class="btn sm ghost" onclick="Actions.dl('/admin/ledger/wallet-recon?format=xlsx','wallet_reconciliation.xlsx')">⬇ Excel</button>
+          </div></div>
+        <div id="ledger_out" class="muted mt">Loading ledger status…</div></div>`;
+    Actions._loadLedgerStatus();
+  },
+  // Live trial-balance + wallet-drift headline for the recon screen.
+  async _loadLedgerStatus() {
+    const out = $('ledger_out'); if (!out) return;
+    try {
+      const [tb, rec] = await Promise.all([
+        Api.get('/admin/ledger/trial-balance'),
+        Api.get('/admin/ledger/wallet-recon'),
+      ]);
+      const ok = (v) => `<span style="color:#16a34a;font-weight:700">${v}</span>`;
+      const bad = (v) => `<span style="color:#dc2626;font-weight:700">${v}</span>`;
+      out.innerHTML = `<div class="row" style="gap:18px;flex-wrap:wrap">
+        <div>Books: ${tb.balanced ? ok('BALANCED ✓') : bad('OUT BY ₹' + money(Math.abs(tb.difference_paise) / 100))}
+          <span class="muted">· Σdebit ₹${money(tb.total_debit_paise / 100)} = Σcredit ₹${money(tb.total_credit_paise / 100)}</span></div>
+        <div>Wallets: ${rec.drifted === 0 ? ok(rec.reconciled + ' reconciled ✓') : bad(rec.drifted + ' drifted (₹' + money(rec.total_drift_paise / 100) + ')')}
+          <span class="muted">· ${rec.checked} accounts checked</span></div>
+      </div>${rec.drifted ? `<div class="mt tbl-wrap"><table>
+        <thead><tr><th>Member</th><th>Account</th><th class="right">Ledger</th><th class="right">Wallet</th><th class="right">Drift</th></tr></thead>
+        <tbody>${rec.drift_rows.map(x => `<tr><td>${esc(x.full_name || x.user_id)}</td><td>${esc(x.account)}</td>
+          <td class="right">${money(x.ledger_paise / 100)}</td><td class="right">${money(x.balance_paise / 100)}</td>
+          <td class="right" style="color:#dc2626">${money(x.drift_paise / 100)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+    } catch (err) { out.innerHTML = `<span class="msg err">${esc(err.message)}</span>`; }
   },
 
   // Admin: batch payout engine.
