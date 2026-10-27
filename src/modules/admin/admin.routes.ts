@@ -2983,6 +2983,27 @@ router.post(
   }),
 );
 
+// Master-wallet balance held with this provider (uniform across drivers).
+router.get(
+  '/provider-connections/:id/balance',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rows } = await query<{ driver: string; base_url: string | null; api_key: string | null; api_secret: string | null; auth_token: string | null; extra: Record<string, unknown> | null }>(
+      `SELECT driver, base_url, api_key, api_secret, auth_token, extra
+         FROM service_providers WHERE connection_id = $1 ORDER BY created_at LIMIT 1`,
+      [req.params.id],
+    );
+    if (!rows[0]) throw ApiError.notFound('Connection not found');
+    const { fetchProviderBalance } = await import('../../providers/balance');
+    const r = await fetchProviderBalance(rows[0]);
+    res.json({
+      supported: r.supported,
+      balance: r.balance_paise != null ? paiseToRupees(String(r.balance_paise)) : null,
+      balance_paise: r.balance_paise ?? null,
+      message: r.message,
+    });
+  }),
+);
+
 router.delete(
   '/provider-connections/:id',
   asyncHandler(async (req: Request, res: Response) => {

@@ -2777,7 +2777,9 @@ const Screens = {
           <div>${anyActive ? '<span class="tag active">active</span>' : '<span class="tag blocked">paused</span>'}</div>
         </div>
         <div style="margin:10px 0">${chips || '<span class="muted">no services</span>'}</div>
+        <div class="muted" style="font-size:12px;margin-bottom:8px">Master balance: <span id="pcbal_${c.connection_id}">—</span></div>
         <div>
+          <button class="btn sm ghost" onclick="Actions.connBalance('${c.connection_id}')">↻ Balance</button>
           <button class="btn sm ghost" onclick="Actions.testConnection('${c.connection_id}')">Test</button>
           <button class="btn sm" onclick="Actions.editConnection('${c.connection_id}')">Edit</button>
           ${anyActive
@@ -5372,6 +5374,13 @@ const Actions = {
   async saveConnection(id) {
     const codes = (Actions._pcServices || []).map(s => s.code).filter(code => { const el = $('pc_svc_' + code); return el && el.checked; });
     if (!codes.length) { UI.toast('Pick at least one service', 'err'); return; }
+    // New live connection must carry credentials (edit keeps existing if blank).
+    const driver = $('pc_driver') ? $('pc_driver').value : '';
+    if (!id && driver !== 'sandbox') {
+      if (!val('pc_api_key')) { UI.toast('Enter the API key / Client ID', 'err'); return; }
+      if ($('pc_api_secret') && !val('pc_api_secret')) { UI.toast('Enter the API secret / Client Secret', 'err'); return; }
+      if (driver === 'eko' && $('pc_partner_id') && !val('pc_partner_id')) { UI.toast('Enter the Initiator ID', 'err'); return; }
+    }
     let extra = {};
     try { const t = $('pc_extra').value.trim(); extra = t ? JSON.parse(t) : {}; } catch (e) { UI.toast('Extra config must be valid JSON', 'err'); return; }
     // Merge the friendly webhook-auth fields into extra.
@@ -5451,6 +5460,8 @@ const Actions = {
       <input type="hidden" id="pc_auth_token" value="">
       ${D.partner ? '' : '<input type="hidden" id="pc_partner_id" value="">'}
       <p class="muted" style="font-size:12px;margin:0 0 8px">${D.note}</p>
+      ${dv === 'sandbox' ? '<p class="msg" style="background:#e6f4ea;color:#137333;font-size:12px;padding:8px 10px;border-radius:8px">Nothing to add — just Save.</p>'
+        : `<p class="msg" style="background:#eef2ff;font-size:12px;padding:8px 10px;border-radius:8px">✍️ You only need to add: <b>${esc(D.keyLabel)}</b> + <b>${esc(D.secretLabel)}</b>${D.partner ? ` + <b>${esc(D.partnerLabel)}</b>` : ''}. Everything else is filled for you.</p>`}
       ${creds}
       ${D.partner ? `<div class="field"><label>${esc(D.partnerLabel)}</label><input id="pc_partner_id" placeholder="from your ${esc(D.label)} console"></div>` : ''}
       <details style="margin:6px 0"><summary class="muted" style="font-size:12px;cursor:pointer">Services — ${D.services.length} preselected (tap to change)</summary>
@@ -5475,6 +5486,15 @@ const Actions = {
       <div class="field"><label><input type="checkbox" id="pc_activate" checked> Make it live for the selected services</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveConnection('')">Save connection</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`;
+  },
+  // Fetch the master-wallet balance held with this provider.
+  async connBalance(id) {
+    const el = $('pcbal_' + id); if (el) el.textContent = 'checking…';
+    try {
+      const r = await Api.get('/admin/provider-connections/' + id + '/balance');
+      if (r.balance_paise != null) { if (el) el.innerHTML = `<b>${money(r.balance_paise / 100)}</b>`; }
+      else if (el) { el.innerHTML = '<span class="muted">not available</span>'; if (r.message) UI.toast(r.message, r.supported ? 'ok' : 'err'); }
+    } catch (err) { if (el) el.textContent = 'error'; UI.toast(err.message, 'err'); }
   },
   async testConnection(id) {
     UI.modal(`<h3>Testing connection…</h3><p class="muted">Connectivity check (no live transaction)…</p>`);
