@@ -308,7 +308,7 @@ const NAV = [
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providerconnections', label: '🔌 Provider Connections', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'catalog', label: 'Operator & Biller Catalog', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
-  { key: 'integrations', label: 'Integrations', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
+  { key: 'integrations', label: 'API Hub', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'webhooks', label: 'Webhook Log', roles: ['admin', 'staff'], perm: 'integrations.manage', section: 'API & Providers' },
   { key: 'aistudio', label: '🤖 AI Integration Studio', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'apiwizard', label: '➕ Add API (wizard)', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
@@ -2295,20 +2295,43 @@ const Screens = {
         <tbody>${rows || '<tr><td colspan=6 class=muted>No services yet — add one.</td></tr>'}</tbody></table></div></div>`;
   },
 
-  // Admin: platform integrations (SMS / email / OTP / Aadhaar / PAN / penny-drop).
+  // Admin: API Hub — one place to plug in every non-transaction API
+  // (OTP / SMS / WhatsApp / Email + identity & verification), grouped by
+  // category, each with provider presets that pre-fill endpoint + field map.
   async integrations() {
     const d = await Api.get('/admin/integrations');
-    const rows = d.items.map(i => `<tr>
-      <td>${esc(i.label)}</td><td class="muted">${esc(i.category)}</td><td>${esc(i.provider||'')}</td>
-      <td>${i.has_key ? '🔑' : '<span class="muted">no key</span>'}</td>
+    Actions._intCache = {};
+    (d.items || []).forEach(i => { Actions._intCache[i.key] = i; });
+    const CATS = [
+      { id: 'messaging',    title: '📣 Messaging & OTP', note: 'Delivers login/signup OTP, alerts and receipts. <b>Email OTP at login is mandatory</b> — the <b>Email</b> slot must be active or members cannot sign in. OTP SMS falls back to the <b>SMS</b> slot when the dedicated <b>OTP</b> slot is off.' },
+      { id: 'identity',     title: '🪪 Identity (KYC)', note: 'Aadhaar e-KYC and PAN verification used during member onboarding.' },
+      { id: 'verification', title: '🔎 Verification & Screening', note: 'Bank name-match (penny-drop), IFSC / PIN / UPI / GST lookups, negative-list and vehicle checks. <b>IFSC and PIN-code are free &amp; keyless</b> — pick the free preset and mark Active.' },
+      { id: 'other',        title: '🧩 Other APIs', note: 'Anything else you plug in.' },
+    ];
+    const canTest = (k) => ['sms','otp','whatsapp','email'].includes(k);
+    const card = (i) => `<tr>
+      <td><b>${esc(i.label)}</b><div class="muted" style="font-size:11px">key: <code>${esc(i.key)}</code></div></td>
+      <td>${i.provider ? esc(i.provider) : '<span class="muted">—</span>'}</td>
+      <td>${i.has_key ? '🔑 set' : '<span class="muted">no key</span>'}</td>
       <td>${i.is_active ? '<span class="tag active">active</span>' : '<span class="tag blocked">off</span>'}</td>
-      <td><button class="btn sm" onclick="Actions.editIntegration('${i.key}','${esc(i.label)}','${esc(i.provider||'')}','${esc(i.base_url||'')}','${esc(i.sender_id||'')}',${i.is_active})">Configure</button>
-        ${['sms','otp','whatsapp','email'].includes(i.key) ? `<button class="btn sm ghost" onclick="Actions.testIntegration('${i.key}')">Send test</button>` : ''}</td></tr>`).join('');
-    $('view').innerHTML = `<div class="panel"><h2>Platform integrations</h2>
-      <p class="muted">Paste API keys for messaging &amp; identity services. Keys are write-only (shown masked). Mark active to enable.</p>
-      <div class="tbl-wrap"><table>
-      <thead><tr><th>Service</th><th>Category</th><th>Provider</th><th>Key</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows}</tbody></table></div></div>`;
+      <td><button class="btn sm" onclick="Actions.editIntegration('${i.key}')">Configure</button>
+        ${canTest(i.key) ? `<button class="btn sm ghost" onclick="Actions.testIntegration('${i.key}')">Send test</button>` : ''}</td></tr>`;
+    const sections = CATS.map(c => {
+      const items = (d.items || []).filter(i => (i.category || 'other') === c.id);
+      if (!items.length) return '';
+      return `<div class="panel mt"><h3 style="margin:0 0 4px">${c.title}</h3>
+        <p class="muted" style="font-size:12px;margin:0 0 10px">${c.note}</p>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Service</th><th>Provider</th><th>Key</th><th>Status</th><th></th></tr></thead>
+          <tbody>${items.map(card).join('')}</tbody></table></div></div>`;
+    }).join('');
+    const active = (d.items || []).filter(i => i.is_active).length;
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">API Hub</h2>
+        <button class="btn sm" onclick="Actions.editIntegration('')">+ Add API</button></div>
+      <p class="muted">Plug external services in here — pick a provider preset to auto-fill the endpoint and field map, paste your keys, mark <b>Active</b>. Keys are write-only (stored masked, never shown back). ${active} of ${(d.items||[]).length} active.</p>
+      <p class="muted" style="font-size:12px">Transaction rails — recharge, BBPS, DMT, AePS, payout, <b>travel / ticket booking</b>, <b>insurance</b>, loans, credit-card — are configured per service under <a href="#/providerconnections">Provider Connections</a> (one credential set drives many services). This hub holds OTP/messaging, KYC and verification APIs.</p>
+      </div>${sections}`;
   },
 
   // Admin: AI Integration Studio — draft a config-driven provider from docs,
@@ -3045,25 +3068,120 @@ const Actions = {
     try { await Api.put('/tax/profile', body); UI.toast('Saved — admin will verify your PAN'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
-  editIntegration(key, label, provider, baseUrl, senderId, isActive) {
-    const isEmail = key === 'email';
-    const smtpHint = isEmail
-      ? `<p class="muted" style="font-size:12px;margin:-4px 0 8px">For a <b>generic SMTP server</b>: set Provider = <code>smtp</code>, Base URL = the SMTP host (e.g. <code>smtp.gmail.com</code>), API key = SMTP username, API secret = SMTP password, Sender/From = the e-mail address. Put the port &amp; TLS in Advanced config, e.g. <code>{"smtp_port":587,"smtp_secure":false}</code> (use 465 + <code>true</code> for SSL).</p>`
-      : '';
-    const extraHint = key === 'whatsapp'
-      ? 'WhatsApp template params, e.g. {"template":"otp_v1","namespace":"…"}'
-      : key === 'sms' ? 'Extra body fields the gateway needs, e.g. {"route":"4","template_id":"…"}'
-      : isEmail ? '{"smtp_port":587,"smtp_secure":false}'
-      : 'Extra JSON merged into each request';
-    UI.modal(`<h3>Configure — ${esc(label)}</h3>
-      <div class="field"><label>Provider</label><input id="ig_prov" value="${esc(provider)}" placeholder="MSG91 / smtp / Protean"></div>
-      ${smtpHint}
-      <div class="field"><label>Base URL${isEmail ? ' / SMTP host' : ''}</label><input id="ig_url" value="${esc(baseUrl)}"></div>
-      <div class="field"><label>API key${isEmail ? ' / SMTP username' : ''}</label><input id="ig_key" placeholder="(leave blank to keep)"></div>
-      <div class="field"><label>API secret${isEmail ? ' / SMTP password' : ''}</label><input id="ig_secret" placeholder="(leave blank to keep)"></div>
-      <div class="field"><label>Sender ID / From</label><input id="ig_sender" value="${esc(senderId)}"></div>
-      <div class="field"><label>Advanced config (JSON, optional)</label><input id="ig_extra" placeholder='${esc(extraHint)}'></div>
-      <div class="field"><label><input type="checkbox" id="ig_active" ${isActive ? 'checked' : ''}> Active</label></div>
+  // Provider presets per integration slot — pick one to auto-fill the endpoint,
+  // sender and the extra-config template, plus a field-mapping hint. Keys are
+  // always pasted by hand (never pre-filled). 'generic' = type it all yourself.
+  _intPresets(key) {
+    const G = { id: 'generic', label: 'Generic / other', provider: '', base: '', sender: '', extra: '', hint: 'Set Base URL + keys from your provider; map any extra body fields in Advanced config.' };
+    const SMS = [
+      { id: 'msg91', label: 'MSG91', provider: 'MSG91', base: 'https://control.msg91.com/api/v5', sender: 'TUTIPY', extra: '{"route":"4","template_id":"","DLT_TE_ID":""}', hint: 'MSG91 — API key = authkey. Sender ID = your 6-char DLT header. Put template_id/DLT in Advanced config.' },
+      { id: 'fast2sms', label: 'Fast2SMS', provider: 'Fast2SMS', base: 'https://www.fast2sms.com/dev', sender: 'TUTIPY', extra: '{"route":"dlt","sender_id":"","message_id":""}', hint: 'Fast2SMS — API key = authorization key. For DLT put sender_id + message_id (template) in Advanced config.' },
+      { id: 'gupshup', label: 'Gupshup SMS', provider: 'Gupshup', base: 'https://enterprise.smsgupshup.com/GatewayAPI/rest', sender: 'TUTIPY', extra: '{"method":"SendMessage","msg_type":"TEXT"}', hint: 'Gupshup — API key = userid:password or app token. Sender = masking/DLT header.' },
+      { id: 'textlocal', label: 'Textlocal', provider: 'Textlocal', base: 'https://api.textlocal.in', sender: 'TXTLCL', extra: '{}', hint: 'Textlocal — API key = apikey. Sender = approved header.' },
+      { id: 'twilio', label: 'Twilio', provider: 'Twilio', base: 'https://api.twilio.com/2010-04-01', sender: '+1XXXXXXXXXX', extra: '{"messaging_service_sid":""}', hint: 'Twilio — API key = Account SID, API secret = Auth Token. Sender = your Twilio number or messaging_service_sid.' },
+      { id: 'kaleyra', label: 'Kaleyra', provider: 'Kaleyra', base: 'https://api.kaleyra.io/v1', sender: 'TUTIPY', extra: '{"template_id":""}', hint: 'Kaleyra — API key = api-key, Base = your region host. Sender = DLT header.' },
+      G,
+    ];
+    const WA = [
+      { id: 'meta', label: 'Meta WhatsApp Cloud API', provider: 'Meta Cloud', base: 'https://graph.facebook.com/v20.0', sender: '', extra: '{"phone_number_id":"","template":"otp_v1","lang":"en"}', hint: 'Meta Cloud — API key = permanent access token. Put phone_number_id + template name in Advanced config. Sender left blank.' },
+      { id: 'wati', label: 'WATI', provider: 'WATI', base: 'https://live-server.wati.io', sender: '', extra: '{"template":"otp_v1","broadcast":""}', hint: 'WATI — API key = access token, Base = your tenant server URL. Template name in Advanced config.' },
+      { id: 'gupshup_wa', label: 'Gupshup WhatsApp', provider: 'Gupshup', base: 'https://api.gupshup.io/wa/api/v1', sender: '', extra: '{"src_name":"","template_id":""}', hint: 'Gupshup WA — API key = apikey, Sender = source number / app name in Advanced config.' },
+      { id: 'interakt', label: 'Interakt', provider: 'Interakt', base: 'https://api.interakt.ai/v1/public', sender: '', extra: '{"template":"otp_v1"}', hint: 'Interakt — API key = base64 secret. Template name in Advanced config.' },
+      G,
+    ];
+    const EMAIL = [
+      { id: 'smtp', label: 'Generic SMTP (Gmail, Zoho, cPanel…)', provider: 'smtp', base: 'smtp.gmail.com', sender: 'no-reply@yourbrand.com', extra: '{"smtp_port":587,"smtp_secure":false}', hint: 'SMTP — Base URL = host, API key = username, API secret = password, Sender = From address. Port/TLS in Advanced (465 + secure:true for SSL).' },
+      { id: 'sendgrid', label: 'SendGrid', provider: 'SendGrid', base: 'https://api.sendgrid.com/v3', sender: 'no-reply@yourbrand.com', extra: '{}', hint: 'SendGrid — API key = API key, Sender = verified From address.' },
+      { id: 'mailgun', label: 'Mailgun', provider: 'Mailgun', base: 'https://api.mailgun.net/v3', sender: 'no-reply@yourbrand.com', extra: '{"domain":"mg.yourbrand.com"}', hint: 'Mailgun — API key = private key, domain in Advanced config, Sender = From.' },
+      { id: 'ses', label: 'Amazon SES', provider: 'smtp', base: 'email-smtp.ap-south-1.amazonaws.com', sender: 'no-reply@yourbrand.com', extra: '{"smtp_port":587,"smtp_secure":false}', hint: 'SES (SMTP mode) — Base = regional SMTP host, API key = SMTP username, API secret = SMTP password.' },
+      { id: 'brevo', label: 'Brevo (Sendinblue)', provider: 'Brevo', base: 'https://api.brevo.com/v3', sender: 'no-reply@yourbrand.com', extra: '{}', hint: 'Brevo — API key = api-key, Sender = verified From address.' },
+      G,
+    ];
+    const KYC_AADHAAR = [
+      { id: 'signzy', label: 'Signzy', provider: 'Signzy', base: 'https://api.signzy.app/api/v3', sender: '', extra: '{}', hint: 'Signzy — API key = access token / username, API secret = password. Endpoints from your Signzy dashboard.' },
+      { id: 'protean', label: 'Protean (NSDL) eKYC', provider: 'Protean', base: 'https://api.protean.in', sender: '', extra: '{"sub_aua":"","license_key":""}', hint: 'Protean — API key + secret from AUA/KUA onboarding; sub_aua + license_key in Advanced config.' },
+      { id: 'karza', label: 'Karza / Perfios', provider: 'Karza', base: 'https://api.karza.in/v3', sender: '', extra: '{}', hint: 'Karza — API key = x-karza-key header.' },
+      { id: 'cashfree_v', label: 'Cashfree Verification', provider: 'Cashfree', base: 'https://api.cashfree.com/verification', sender: '', extra: '{}', hint: 'Cashfree — API key = x-client-id, API secret = x-client-secret.' },
+      G,
+    ];
+    const KYC_PAN = [
+      { id: 'protean_pan', label: 'Protean (NSDL) PAN', provider: 'Protean', base: 'https://api.protean.in/pan', sender: '', extra: '{}', hint: 'Protean PAN — API key + secret from NSDL/Protean. Endpoint per your agreement.' },
+      { id: 'signzy_pan', label: 'Signzy PAN', provider: 'Signzy', base: 'https://api.signzy.app/api/v3', sender: '', extra: '{}', hint: 'Signzy — API key / secret from dashboard.' },
+      { id: 'karza_pan', label: 'Karza PAN', provider: 'Karza', base: 'https://api.karza.in/v3', sender: '', extra: '{}', hint: 'Karza — API key = x-karza-key header.' },
+      G,
+    ];
+    const PENNY = [
+      { id: 'cashfree_pd', label: 'Cashfree Penny-drop', provider: 'Cashfree', base: 'https://api.cashfree.com/verification/bank-account', sender: '', extra: '{}', hint: 'Cashfree — API key = x-client-id, secret = x-client-secret. Returns name at bank.' },
+      { id: 'razorpayx', label: 'RazorpayX Validate', provider: 'RazorpayX', base: 'https://api.razorpay.com/v1', sender: '', extra: '{}', hint: 'RazorpayX — API key = key_id, secret = key_secret (fund-account validation).' },
+      { id: 'signzy_pd', label: 'Signzy Penny-drop', provider: 'Signzy', base: 'https://api.signzy.app/api/v3', sender: '', extra: '{}', hint: 'Signzy — API key / secret from dashboard.' },
+      G,
+    ];
+    const VAHAN = [
+      { id: 'surepass', label: 'Surepass', provider: 'Surepass', base: 'https://kyc-api.surepass.io/api/v1', sender: '', extra: '{}', hint: 'Surepass — API key = Bearer token.' },
+      { id: 'signzy_v', label: 'Signzy RC', provider: 'Signzy', base: 'https://api.signzy.app/api/v3', sender: '', extra: '{}', hint: 'Signzy — API key / secret from dashboard.' },
+      G,
+    ];
+    const IFSC = [
+      { id: 'razorpay_ifsc', label: 'Razorpay IFSC — FREE, no key', provider: 'Razorpay IFSC (free)', base: 'https://ifsc.razorpay.com', sender: '', extra: '{}', hint: '✅ FREE &amp; keyless. GET /{IFSC} returns bank + branch. Leave API key/secret blank and mark Active.' },
+      { id: 'razorpayx_ifsc', label: 'RazorpayX (with name)', provider: 'RazorpayX', base: 'https://api.razorpay.com/v1', sender: '', extra: '{}', hint: 'RazorpayX — API key = key_id, secret = key_secret (richer branch data).' },
+      G,
+    ];
+    const PIN = [
+      { id: 'india_post', label: 'India Post — FREE, no key', provider: 'India Post (free)', base: 'https://api.postalpincode.in', sender: '', extra: '{}', hint: '✅ FREE &amp; keyless. GET /pincode/{PIN} returns post office, district, state. Leave keys blank and mark Active.' },
+      G,
+    ];
+    const UPI = [
+      { id: 'cashfree_upi', label: 'Cashfree UPI Verify', provider: 'Cashfree', base: 'https://api.cashfree.com/verification/upi', sender: '', extra: '{}', hint: 'Cashfree — API key = x-client-id, secret = x-client-secret. Validates a VPA + returns name.' },
+      { id: 'razorpayx_upi', label: 'RazorpayX VPA Validate', provider: 'RazorpayX', base: 'https://api.razorpay.com/v1', sender: '', extra: '{}', hint: 'RazorpayX — API key = key_id, secret = key_secret.' },
+      { id: 'surepass_upi', label: 'Surepass UPI', provider: 'Surepass', base: 'https://kyc-api.surepass.io/api/v1', sender: '', extra: '{}', hint: 'Surepass — API key = Bearer token.' },
+      G,
+    ];
+    const GST = [
+      { id: 'surepass_gst', label: 'Surepass GST', provider: 'Surepass', base: 'https://kyc-api.surepass.io/api/v1', sender: '', extra: '{}', hint: 'Surepass — API key = Bearer token. GSTIN → legal name, status, filing.' },
+      { id: 'karza_gst', label: 'Karza GST', provider: 'Karza', base: 'https://api.karza.in/v3', sender: '', extra: '{}', hint: 'Karza — API key = x-karza-key header.' },
+      { id: 'signzy_gst', label: 'Signzy GST', provider: 'Signzy', base: 'https://api.signzy.app/api/v3', sender: '', extra: '{}', hint: 'Signzy — API key / secret from dashboard.' },
+      G,
+    ];
+    const MAP = {
+      otp: SMS, sms: SMS, whatsapp: WA, email: EMAIL,
+      aadhaar_kyc: KYC_AADHAAR, pan_nsdl: KYC_PAN,
+      penny_drop: PENNY, vahan: VAHAN,
+      ifsc_lookup: IFSC, pincode: PIN, upi_verify: UPI, gst_verify: GST,
+    };
+    return MAP[key] || [G];
+  },
+  intApplyPreset(key) {
+    const p = (Actions._intPresets(key) || []).find(x => x.id === ($('ig_preset') && $('ig_preset').value));
+    if (!p) return;
+    if ($('ig_prov')) $('ig_prov').value = p.provider || '';
+    if ($('ig_url')) $('ig_url').value = p.base || '';
+    if ($('ig_sender')) $('ig_sender').value = p.sender || '';
+    if ($('ig_extra')) $('ig_extra').value = p.extra || '';
+    if ($('ig_hint')) $('ig_hint').innerHTML = esc(p.hint || '');
+  },
+  editIntegration(key) {
+    const cur = (Actions._intCache && Actions._intCache[key]) || {};
+    const isNew = !key;
+    const label = cur.label || '';
+    const presets = Actions._intPresets(key);
+    const popt = `<option value="">— pick a provider to auto-fill —</option>` +
+      presets.map(p => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+    const emailLbl = key === 'email';
+    UI.modal(`<h3>${isNew ? 'Add API' : 'Configure — ' + esc(label)}</h3>
+      ${isNew ? `<div class="row"><div class="field"><label>Key (lowercase, no spaces)</label><input id="ig_newkey" placeholder="e.g. otp2 / esign / credit_bureau"></div>
+        <div class="field"><label>Display name</label><input id="ig_newlabel" placeholder="e.g. Backup OTP gateway"></div></div>
+        <div class="field"><label>Category</label><select id="ig_newcat">
+          <option value="messaging">Messaging & OTP</option><option value="identity">Identity (KYC)</option>
+          <option value="verification">Verification</option><option value="other" selected>Other</option></select></div>` : ''}
+      <div class="field"><label>Provider preset</label><select id="ig_preset" onchange="Actions.intApplyPreset('${key}')">${popt}</select></div>
+      <p class="muted" id="ig_hint" style="font-size:12px;margin:-4px 0 8px">${esc((presets[0] && presets[0].hint) || '')}</p>
+      <div class="field"><label>Provider</label><input id="ig_prov" value="${esc(cur.provider || '')}" placeholder="MSG91 / smtp / Protean"></div>
+      <div class="field"><label>Base URL${emailLbl ? ' / SMTP host' : ''}</label><input id="ig_url" value="${esc(cur.base_url || '')}"></div>
+      <div class="field"><label>API key${emailLbl ? ' / SMTP username' : ''} ${cur.has_key ? '<span class="tag active">set</span>' : ''}</label><input id="ig_key" type="password" placeholder="${cur.has_key ? '•••••• (leave blank to keep)' : '(paste key)'}"></div>
+      <div class="field"><label>API secret${emailLbl ? ' / SMTP password' : ''} ${cur.has_secret ? '<span class="tag active">set</span>' : ''}</label><input id="ig_secret" type="password" placeholder="${cur.has_secret ? '•••••• (leave blank to keep)' : '(paste secret, if any)'}"></div>
+      <div class="field"><label>Sender ID / From</label><input id="ig_sender" value="${esc(cur.sender_id || '')}"></div>
+      <div class="field"><label>Advanced config (JSON, optional)</label><input id="ig_extra" placeholder='Extra JSON merged into each request'></div>
+      <div class="field"><label><input type="checkbox" id="ig_active" ${cur.is_active ? 'checked' : ''}> Active</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveIntegration('${key}')">Save</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
   },
@@ -3707,7 +3825,15 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async saveIntegration(key) {
+    // Adding a brand-new API slot: read the key/label/category fields.
+    if (!key) {
+      const nk = (val('ig_newkey') || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+      if (!nk) return UI.toast('Enter a key (lowercase, no spaces)', 'err');
+      key = nk;
+    }
     const body = { is_active: $('ig_active').checked };
+    if ($('ig_newlabel') && val('ig_newlabel')) body.label = val('ig_newlabel');
+    if ($('ig_newcat')) body.category = $('ig_newcat').value;
     if (val('ig_prov')) body.provider = val('ig_prov');
     if (val('ig_url')) body.base_url = val('ig_url');
     if (val('ig_key')) body.api_key = val('ig_key');
