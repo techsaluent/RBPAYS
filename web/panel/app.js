@@ -304,6 +304,7 @@ const NAV = [
   { key: 'batchpayout', label: 'Batch Payouts', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'connectedbanking', label: '🏦 Connected Banking', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
+  { key: 'apiconfig', label: '⚙️ API Configuration', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providerconnections', label: '🔌 Provider Connections', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
@@ -2441,6 +2442,64 @@ const Screens = {
   },
 
   // Admin: manage upstream providers per service (multiple, one active).
+  // Admin: API Configuration — one pane of glass for every service's API.
+  // Transaction rails (from the services catalog + go-live readiness) and the
+  // API Hub (messaging / KYC / verification) in one place, each row linking to
+  // where it is configured. No code, no VPS — all from the panel.
+  async apiconfig() {
+    const [svcs, gl, ints] = await Promise.all([
+      Api.get('/admin/services').catch(() => ({ items: [] })),
+      Api.get('/admin/go-live').catch(() => ({ items: [], live_count: 0, sandbox_count: 0, none_count: 0 })),
+      Api.get('/admin/integrations').catch(() => ({ items: [] })),
+    ]);
+    const glMap = {};
+    (gl.items || []).forEach(i => { glMap[i.service_code] = i; });
+    // Every service in the catalog (so zero-provider services show as "not set").
+    const svcRows = (svcs.items || []).map(s => {
+      const g = glMap[s.code] || { status: 'none_active', active_provider: null, driver: null, total_providers: 0 };
+      const badge = g.status === 'live' ? '<span class="tag active">live</span>'
+        : g.status === 'sandbox' ? '<span class="tag" style="background:#fef7e0;color:#b26a00">sandbox</span>'
+        : '<span class="tag" style="background:#fce8e6;color:#c5221f">not set</span>';
+      return `<tr>
+        <td><b>${esc(s.name || s.code)}</b><div class="muted" style="font-size:11px">${esc(s.code)}</div></td>
+        <td>${g.active_provider ? esc(g.active_provider) : '<span class="muted">—</span>'}${g.driver ? ` <span class="muted" style="font-size:11px">(${esc(g.driver)})</span>` : ''}</td>
+        <td>${g.total_providers || 0}</td>
+        <td>${badge}</td>
+        <td><button class="btn sm" onclick="Actions.gotoProvider('${esc(s.code)}')">Configure</button></td></tr>`;
+    }).join('');
+    // API Hub rows grouped compactly by category.
+    const hubCats = { messaging: '📣 Messaging & OTP', identity: '🪪 Identity (KYC)', verification: '🔎 Verification', other: '🧩 Other' };
+    const hubRows = (ints.items || []).map(i => `<tr>
+        <td><b>${esc(i.label)}</b><div class="muted" style="font-size:11px">${esc(hubCats[i.category] || i.category || '')}</div></td>
+        <td>${i.provider ? esc(i.provider) : '<span class="muted">—</span>'}</td>
+        <td>${i.has_key ? '🔑' : '<span class="muted">no key</span>'}</td>
+        <td>${i.is_active ? '<span class="tag active">active</span>' : '<span class="tag" style="background:#fce8e6;color:#c5221f">off</span>'}</td>
+        <td><button class="btn sm" onclick="location.hash='#/integrations'">Configure</button></td></tr>`).join('');
+    const hubActive = (ints.items || []).filter(i => i.is_active).length;
+    const emailActive = (ints.items || []).some(i => i.key === 'email' && i.is_active);
+    $('view').innerHTML = `<div class="panel">
+      <h2 style="margin:0 0 4px">⚙️ API Configuration</h2>
+      <p class="muted">Every service's API, configured from here — no code, no server access. Transaction rails plug in under <a href="#/providerconnections">Provider Connections</a> (one credential → many services) or per-service <a href="#/providers">Providers</a>; messaging, KYC &amp; verification plug in under the <a href="#/integrations">API Hub</a>.</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap;font-size:12px">
+        <span class="tag active">${gl.live_count || 0} services live</span>
+        <span class="tag" style="background:#fef7e0;color:#b26a00">${gl.sandbox_count || 0} sandbox</span>
+        <span class="tag" style="background:#fce8e6;color:#c5221f">${(svcs.items||[]).length - (gl.live_count||0) - (gl.sandbox_count||0)} not set</span>
+        <span class="tag ${hubActive?'active':''}">${hubActive} hub APIs active</span>
+      </div>
+      ${emailActive ? '' : '<p class="msg err" style="margin-top:12px">⚠️ The <b>Email</b> API is not active. Email OTP at login is mandatory — activate it in the <a href="#/integrations">API Hub</a> or members cannot sign in.</p>'}
+    </div>
+    <div class="panel mt"><h3 style="margin:0 0 8px">Transaction services</h3>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th>Active provider</th><th>Providers</th><th>Status</th><th></th></tr></thead>
+        <tbody>${svcRows || '<tr><td colspan=5 class=muted>No services.</td></tr>'}</tbody></table></div>
+    </div>
+    <div class="panel mt"><h3 style="margin:0 0 8px">API Hub — messaging, KYC &amp; verification</h3>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th>Provider</th><th>Key</th><th>Status</th><th></th></tr></thead>
+        <tbody>${hubRows || '<tr><td colspan=5 class=muted>No hub APIs.</td></tr>'}</tbody></table></div>
+    </div>`;
+  },
+
   // Admin: Provider Connections — one credential set across many services.
   async providerconnections() {
     const [conns, svcs, dir] = await Promise.all([
@@ -4723,6 +4782,8 @@ const Actions = {
   },
   // ----- provider connections (one credential → many services) -----
   // Per-driver field guidance so the form stops showing Eko hints for every driver.
+  // Jump to the per-service Providers screen with that service pre-selected.
+  gotoProvider(code) { Actions._provService = code; location.hash = '#/providers'; if ((location.hash.replace('#/','')) === 'providers') App.route(); },
   _drvHint(driver) {
     const H = {
       eko: { base: 'https://api.eko.in/ekoicici/v3', partner: 'initiator_id', map: 'Eko — API key = developer_key, API secret = access_key, Partner ID = initiator_id, Extra = {"user_code":"…"}.' },
