@@ -119,7 +119,9 @@ async function sendEmailSmtp(cfg: MessagingConfig, to: string, subject: string, 
   }
   const port = Number(cfg.extra?.smtp_port) || 587;
   const secure = cfg.extra?.smtp_secure === true || cfg.extra?.smtp_secure === 'true' || port === 465;
-  const from = cfg.senderId || cfg.apiKey || 'no-reply@localhost';
+  const fromAddr = cfg.senderId || cfg.apiKey || 'no-reply@localhost';
+  const fromName = typeof cfg.extra?.from_name === 'string' ? cfg.extra.from_name.replace(/["<>]/g, '').trim() : '';
+  const from = fromName ? `"${fromName}" <${fromAddr}>` : fromAddr;
   try {
     const transporter = nodemailer.createTransport({
       host,
