@@ -50,6 +50,14 @@ export const env = {
   // CORS
   CORS_ORIGINS: optional('CORS_ORIGINS', '*'),
 
+  // ---- Error auto-fix escalation (optional) ---------------------------
+  // When set, the admin can escalate a production error to a GitHub issue
+  // (labelled) that a Claude Code GitHub workflow turns into a fix PR.
+  // The token is a secret and lives only in the environment, never the DB.
+  GITHUB_AUTOFIX_TOKEN: optional('GITHUB_AUTOFIX_TOKEN', ''),
+  GITHUB_AUTOFIX_REPO: optional('GITHUB_AUTOFIX_REPO', ''), // "owner/name"
+  GITHUB_AUTOFIX_LABEL: optional('GITHUB_AUTOFIX_LABEL', 'autofix'),
+
   // Rate limiting
   RATE_LIMIT_WINDOW_MS: int('RATE_LIMIT_WINDOW_MS', 60_000),
   RATE_LIMIT_MAX: int('RATE_LIMIT_MAX', 120),
