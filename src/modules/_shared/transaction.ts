@@ -4,6 +4,7 @@ import { query, withTransaction } from '../../../db';
 import { debit, WalletSource } from '../wallet/wallet.service';
 import { computeDistribution } from '../commission/commission.service';
 import { assessTransaction, screenTargets as amlScreen, ScreenTarget } from '../risk/risk.service';
+import { enforceTxnLimits } from '../network/policy.service';
 import { settleByReference } from './settle';
 import { makeReference } from '../../utils/reference';
 import { ApiError } from '../../utils/ApiError';
@@ -212,6 +213,9 @@ export async function runServiceTransaction(opts: RunOptions): Promise<RunResult
 
   // 1a-ii) KYC gate (opt-in): block un-verified members when the admin requires it.
   await guardKyc(opts.userId);
+
+  // 1a-iii) Per-member transaction min/max limits (KYC vs non-KYC band).
+  await enforceTxnLimits(opts.userId, opts.amountPaise);
 
   // 1b) Risk / AML pre-check (throws 422 when the action is 'block').
   await assessTransaction({

@@ -575,7 +575,8 @@ const Screens = {
       const members = (dl.items || []).slice(0, 6).map(m => `<div class="mini"><span class="mi">${(m.role||'r')[0].toUpperCase()}</span>
         <div class="mm"><b>${esc(m.full_name || m.username || m.phone || 'Member')}</b><span>${esc((m.role||'').replace(/_/g,' '))} · ${esc(m.phone||m.email||'')}</span></div>
         <div class="ma" style="display:flex;gap:6px;align-items:center"><small>${UI.statusTag(m.status||'active')}</small>
-          <button class="btn sm ghost" onclick="Actions.memberServices('${m.id}','${esc((m.full_name||m.username||'Member').replace(/'/g,"\\'"))}')">Services</button></div>`+`</div>`).join('');
+          <button class="btn sm ghost" onclick="Actions.memberServices('${m.id}','${esc((m.full_name||m.username||'Member').replace(/'/g,"\\'"))}')">Services</button>
+          <button class="btn sm ghost" onclick="Actions.memberPolicy('${m.id}','${esc((m.full_name||m.username||'Member').replace(/'/g,"\\'"))}')">Limits</button></div>`+`</div>`).join('');
       $('view').innerHTML = `
         <div class="stats">
           ${UI.stat('b','👛','Wallet balance', money(wl.balance), `Available <b>${money(avail)}</b>`)}
@@ -736,7 +737,11 @@ const Screens = {
           ${['admin','staff'].includes(u.role) ? '' : `<button class="btn sm ghost" onclick="Actions.myDoc('id-card')">🪪 ID card</button>
           <button class="btn sm ghost" onclick="Actions.myDoc('certificate')">📜 Certificate</button>`}
           <button class="btn sm ghost" onclick="Actions.myDoc('letterhead')">📄 Letterhead</button>
-        </div></div>`}
+        </div></div>
+      ${['admin','staff','user'].includes(u.role) ? '' : `
+      <div class="panel mt" style="max-width:520px"><h2>My limits & payout policy</h2>
+        <p class="muted" style="font-size:12px">Set your per-transaction limits and whether payouts need KYC/OTP.</p>
+        <button class="btn sm" onclick="Actions.memberPolicy('me','My account')">Set limits & policy</button></div>`}`}
       ${companyNote}
       ${['admin','staff'].includes(u.role) ? '' : `
       <div class="panel mt" style="max-width:520px;border:1px solid #f3c2c2">
@@ -3360,6 +3365,37 @@ const Actions = {
   },
   // Open a branded member document (ID card / certificate / letterhead).
   myDoc(kind) { Actions.openDoc('/documents/' + kind); },
+
+  // Transaction limits & payout gates — self ('me') or a direct downline member.
+  async memberPolicy(id, name) {
+    const path = id === 'me' ? '/network/me/policy' : '/network/members/' + id + '/policy';
+    Actions._polPath = path;
+    UI.modal(`<h3>Limits & payout policy — ${esc(name)}</h3><div id="pol_body"><p class="muted">Loading…</p></div>`);
+    try {
+      const d = await Api.get(path);
+      const p = d.policy || {};
+      const r = (v) => v ? (v / 100) : '';
+      $('pol_body').innerHTML = `
+        <p class="muted" style="font-size:12px">Per-transaction limits (0 = no limit). The KYC band applies when verified; the non-KYC band otherwise.</p>
+        <div class="row"><div class="field"><label>Min / txn (KYC) ₹</label><input id="pol_min" inputmode="numeric" value="${r(p.min_txn_paise)}"></div>
+          <div class="field"><label>Max / txn (KYC) ₹</label><input id="pol_max" inputmode="numeric" value="${r(p.max_txn_paise)}"></div></div>
+        <div class="row"><div class="field"><label>Min / txn (non-KYC) ₹</label><input id="pol_minn" inputmode="numeric" value="${r(p.min_txn_nonkyc_paise)}"></div>
+          <div class="field"><label>Max / txn (non-KYC) ₹</label><input id="pol_maxn" inputmode="numeric" value="${r(p.max_txn_nonkyc_paise)}"></div></div>
+        <div class="field"><label><input type="checkbox" id="pol_rkyc" ${p.payout_require_kyc ? 'checked' : ''}> Require KYC for payout</label></div>
+        <div class="field"><label><input type="checkbox" id="pol_rotp" ${p.payout_require_otp ? 'checked' : ''}> Require email OTP for payout</label></div>
+        <div class="foot"><button class="btn" onclick="Actions.saveMemberPolicy()">Save</button>
+          <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`;
+    } catch (err) { const b = $('pol_body'); if (b) b.innerHTML = `<p class="msg err">${esc(err.message)}</p>`; }
+  },
+  async saveMemberPolicy() {
+    const body = {
+      min_txn: +val('pol_min') || 0, max_txn: +val('pol_max') || 0,
+      min_txn_nonkyc: +val('pol_minn') || 0, max_txn_nonkyc: +val('pol_maxn') || 0,
+      payout_require_kyc: $('pol_rkyc').checked, payout_require_otp: $('pol_rotp').checked,
+    };
+    try { await Api.put(Actions._polPath, body); UI.closeModal(); UI.toast('Policy saved'); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
 
   addMember(asAdmin) {
     const roleOpts = (asAdmin ? MEMBER_ROLES : MEMBER_ROLES.filter(r => rank(r) < rank(State.user.role)))

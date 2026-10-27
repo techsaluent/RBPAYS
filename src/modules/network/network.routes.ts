@@ -10,6 +10,7 @@ import { earningsFor } from '../commission/commission.service';
 import { query, withTransaction } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { postJournal } from '../_shared/ledger';
+import { getMemberPolicy } from './policy.service';
 import {
   createMember,
   downlineCounts,
@@ -249,5 +250,54 @@ router.put(
     res.json({ ok: true, code, active });
   }),
 );
+
+// ---------------------------------------------------------------------
+// Per-member transaction policy (limits + payout gates). A member sets their
+// own; an upline sets it for a direct downline member.
+// ---------------------------------------------------------------------
+const policySchema = z.object({
+  min_txn: z.coerce.number().min(0).max(1_000_000).default(0),
+  max_txn: z.coerce.number().min(0).max(1_000_000).default(0),
+  min_txn_nonkyc: z.coerce.number().min(0).max(1_000_000).default(0),
+  max_txn_nonkyc: z.coerce.number().min(0).max(1_000_000).default(0),
+  payout_require_kyc: z.boolean().default(false),
+  payout_require_otp: z.boolean().default(false),
+});
+
+async function upsertPolicy(targetId: string, setBy: string, b: z.infer<typeof policySchema>): Promise<void> {
+  await query(
+    `INSERT INTO member_txn_policy
+       (user_id, min_txn_paise, max_txn_paise, min_txn_nonkyc_paise, max_txn_nonkyc_paise, payout_require_kyc, payout_require_otp, set_by, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now())
+     ON CONFLICT (user_id) DO UPDATE SET
+       min_txn_paise = EXCLUDED.min_txn_paise, max_txn_paise = EXCLUDED.max_txn_paise,
+       min_txn_nonkyc_paise = EXCLUDED.min_txn_nonkyc_paise, max_txn_nonkyc_paise = EXCLUDED.max_txn_nonkyc_paise,
+       payout_require_kyc = EXCLUDED.payout_require_kyc, payout_require_otp = EXCLUDED.payout_require_otp,
+       set_by = EXCLUDED.set_by, updated_at = now()`,
+    [targetId, rupeesToPaise(b.min_txn), rupeesToPaise(b.max_txn), rupeesToPaise(b.min_txn_nonkyc), rupeesToPaise(b.max_txn_nonkyc),
+     b.payout_require_kyc, b.payout_require_otp, setBy],
+  );
+}
+
+router.get('/me/policy', asyncHandler(async (req: Request, res: Response) => {
+  const me = requireMember(req);
+  res.json({ policy: await getMemberPolicy(me.id) });
+}));
+router.put('/me/policy', validate(policySchema), asyncHandler(async (req: Request, res: Response) => {
+  const me = requireMember(req);
+  await upsertPolicy(me.id, me.id, req.body as z.infer<typeof policySchema>);
+  res.json({ ok: true });
+}));
+router.get('/members/:id/policy', asyncHandler(async (req: Request, res: Response) => {
+  const me = requireMember(req);
+  await requireDirectChild(me.id, req.params.id);
+  res.json({ policy: await getMemberPolicy(req.params.id) });
+}));
+router.put('/members/:id/policy', validate(policySchema), asyncHandler(async (req: Request, res: Response) => {
+  const me = requireMember(req);
+  await requireDirectChild(me.id, req.params.id);
+  await upsertPolicy(req.params.id, me.id, req.body as z.infer<typeof policySchema>);
+  res.json({ ok: true });
+}));
 
 export default router;
