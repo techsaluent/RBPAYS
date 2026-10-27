@@ -274,6 +274,7 @@ const NAV = [
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
   { key: 'developer', label: '🧩 Developer API', roles: NETWORK_ROLES },
+  { key: 'mybrand', label: '🎨 My Brand', roles: NETWORK_ROLES, flag: 'manages_brand' },
   { key: 'profile', label: 'Profile', roles: '*' },
   { key: 'security', label: 'Security', roles: '*' },
   // Admin console — grouped into sidebar sections; each maps to a staff permission.
@@ -318,6 +319,7 @@ function hasPerm(p) {
   return perms.includes('*') || perms.includes(p);
 }
 function allowed(item) {
+  if (item.flag && !State.user[item.flag]) return false; // e.g. manages_brand
   if (item.roles === '*') return true;
   if (!item.roles.includes(State.user.role)) return false;
   if (item.perm && State.user.role === 'staff') return hasPerm(item.perm);
@@ -640,6 +642,42 @@ const Screens = {
   },
 
   // My profile: name / email / phone (company details for admin live in Website).
+  // Self-service white-label brand console for a tenant owner (manages_brand).
+  async mybrand() {
+    const r = await Api.get('/brand').catch(() => null);
+    if (!r || !r.tenant) { $('view').innerHTML = '<div class="panel"><p class="muted">You don\'t manage a white-label brand.</p></div>'; return; }
+    const t = r.tenant;
+    State._myBrand = t;
+    const base = (window.TUTIPAYS_API || (location.origin + '/api/v1')).replace(/\/$/, '');
+    $('view').innerHTML = `
+      <div class="panel"><h2>🎨 My Brand</h2>
+        <p class="muted">Your white-label brand. Changes apply to your panel, receipts and (on your custom domain) your marketing site — for your whole network.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <div class="field" style="flex:1;min-width:180px"><label>Brand name</label><input id="mb_name" value="${esc(t.brand_name || '')}"></div>
+          <div class="field" style="flex:1;min-width:120px"><label>Primary colour (hex)</label><input id="mb_color" value="${esc(t.primary_color || '')}" placeholder="#2563EB"></div>
+          <div class="field" style="flex:1;min-width:100px"><label>Logo emoji</label><input id="mb_emoji" value="${esc(t.logo_emoji || '')}" placeholder="💠"></div>
+        </div>
+        <div class="field"><label>Logo URL</label><input id="mb_logo" value="${esc(t.logo_url || '')}" placeholder="https://…/logo.png"></div>
+        <div class="field"><label>Tagline</label><input id="mb_tagline" value="${esc(t.tagline || '')}"></div>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <div class="field" style="flex:1;min-width:160px"><label>Support email</label><input id="mb_email" value="${esc(t.support_email || '')}"></div>
+          <div class="field" style="flex:1;min-width:140px"><label>Support phone</label><input id="mb_phone" value="${esc(t.support_phone || '')}"></div>
+        </div>
+        <div class="field"><label>Company / legal name</label><input id="mb_company" value="${esc(t.company_name || '')}"></div>
+        <button class="btn" onclick="Actions.saveMyBrand()">Save branding</button>
+      </div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+          <h2>Custom domains</h2><button class="btn sm" onclick="Actions.myBrandDomains()">Manage domains</button></div>
+        <p class="muted">Serve your branded panel on your own host (e.g. pay.yourbrand.com). Point its DNS at our server; we verify ownership and provision TLS.</p></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+          <h2>Services on my brand</h2><button class="btn sm" onclick="Actions.myBrandServices()">Choose services</button></div>
+        <p class="muted">Show or hide individual services on your branded site.</p></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+          <h2>Sub-brands (reseller)</h2>
+          <span><button class="btn sm ghost" onclick="Actions.resellerEarnings()">My earnings</button>
+          <button class="btn sm" onclick="Actions.resellerSubBrands()">Manage sub-brands</button></span></div>
+        <p class="muted">Turn members of your own network into their own white-label brands and set each one's margin. You earn a share of the platform margin on their activity (your reseller share is set by the platform).</p></div>`;
+  },
   async profile() {
     const u = State.user;
     const companyNote = u.role === 'admin'
@@ -1990,8 +2028,11 @@ const Screens = {
       <td>${t.members || 0}</td>
       <td>${esc(t.support_email || '')}</td>
       <td>${t.status === 'active' ? UI.statusTag('active') : '<span class="tag">suspended</span>'}</td>
-      <td><button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button>
-        <button class="btn sm ghost" onclick="Actions.manageDomains('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Domains</button></td>
+      <td><button class="btn sm ghost" onclick="Actions.tenantOverview('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Overview</button>
+        <button class="btn sm ghost" onclick="Actions.editTenant('${t.id}')">Edit</button>
+        <button class="btn sm ghost" onclick="Actions.manageDomains('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Domains</button>
+        <button class="btn sm ghost" onclick="Actions.manageTenantServices('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Services</button>
+        <button class="btn sm ghost" onclick="Actions.manageBilling('${t.id}','${esc((t.brand_name || '').replace(/'/g, ''))}')">Billing</button></td>
     </tr>`).join('');
     $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
         <h2>🏷️ White-label Partners</h2><button class="btn sm" onclick="Actions.newTenant()">+ New partner brand</button></div>
@@ -3558,6 +3599,137 @@ const Actions = {
       UI.closeModal(); UI.toast('Partner brand saved'); App.route();
     } catch (err) { UI.toast(err.message, 'err'); }
   },
+  // ---- Self-service brand console (tenant owner, /brand/*) ----
+  async saveMyBrand() {
+    const body = {
+      brand_name: val('mb_name'), primary_color: val('mb_color') || null, logo_emoji: val('mb_emoji') || null,
+      logo_url: val('mb_logo') || null, tagline: val('mb_tagline') || null, support_email: val('mb_email') || null,
+      support_phone: val('mb_phone') || null, company_name: val('mb_company') || null,
+    };
+    if (!body.brand_name) return UI.toast('Brand name is required', 'err');
+    try { await Api.put('/brand', body); UI.toast('Brand saved — reloading'); setTimeout(() => location.reload(), 600); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async myBrandDomains() {
+    const d = await Api.get('/brand/domains').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(x => `<tr>
+      <td><b>${esc(x.domain)}</b>${x.is_primary ? ' <span class="tag">primary</span>' : ''}</td>
+      <td>${x.verified_at ? UI.statusTag('verified') : '<span class="tag">pending DNS</span>'}</td>
+      <td style="white-space:nowrap">
+        ${x.verified_at ? '' : `<button class="btn sm ghost" onclick="Actions.myVerifyDomain('${x.id}')">Check DNS</button>`}
+        <button class="btn sm ghost danger" onclick="Actions.myDeleteDomain('${x.id}')">✕</button></td>
+      ${x.verified_at ? '' : `<tr><td colspan=3 class=muted style="font-size:12px">Add a <b>TXT</b> record <code>_tutipays-verify.${esc(x.domain)}</code> = <code>${esc(x.verify_token)}</code>, then Check DNS. Point the host (A/CNAME) at our server.</td></tr>`}`).join('');
+    UI.modal(`<h3>My custom domains</h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Domain</th><th>Ownership</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=3 class=muted>No domains yet.</td></tr>'}</tbody></table></div>
+      <div class="row" style="gap:8px;margin-top:10px"><input id="mbd_new" placeholder="pay.yourbrand.com" style="flex:1">
+        <button class="btn" onclick="Actions.myAddDomain()">Add domain</button></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async myAddDomain() {
+    const domain = val('mbd_new'); if (!domain) return UI.toast('Enter a domain', 'err');
+    try { await Api.post('/brand/domains', { domain }); UI.toast('Domain added — set the DNS TXT record'); Actions.myBrandDomains(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async myVerifyDomain(domainId) {
+    try { const r = await Api.post(`/brand/domains/${domainId}/verify`, {}); UI.toast(r.verified ? 'Domain verified ✓' : (r.error || 'Not verified yet'), r.verified ? 'ok' : 'err'); Actions.myBrandDomains(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async myDeleteDomain(domainId) {
+    if (!confirm('Remove this domain?')) return;
+    try { await Api.del('/brand/domains/' + domainId); Actions.myBrandDomains(); } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async myBrandServices() {
+    const d = await Api.get('/brand/services').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(s => `<tr>
+      <td><b>${esc(s.name || s.code)}</b> <span class="muted">${esc(s.code)}</span>${s.enabled ? '' : ' <span class="tag">platform-off</span>'}</td>
+      <td style="text-align:right"><label style="cursor:pointer"><input type="checkbox" ${s.visible ? 'checked' : ''} onchange="Actions.myToggleService('${s.code}', this.checked, this)"> <span style="margin-left:4px">${s.visible ? 'shown' : 'hidden'}</span></label></td></tr>`).join('');
+    UI.modal(`<h3>Services on my brand</h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Service</th><th style="text-align:right">Visible</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=2 class=muted>No services.</td></tr>'}</tbody></table></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async myToggleService(code, visible, el) {
+    try { await Api.put(`/brand/services/${encodeURIComponent(code)}`, { visible }); if (el && el.nextElementSibling) el.nextElementSibling.textContent = visible ? 'shown' : 'hidden'; }
+    catch (err) { UI.toast(err.message, 'err'); if (el) el.checked = !visible; }
+  },
+  // ---- Reseller multi-level: my sub-brands + earnings ----
+  async resellerSubBrands() {
+    const d = await Api.get('/brand/sub-tenants').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(t => `<tr>
+      <td><b>${esc(t.brand_name)}</b><br><span class="muted">${esc(t.owner_name || '')} · ${t.members || 0} members</span></td>
+      <td>${esc(t.status)}</td>
+      <td><button class="btn sm ghost" onclick="Actions.editSubBrand('${t.id}','${esc((t.brand_name||'').replace(/'/g,''))}')">Branding &amp; margin</button></td>
+    </tr>`).join('');
+    UI.modal(`<h3>My sub-brands</h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Brand</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=3 class=muted>No sub-brands yet.</td></tr>'}</tbody></table></div>
+      <h4 style="margin-top:12px">Create a sub-brand</h4>
+      <p class="muted" style="font-size:12px">Pick a member in <b>your</b> network to own it. Their whole sub-network moves under the new brand.</p>
+      <div class="field"><label>Brand name</label><input id="sb_name" placeholder="SubPay"></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:2;min-width:200px"><label>Owner (member user id in your network)</label><input id="sb_owner" placeholder="UUID of the member"></div>
+        <div class="field" style="flex:1;min-width:120px"><label>Their margin % (share)</label><input id="sb_share" type="number" step="0.01" min="0" max="100" placeholder="e.g. 20"></div>
+      </div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button>
+        <button class="btn" onclick="Actions.createSubBrand()">Create sub-brand</button></div>`);
+  },
+  async createSubBrand() {
+    const brand_name = val('sb_name'), owner_user_id = val('sb_owner');
+    if (!brand_name || !owner_user_id) return UI.toast('Brand name and owner id required', 'err');
+    const share = parseFloat(val('sb_share'));
+    const body = { brand_name, owner_user_id };
+    if (Number.isFinite(share)) body.partner_share_bps = Math.round(share * 100);
+    try { await Api.post('/brand/sub-tenants', body); UI.toast('Sub-brand created'); Actions.resellerSubBrands(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async editSubBrand(id, brand) {
+    State._subId = id;
+    UI.modal(`<h3>Sub-brand — ${esc(brand || '')}</h3>
+      <div class="field"><label>Brand name</label><input id="sbe_name" value="${esc(brand || '')}"></div>
+      <div class="row" style="gap:8px">
+        <div class="field" style="flex:1"><label>Primary colour</label><input id="sbe_color" placeholder="#2563EB"></div>
+        <div class="field" style="flex:1"><label>Their margin % (share)</label><input id="sbe_share" type="number" step="0.01" min="0" max="100"></div>
+      </div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Cancel</button>
+        <button class="btn" onclick="Actions.saveSubBrand()">Save</button></div>`);
+  },
+  async saveSubBrand() {
+    const body = {};
+    if (val('sbe_name')) body.brand_name = val('sbe_name');
+    if (val('sbe_color')) body.primary_color = val('sbe_color');
+    const share = parseFloat(val('sbe_share'));
+    if (Number.isFinite(share)) body.partner_share_bps = Math.round(share * 100);
+    try { await Api.put('/brand/sub-tenants/' + State._subId, body); UI.closeModal(); UI.toast('Sub-brand updated'); Actions.resellerSubBrands(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async resellerEarnings() {
+    const today = new Date().toISOString().slice(0, 10); const first = today.slice(0, 8) + '01';
+    State._resFrom = first; State._resTo = today;
+    await Actions._loadResellerEarnings(first, today);
+  },
+  async _loadResellerEarnings(from, to) {
+    const e = await Api.get(`/brand/reseller-earnings?from=${from}&to=${to}`).then(r => r.earnings).catch(() => null);
+    const rows = e ? (e.sub_tenants || []).map(s => `<tr><td>${esc(s.brand_name)}</td>
+      <td class="right">${money(s.gross_margin_paise / 100)}</td>
+      <td class="right">${money(s.sub_partner_cut_paise / 100)}</td>
+      <td class="right"><b>${money(s.reseller_earning_paise / 100)}</b></td></tr>`).join('') : '';
+    UI.modal(`<h3>My reseller earnings</h3>
+      <div class="row" style="gap:8px;align-items:flex-end;margin-bottom:10px">
+        <div class="field" style="flex:1"><label>From</label><input id="re_from" type="date" value="${from}"></div>
+        <div class="field" style="flex:1"><label>To</label><input id="re_to" type="date" value="${to}"></div>
+        <button class="btn sm" onclick="Actions._loadResellerEarnings(val('re_from'),val('re_to'))">Recalculate</button></div>
+      ${e ? `<p class="muted">Your share: <b>${(e.reseller_share_bps / 100).toFixed(2)}%</b> of margin left after each sub-partner's cut. Total payable to you: <b>${money(e.total_reseller_earning_paise / 100)}</b>.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Sub-brand</th><th class="right">Gross margin</th><th class="right">Sub-partner cut</th><th class="right">You earn</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=4 class=muted>No sub-brand activity in this period.</td></tr>'}</tbody></table></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button>
+        <button class="btn" onclick="Actions.generateResellerStatement()">Generate statement</button></div>`
+      : '<p class="muted">Could not load earnings.</p><div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>'}`);
+  },
+  async generateResellerStatement() {
+    try { await Api.post('/brand/reseller-statement', { period_start: val('re_from'), period_end: val('re_to') }); UI.toast('Statement generated — the platform will settle it'); UI.closeModal(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
   // White-label Stage 2: manage a tenant's custom domains.
   async manageDomains(id, brand) {
     State._dnTenant = id;
@@ -3603,6 +3775,126 @@ const Actions = {
     if (!confirm('Remove this domain?')) return;
     try { await Api.del(`/admin/tenants/${State._dnTenant}/domains/${domainId}`); Actions.manageDomains(State._dnTenant); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // White-label Stage 5: partner billing — margin statements, issue, settle, void.
+  async manageBilling(id, brand) {
+    State._blTenant = id;
+    const d = await Api.get(`/admin/tenants/${id}/invoices`).catch(() => ({ items: [] }));
+    const badge = { draft: '<span class="tag">draft</span>', issued: '<span class="tag">issued</span>', paid: UI.statusTag('paid'), void: '<span class="tag">void</span>' };
+    const rows = (d.items || []).map(v => `<tr>
+      <td>${esc(v.period_start)} → ${esc(v.period_end)}<br><span class="muted">${v.reference ? esc(v.reference) : '—'} · ${v.txn_count} txns</span></td>
+      <td>${money(v.gross_margin_paise/100)}</td>
+      <td>${(v.partner_share_bps / 100).toFixed(2)}%</td>
+      <td><b>${money(v.net_payable_paise/100)}</b></td>
+      <td>${badge[v.status] || esc(v.status)}</td>
+      <td style="white-space:nowrap">
+        ${v.status === 'draft' ? `<button class="btn sm ghost" onclick="Actions.issueInvoice('${v.id}')">Issue</button>` : ''}
+        ${v.status === 'issued' ? `<button class="btn sm ghost" onclick="Actions.payInvoice('${v.id}')">Mark paid</button>` : ''}
+        ${v.status === 'draft' || v.status === 'issued' ? `<button class="btn sm ghost danger" onclick="Actions.voidInvoice('${v.id}')">Void</button>` : ''}
+      </td></tr>`).join('');
+    const today = new Date().toISOString().slice(0, 10);
+    const first = today.slice(0, 8) + '01';
+    UI.modal(`<h3>Billing — ${esc(brand || '')}</h3>
+      <p class="muted">A statement is the net platform margin on this tenant's transactions for the period, split by the partner's revenue share (set <b>partner_share_bps</b> in Overview → policy settings). Generate → Issue → Mark paid when you settle the partner's earning.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Period</th><th>Gross margin</th><th>Share</th><th>Payable</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No statements yet.</td></tr>'}</tbody></table></div>
+      <div class="row" style="gap:8px;margin-top:10px;align-items:flex-end">
+        <div class="field" style="flex:1"><label>From</label><input id="bl_from" type="date" value="${first}"></div>
+        <div class="field" style="flex:1"><label>To</label><input id="bl_to" type="date" value="${today}"></div>
+        <button class="btn" onclick="Actions.generateInvoice()">Generate statement</button></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async generateInvoice() {
+    const period_start = val('bl_from'), period_end = val('bl_to');
+    if (!period_start || !period_end) return UI.toast('Pick a period', 'err');
+    try { await Api.post(`/admin/tenants/${State._blTenant}/invoices`, { period_start, period_end }); UI.toast('Statement generated'); Actions.manageBilling(State._blTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async issueInvoice(invId) {
+    try { await Api.post(`/admin/invoices/${invId}/issue`, {}); UI.toast('Statement issued'); Actions.manageBilling(State._blTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async payInvoice(invId) {
+    const ref = prompt('Settlement reference (bank UTR / wallet credit ref):') || '';
+    try { await Api.post(`/admin/invoices/${invId}/pay`, { settlement_ref: ref }); UI.toast('Marked paid'); Actions.manageBilling(State._blTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async voidInvoice(invId) {
+    if (!confirm('Void this statement?')) return;
+    try { await Api.post(`/admin/invoices/${invId}/void`, {}); UI.toast('Statement voided'); Actions.manageBilling(State._blTenant); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // White-label Stage 4: super-admin overview of a tenant's whole network + policy settings.
+  async tenantOverview(id, brand) {
+    State._ovTenant = id;
+    const [o, st] = await Promise.all([
+      Api.get(`/admin/tenants/${id}/overview`).catch(() => ({ overview: null })),
+      Api.get(`/admin/tenants/${id}/settings`).catch(() => ({ settings: {} })),
+    ]);
+    const ov = o.overview, s = st.settings || {};
+    if (!ov) return UI.toast('Could not load overview', 'err');
+    const roleRows = Object.entries(ov.members.by_role).map(([r, v]) => `<tr><td>${esc(r.replace(/_/g, ' '))}</td><td>${v.total}</td><td>${v.active}</td></tr>`).join('') || '<tr><td colspan=3 class=muted>No members yet</td></tr>';
+    const txnRows = Object.entries(ov.transactions.by_status).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v.count}</td><td>${money(v.volume_paise/100)}</td></tr>`).join('') || '<tr><td colspan=3 class=muted>No transactions</td></tr>';
+    UI.modal(`<h3>Overview — ${esc(brand || '')}</h3>
+      <div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <div class="stat b"><div class="muted">Members</div><b style="font-size:20px">${ov.members.total}</b></div>
+        <div class="stat g"><div class="muted">Wallet balance</div><b style="font-size:20px">${money(ov.wallet_balance_paise/100)}</b></div>
+        <div class="stat o"><div class="muted">Txns (success vol)</div><b style="font-size:20px">${money(ov.transactions.success_volume_paise/100)}</b></div>
+        <div class="stat b"><div class="muted">Platform margin</div><b style="font-size:20px">${money(ov.platform_margin_paise/100)}</b></div>
+      </div>
+      <div class="row" style="gap:16px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px"><h4>Network by role</h4>
+          <div class="tbl-wrap"><table><thead><tr><th>Role</th><th>Total</th><th>Active</th></tr></thead><tbody>${roleRows}</tbody></table></div></div>
+        <div style="flex:1;min-width:220px"><h4>Transactions by status</h4>
+          <div class="tbl-wrap"><table><thead><tr><th>Status</th><th>Count</th><th>Volume</th></tr></thead><tbody>${txnRows}</tbody></table></div></div>
+      </div>
+      <h4 style="margin-top:14px">Policy settings</h4>
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        <div class="field" style="flex:1;min-width:150px"><label>KYC required</label>
+          <select id="ts_kyc"><option value="">platform default</option><option value="true" ${s.kyc_required === 'true' ? 'selected' : ''}>required</option><option value="false" ${s.kyc_required === 'false' ? 'selected' : ''}>not required</option></select></div>
+        <div class="field" style="flex:1;min-width:150px"><label>API rate limit / min</label><input id="ts_rate" value="${esc(s.rate_limit_per_min || '')}" placeholder="platform default"></div>
+        <div class="field" style="flex:1;min-width:150px"><label>Settlement cycle</label><input id="ts_cycle" value="${esc(s.settlement_cycle || '')}" placeholder="T+1"></div>
+      </div>
+      <div class="field"><label>Inbound webhook secret ${s.webhook_secret ? '<span class="tag">set</span>' : ''}</label><input id="ts_wh" type="password" placeholder="${s.webhook_secret ? '•••••• (leave blank to keep)' : 'set a signing secret'}"></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button>
+        <button class="btn" onclick="Actions.saveTenantSettings()">Save settings</button></div>`);
+  },
+  async saveTenantSettings() {
+    const id = State._ovTenant;
+    const put = (key, value) => Api.put(`/admin/tenants/${id}/settings`, { key, value });
+    try {
+      const jobs = [
+        put('kyc_required', ($('ts_kyc') && $('ts_kyc').value) || ''),
+        put('rate_limit_per_min', val('ts_rate')),
+        put('settlement_cycle', val('ts_cycle')),
+      ];
+      const wh = val('ts_wh');
+      if (wh) jobs.push(put('webhook_secret', wh)); // only overwrite when a new value is typed
+      await Promise.all(jobs);
+      UI.closeModal(); UI.toast('Tenant settings saved');
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // White-label Stage 3: choose which services show on a tenant's branded site/panel.
+  async manageTenantServices(id, brand) {
+    State._tsvTenant = id;
+    const d = await Api.get(`/admin/tenants/${id}/services`).catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(s => `<tr>
+      <td><b>${esc(s.name || s.code)}</b> <span class="muted">${esc(s.code)}</span>${s.enabled ? '' : ' <span class="tag">platform-off</span>'}</td>
+      <td style="text-align:right">
+        <label style="cursor:pointer;user-select:none"><input type="checkbox" ${s.visible ? 'checked' : ''} onchange="Actions.toggleTenantService('${s.code}', this.checked, this)" style="vertical-align:middle"> <span style="margin-left:4px;vertical-align:middle">${s.visible ? 'shown' : 'hidden'}</span></label>
+      </td></tr>`).join('');
+    UI.modal(`<h3>Services on this brand — ${esc(brand || '')}</h3>
+      <p class="muted">Turn a service off to hide it from this partner's branded site and service cards. The platform master switch still applies first.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Service</th><th style="text-align:right">Visible</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=2 class=muted>No services.</td></tr>'}</tbody></table></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+  },
+  async toggleTenantService(code, visible, el) {
+    try {
+      await Api.put(`/admin/tenants/${State._tsvTenant}/services/${encodeURIComponent(code)}`, { visible });
+      UI.toast(visible ? 'Service shown' : 'Service hidden');
+      if (el && el.nextElementSibling) el.nextElementSibling.textContent = visible ? 'shown' : 'hidden';
+    } catch (err) { UI.toast(err.message, 'err'); if (el) el.checked = !visible; }
   },
   async reviewKyc(id, status) {
     // Every approval / rejection must carry a remark for the audit trail.

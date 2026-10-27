@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { ApiError } from '../../utils/ApiError';
 import * as authService from './auth.service';
 import { getStaffPermissions } from '../../middleware/permission';
-import { resolveBranding } from '../tenant/tenant.service';
+import { resolveBranding, ownsTenant } from '../tenant/tenant.service';
 
 export async function requestSignupOtp(req: Request, res: Response): Promise<void> {
   const result = await authService.requestSignupOtp(req.body.phone, req.body.email);
@@ -55,9 +55,11 @@ export async function me(req: Request, res: Response): Promise<void> {
   let permissions: string[] | undefined;
   if (user && user.role === 'admin') permissions = ['*'];
   else if (user && user.role === 'staff') permissions = await getStaffPermissions(user.id);
-  // White-label: the member's tenant brand (or the platform default).
+  // White-label: the member's tenant brand (or the platform default), plus
+  // whether they OWN a brand (so the panel shows the self-service "My Brand").
   const branding = await resolveBranding(req.user.id).catch(() => null);
-  const payload = { ...user, ...(permissions ? { permissions } : {}), ...(branding ? { branding } : {}) };
+  const manages_brand = await ownsTenant(req.user.id).catch(() => false);
+  const payload = { ...user, ...(permissions ? { permissions } : {}), ...(branding ? { branding } : {}), manages_brand };
   res.status(200).json({ user: payload });
 }
 
