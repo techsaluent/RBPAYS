@@ -2789,7 +2789,7 @@ const Screens = {
     $('view').innerHTML = `<div class="panel">
       <div class="row" style="justify-content:space-between;align-items:center">
         <h2 style="margin:0">Provider Connections</h2>
-        <button class="btn sm" onclick="Actions.editConnection()">+ New connection</button>
+        <button class="btn sm" onclick="Actions.quickConnect()">+ Connect a provider</button>
       </div>
       <p class="muted">Configure a provider's API <b>once</b> and switch it on across every service it powers — e.g. Eko for DMT + AEPS + BBPS + Recharge from a single credential. Activating a connection makes it the live provider for each selected service (any other active provider for that service is switched off). For a single-service provider you can still use <a href="#/providers">Providers</a>.</p>
     </div>
@@ -5399,6 +5399,82 @@ const Actions = {
       else await Api.post('/admin/provider-connections', body);
       UI.closeModal(); UI.toast('Connection saved'); App.route();
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Per-driver sensible defaults so a new connection needs only the keys.
+  _drvDefaults(dv) {
+    return ({
+      aeronpay: { label: 'AeronPay', base: 'https://api.aeronpay.in/api/serviceapi-prod/api', wauth: 'ip',
+        keyLabel: 'Client ID', secretLabel: 'Client Secret', partner: false,
+        services: ['payout', 'recharge', 'bbps', 'dmt', 'aeps'],
+        note: 'AeronPay gives you a <b>Client ID</b> + <b>Client Secret</b>. Paste both, Save. Then give AeronPay your callback URL + whitelist your server IP in their Developer → Whitelisting, and put their callback IPs in Advanced.' },
+      eko: { label: 'Eko', base: 'https://api.eko.in/ekoicici/v3', wauth: 'hmac',
+        keyLabel: 'Developer key', secretLabel: 'Access key', partner: true, partnerLabel: 'Initiator ID',
+        services: ['dmt', 'aeps', 'bbps', 'recharge'],
+        note: 'Eko — Developer key (API key) + Access key (API secret) + Initiator ID.' },
+      razorpay: { label: 'Razorpay', base: 'https://api.razorpay.com/v1', wauth: 'hmac',
+        keyLabel: 'Key ID', secretLabel: 'Key Secret', partner: false,
+        services: ['payout', 'payment_gateway'], note: 'Razorpay — Key ID + Key Secret.' },
+      sandbox: { label: 'Sandbox (test)', base: '', wauth: 'none', keyLabel: '', secretLabel: '', partner: false,
+        services: ['payout', 'recharge', 'bbps', 'dmt', 'aeps', 'cms', 'card_swipe', 'upi', 'matm', 'aadhaar_pay', 'pan_card', 'travel', 'insurance'],
+        note: 'Sandbox — no credentials. Save to test the whole flow end-to-end, then swap in a live provider.' },
+    })[dv];
+  },
+  async quickConnect() {
+    const svcList = Actions._pcServices || ((await Api.get('/admin/services')).items.map(s => ({ code: s.code, name: s.name })));
+    Actions._pcServices = svcList;
+    const tiles = ['aeronpay', 'eko', 'razorpay', 'sandbox'].map(dv =>
+      `<button type="button" class="prov-pick" data-dv="${dv}" onclick="Actions.pickDriver('${dv}')">${esc(Actions._drvDefaults(dv).label)}</button>`).join('')
+      + `<button type="button" class="prov-pick" data-dv="__adv" onclick="UI.closeModal();Actions.editConnection()">Other / advanced…</button>`;
+    UI.modal(`<h3>Connect a provider</h3>
+      <p class="muted" style="font-size:12px;margin:-4px 0 8px">Pick your provider, paste the keys, Save. Endpoint, services &amp; webhook security are set for you.</p>
+      <style>.prov-pick{border:1px solid var(--line,#e5e9f2);background:var(--card,#fff);color:inherit;border-radius:999px;padding:6px 12px;margin:0 6px 6px 0;cursor:pointer;font-size:13px}
+        .prov-pick.on{background:#7a3cf0;color:#fff;border-color:#7a3cf0}</style>
+      <div style="margin-bottom:6px">${tiles}</div>
+      <div id="pc_form"></div>`);
+    Actions.pickDriver('aeronpay');
+  },
+  pickDriver(dv) {
+    document.querySelectorAll('.prov-pick').forEach(b => b.classList.toggle('on', b.dataset.dv === dv));
+    const D = Actions._drvDefaults(dv);
+    const svcList = Actions._pcServices || [];
+    const defSvc = new Set(D.services);
+    const svcBoxes = svcList.map(s => `<label style="display:inline-flex;gap:6px;align-items:center;margin:3px 12px 3px 0;font-size:13px"><input type="checkbox" id="pc_svc_${s.code}" ${defSvc.has(s.code) ? 'checked' : ''}> ${esc(s.code)}</label>`).join('');
+    const creds = dv === 'sandbox'
+      ? `<input type="hidden" id="pc_api_key" value=""><input type="hidden" id="pc_api_secret" value="">`
+      : `<div class="field"><label>${esc(D.keyLabel)}</label><input id="pc_api_key" placeholder="paste ${esc(D.keyLabel)}"></div>
+         <div class="field"><label>${esc(D.secretLabel)}</label><input id="pc_api_secret" type="password" placeholder="paste ${esc(D.secretLabel)}"></div>`;
+    // Callback URL hint (real id is known after save; show the pattern).
+    const cbBase = (Cfg.API || '').replace(/\/+$/, '');
+    $('pc_form').innerHTML = `
+      <input type="hidden" id="pc_driver" value="${dv}">
+      <input type="hidden" id="pc_label" value="${esc(D.label)}">
+      <input type="hidden" id="pc_auth_token" value="">
+      ${D.partner ? '' : '<input type="hidden" id="pc_partner_id" value="">'}
+      <p class="muted" style="font-size:12px;margin:0 0 8px">${D.note}</p>
+      ${creds}
+      ${D.partner ? `<div class="field"><label>${esc(D.partnerLabel)}</label><input id="pc_partner_id" placeholder="from your ${esc(D.label)} console"></div>` : ''}
+      <details style="margin:6px 0"><summary class="muted" style="font-size:12px;cursor:pointer">Services — ${D.services.length} preselected (tap to change)</summary>
+        <div style="margin-top:6px">${svcBoxes}</div></details>
+      <details style="margin:6px 0"><summary class="muted" style="font-size:12px;cursor:pointer">Advanced — endpoint &amp; webhook security</summary>
+        <div class="field"><label>Base URL</label><input id="pc_base_url" value="${esc(D.base)}"></div>
+        <div class="field"><label>Webhook (callback) auth</label>
+          <select id="pc_wauth" onchange="document.getElementById('pc_wipbox').hidden=(this.value!=='ip');document.getElementById('pc_wbasic').hidden=(this.value!=='basic')">
+            <option value="hmac" ${D.wauth === 'hmac' ? 'selected' : ''}>HMAC signature</option>
+            <option value="ip" ${D.wauth === 'ip' ? 'selected' : ''}>IP allowlist (AeronPay)</option>
+            <option value="basic" ${D.wauth === 'basic' ? 'selected' : ''}>Basic auth</option>
+            <option value="none" ${D.wauth === 'none' ? 'selected' : ''}>None</option>
+          </select></div>
+        <div id="pc_wbasic" ${D.wauth === 'basic' ? '' : 'hidden'}><div class="row" style="gap:8px">
+          <div class="field" style="flex:1"><label>Webhook username</label><input id="pc_wuser"></div>
+          <div class="field" style="flex:1"><label>Webhook password</label><input id="pc_wpass"></div></div></div>
+        <div id="pc_wipbox" ${D.wauth === 'ip' ? '' : 'hidden'}><div class="field"><label>Allowed callback IPs/CIDRs (comma-separated)</label>
+          <input id="pc_wips" placeholder="from ${esc(D.label)} → Developer → Whitelisting"></div></div>
+        <div class="field"><label>Extra config (JSON)</label><textarea id="pc_extra" rows="2" style="width:100%;font-family:monospace">{}</textarea></div>
+        <p class="muted" style="font-size:12px">After saving, your callback URL is <code>${esc(cbBase)}/webhooks/provider/&lt;id&gt;</code> (shown on the connection card) — give it to the provider.</p>
+      </details>
+      <div class="field"><label><input type="checkbox" id="pc_activate" checked> Make it live for the selected services</label></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveConnection('')">Save connection</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`;
   },
   async testConnection(id) {
     UI.modal(`<h3>Testing connection…</h3><p class="muted">Connectivity check (no live transaction)…</p>`);
