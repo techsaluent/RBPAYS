@@ -339,6 +339,7 @@ const NAV = [
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
   { key: 'developer', label: '🧩 Developer API', roles: NETWORK_ROLES },
   { key: 'mybrand', label: '🎨 My Brand', roles: NETWORK_ROLES, flag: 'manages_brand' },
+  { key: 'marketing', label: '📣 Marketing Studio', roles: NETWORK_ROLES },
   { key: 'profile', label: 'Profile', roles: '*' },
   { key: 'security', label: 'Security', roles: '*' },
   // Admin console — grouped into sidebar sections; each maps to a staff permission.
@@ -3114,6 +3115,63 @@ const Screens = {
       <div class="panel mt"><h3 style="margin:0 0 8px">Full role power map</h3><div class="tbl-wrap"><table>
         <thead><tr>${head.map((h, i) => `<th${i ? ' class="right"' : ''}>${esc(h)}</th>`).join('')}</tr></thead>
         <tbody>${rows}</tbody></table></div></div>`;
+  },
+
+  // AI Marketing Studio: generate on-brand promo posts for your services.
+  async marketing() {
+    const svc = await Api.get('/ai/marketing/services').catch(() => ({ services: [] }));
+    const services = svc.services || [];
+    const opts = services.map(s => `<option value="${esc(s)}">${esc(s.replace(/_/g, ' '))}</option>`).join('');
+    $('view').innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">📣 Marketing Studio</h2>
+        <span class="muted">No marketing staff needed — generate ready-to-post content</span></div>
+      <div class="panel mt">
+        <p class="muted">Pick a service you offer and we'll write ready-to-share posts on <b>your</b> brand — WhatsApp, Instagram and SMS — plus an image prompt you can paste into any image generator. Copy, or share straight to WhatsApp.</p>
+        ${services.length ? `
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:end">
+          <div class="field" style="margin:0;min-width:180px"><label>Service to promote</label><select id="mk_svc">${opts}</select></div>
+          <div class="field" style="margin:0;min-width:160px"><label>Tone</label><select id="mk_tone">
+            <option value="friendly">Friendly</option><option value="festive">Festive</option>
+            <option value="urgent">Urgent</option><option value="professional">Professional</option></select></div>
+          <div class="field" style="margin:0;flex:1;min-width:200px"><label>Offer / angle (optional)</label><input id="mk_offer" placeholder="e.g. 0% charges this Diwali" maxlength="160"></div>
+          <button class="btn" onclick="Actions.generateMarketing()">✨ Generate posts</button>
+        </div>` : '<p class="msg err">You have no active services yet. Ask your upline to enable a service, then come back to promote it.</p>'}
+      </div>
+      <div id="mk_out"></div>`;
+  },
+  async generateMarketing() {
+    const out = $('mk_out'); if (!out) return;
+    out.innerHTML = '<div class="panel mt"><p class="muted">✨ Writing your posts…</p></div>';
+    try {
+      const r = await Api.post('/ai/marketing/generate', { service: val('mk_svc'), tone: val('mk_tone') || 'friendly', offer: val('mk_offer') || undefined });
+      const chIcon = { whatsapp: '💬', instagram: '📸', facebook: '👍', sms: '✉️' };
+      const cards = (r.posts || []).map((p, i) => {
+        const full = `${p.headline}\n\n${p.body}${p.hashtags && p.hashtags.length ? '\n\n' + p.hashtags.join(' ') : ''}`;
+        const waShare = p.channel === 'whatsapp' || p.channel === 'sms' ? `https://wa.me/?text=${encodeURIComponent(full)}` : '';
+        return `<div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+            <h3 style="margin:0">${chIcon[p.channel] || '📝'} ${esc(p.channel)}</h3>
+            <span class="row" style="gap:6px">
+              <button class="btn sm ghost" onclick="Actions.copyText(Actions._mkPosts[${i}])">Copy</button>
+              ${waShare ? `<a class="btn sm" href="${waShare}" target="_blank">Share to WhatsApp</a>` : ''}</span></div>
+          <p style="font-weight:700;margin:8px 0 4px">${esc(p.headline)}</p>
+          <p style="white-space:pre-wrap;margin:0">${esc(p.body)}</p>
+          ${p.hashtags && p.hashtags.length ? `<p class="muted" style="margin:8px 0 0">${esc(p.hashtags.join(' '))}</p>` : ''}
+          ${p.cta ? `<p class="muted" style="margin:6px 0 0;font-size:12px">CTA: ${esc(p.cta)}</p>` : ''}</div>`;
+      }).join('');
+      // Stash full post text for copy buttons.
+      Actions._mkPosts = (r.posts || []).map(p => `${p.headline}\n\n${p.body}${p.hashtags && p.hashtags.length ? '\n\n' + p.hashtags.join(' ') : ''}`);
+      out.innerHTML = `
+        <div class="panel mt" style="border-left:3px solid var(--brand,#7C3AED)">
+          <div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">🖼️ Image prompt</h3>
+            <button class="btn sm ghost" onclick="Actions.copyText(${JSON.stringify(r.image_prompt)})">Copy</button></div>
+          <p class="muted" style="margin:8px 0 0;white-space:pre-wrap">${esc(r.image_prompt)}</p>
+          <p class="muted" style="font-size:11px;margin:6px 0 0">Paste into any image generator to create a matching banner. ${r.source === 'ai' ? 'Written by AI.' : 'Branded template — set an AI endpoint under API Hub for fresh AI copy.'}</p></div>
+        ${cards}`;
+    } catch (err) { out.innerHTML = `<div class="panel mt"><p class="msg err">${esc(err.message)}</p></div>`; }
+  },
+  copyText(t) {
+    try { navigator.clipboard.writeText(t); UI.toast('Copied to clipboard'); }
+    catch { UI.toast('Copy failed — select and copy manually', 'err'); }
   },
 
   async myearnings() {
