@@ -555,16 +555,19 @@ const Screens = {
     } else if (MGMT_ROLES.includes(State.user.role)) {
       // Distributor / Master distributor — network, earnings & downline.
       const isMD = State.user.role === 'master_distributor';
-      const [p, w, st, dl] = await Promise.all([
+      const [p, w, st, dl, inc] = await Promise.all([
         Api.get('/network/panel').catch(() => null),
         Api.get('/wallet'),
         Api.get('/transactions/stats/summary').catch(() => null),
         Api.get('/network/downline').catch(() => ({ items: [] })),
+        Api.get('/topup/incoming').catch(() => ({ items: [] })),
       ]);
       const earn = p ? p.earnings.total_paise / 100 : 0;
       const counts = p ? (p.downline_counts || {}) : {};
       const totalDown = Object.values(counts).reduce((a, n) => a + Number(n), 0);
       const wl = w.wallet;
+      const sw = w.sub_wallets || { commission: '0.00', settlement: '0.00', commission_paise: 0, settlement_paise: 0 };
+      const pendingApprovals = (inc.items || []).length;
       const avail = (wl.available_paise != null ? wl.available_paise : wl.balance_paise) / 100;
       const roleCard = (k, ico) => `<div class="mini"><span class="mi">${ico}</span>
         <div class="mm"><b>${(k).replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}</b><span>${Number(counts[k]||0)} member${Number(counts[k]||0)===1?'':'s'}</span></div>
@@ -580,9 +583,9 @@ const Screens = {
       $('view').innerHTML = `
         <div class="stats">
           ${UI.stat('b','👛','Wallet balance', money(wl.balance), `Available <b>${money(avail)}</b>`)}
-          ${UI.stat('g','💰','Commission earned', money(earn), 'Net of TDS, lifetime')}
+          ${UI.stat('g','💰','Commission wallet', money(sw.commission), `Net of TDS · ${money(earn)} lifetime gross`)}
           ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, isMD ? 'Distributors & retailers' : 'Retailers')}
-          ${st ? UI.stat('p','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : ''}
+          ${pendingApprovals ? UI.stat('r','⏳','Top-up approvals', pendingApprovals, '<a href="#/fundrequests">Review now →</a>') : (st ? UI.stat('p','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : '')}
         </div>
         <div class="dash-cols mt">
           <div>
@@ -601,6 +604,8 @@ const Screens = {
                 <b style="font-size:20px">${money(avail)}</b></div>
               <button class="btn sm" style="width:100%;justify-content:center;margin-top:12px" onclick="Actions.withdraw()">💸 Withdraw to bank</button>
               <a class="btn sm ghost" style="width:100%;justify-content:center;margin-top:8px;box-sizing:border-box" href="#/addmoney">＋ Add money</a>
+              ${sw.commission_paise > 0 ? `<div class="row" style="justify-content:space-between;align-items:center;margin-top:10px;font-size:13px"><span class="muted">Commission (net): <b>${money(sw.commission)}</b></span>
+                <button class="btn sm ghost" onclick="Actions.sweep('commission',${sw.commission_paise/100})">Sweep to main</button></div>` : ''}
             </div>
             <div class="rail-card">
               <h2 style="margin:0 0 4px;font-size:15px">Network breakdown</h2>
