@@ -3481,32 +3481,88 @@ const Actions = {
     if ($('ig_extra')) $('ig_extra').value = p.extra || '';
     if ($('ig_hint')) $('ig_hint').innerHTML = esc(p.hint || '');
   },
+  // Where to get each provider's API key (shown as a "Get key →" link).
+  _getKeyUrl(id) {
+    return ({
+      msg91: 'https://control.msg91.com', fast2sms: 'https://www.fast2sms.com/dashboard/dev-api',
+      gupshup: 'https://www.gupshup.io', gupshup_wa: 'https://www.gupshup.io', textlocal: 'https://control.textlocal.in',
+      twilio: 'https://console.twilio.com', kaleyra: 'https://www.kaleyra.io', meta: 'https://developers.facebook.com/apps',
+      wati: 'https://app.wati.io', interakt: 'https://app.interakt.ai', sendgrid: 'https://app.sendgrid.com/settings/api_keys',
+      mailgun: 'https://app.mailgun.com', brevo: 'https://app.brevo.com/settings/keys/api',
+      signzy: 'https://www.signzy.com', protean: 'https://www.proteantech.in', karza: 'https://www.karza.in',
+      cashfree_v: 'https://merchant.cashfree.com', cashfree_pd: 'https://merchant.cashfree.com', cashfree_upi: 'https://merchant.cashfree.com',
+      razorpayx_ifsc: 'https://dashboard.razorpay.com', razorpayx_upi: 'https://dashboard.razorpay.com',
+      surepass: 'https://surepass.io', telegram: 'https://t.me/BotFather',
+    })[id] || '';
+  },
+  _whWebhook(path) { return (Cfg.API || '').replace(/\/+$/, '') + '/webhooks/' + path; },
+
   editIntegration(key) {
     const cur = (Actions._intCache && Actions._intCache[key]) || {};
-    // Email gets a dedicated, friendly SMTP form (no JSON to hand-edit).
-    if (key === 'email') return Actions.editEmailIntegration(cur);
-    const isNew = !key;
-    const label = cur.label || '';
+    if (key === 'email') return Actions.editEmailIntegration(cur);      // dedicated SMTP form
+    if (!key) return Actions.addCustomApi();                            // minimal custom-API form
+    const presets = Actions._intPresets(key).filter(p => p.id !== 'generic');
+    const label = cur.label || key;
+    const curId = (presets.find(p => (p.provider || '').toLowerCase() === (cur.provider || '').toLowerCase()) || presets[0] || { id: 'generic' }).id;
+    const tiles = presets.map(p => `<button type="button" class="prov-pick" data-id="${p.id}" onclick="Actions.pickProvider('${key}','${p.id}')">${esc(p.label)}</button>`).join('')
+      + `<button type="button" class="prov-pick" data-id="generic" onclick="Actions.pickProvider('${key}','generic')">Custom / other</button>`;
+    UI.modal(`<h3>Configure — ${esc(label)}</h3>
+      <p class="muted" style="font-size:12px;margin:-4px 0 8px">Pick your provider, paste the key, Save. ${cur.is_active ? '<span class="tag active">active</span>' : ''}</p>
+      <style>.prov-pick{border:1px solid var(--line,#e5e9f2);background:var(--card,#fff);color:inherit;border-radius:999px;padding:6px 12px;margin:0 6px 6px 0;cursor:pointer;font-size:13px}
+        .prov-pick.on{background:#7a3cf0;color:#fff;border-color:#7a3cf0}</style>
+      <div class="prov-tiles" style="margin-bottom:6px">${tiles}</div>
+      <div id="int_form"></div>`);
+    Actions.pickProvider(key, curId);
+  },
+  pickProvider(key, presetId) {
+    document.querySelectorAll('.prov-pick').forEach(b => b.classList.toggle('on', b.dataset.id === presetId));
     const presets = Actions._intPresets(key);
-    const popt = `<option value="">— pick a provider to auto-fill —</option>` +
-      presets.map(p => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
-    const emailLbl = key === 'email';
-    UI.modal(`<h3>${isNew ? 'Add API' : 'Configure — ' + esc(label)}</h3>
-      ${isNew ? `<div class="row"><div class="field"><label>Key (lowercase, no spaces)</label><input id="ig_newkey" placeholder="e.g. otp2 / esign / credit_bureau"></div>
-        <div class="field"><label>Display name</label><input id="ig_newlabel" placeholder="e.g. Backup OTP gateway"></div></div>
-        <div class="field"><label>Category</label><select id="ig_newcat">
-          <option value="messaging">Messaging & OTP</option><option value="identity">Identity (KYC)</option>
-          <option value="verification">Verification</option><option value="other" selected>Other</option></select></div>` : ''}
-      <div class="field"><label>Provider preset</label><select id="ig_preset" onchange="Actions.intApplyPreset('${key}')">${popt}</select></div>
-      <p class="muted" id="ig_hint" style="font-size:12px;margin:-4px 0 8px">${esc((presets[0] && presets[0].hint) || '')}</p>
-      <div class="field"><label>Provider</label><input id="ig_prov" value="${esc(cur.provider || '')}" placeholder="MSG91 / smtp / Protean"></div>
-      <div class="field"><label>Base URL${emailLbl ? ' / SMTP host' : ''}</label><input id="ig_url" value="${esc(cur.base_url || '')}"></div>
-      <div class="field"><label>API key${emailLbl ? ' / SMTP username' : ''} ${cur.has_key ? '<span class="tag active">set</span>' : ''}</label><input id="ig_key" type="password" placeholder="${cur.has_key ? '•••••• (leave blank to keep)' : '(paste key)'}"></div>
-      <div class="field"><label>API secret${emailLbl ? ' / SMTP password' : ''} ${cur.has_secret ? '<span class="tag active">set</span>' : ''}</label><input id="ig_secret" type="password" placeholder="${cur.has_secret ? '•••••• (leave blank to keep)' : '(paste secret, if any)'}"></div>
-      <div class="field"><label>Sender ID / From</label><input id="ig_sender" value="${esc(cur.sender_id || '')}"></div>
-      <div class="field"><label>Advanced config (JSON, optional)</label><input id="ig_extra" placeholder='Extra JSON merged into each request'></div>
+    const p = presets.find(x => x.id === presetId) || presets[presets.length - 1];
+    const cur = (Actions._intCache && Actions._intCache[key]) || {};
+    const messaging = ['sms', 'otp', 'whatsapp'].includes(key);
+    const secretKeys = ['aadhaar_kyc', 'pan_nsdl', 'penny_drop', 'upi_verify', 'gst_verify', 'vahan', 'cybercrime'];
+    const showSecret = secretKeys.includes(key) || presetId === 'twilio' || presetId === 'generic';
+    const showSender = messaging && p.sender !== '';
+    const getUrl = Actions._getKeyUrl(presetId);
+    const getLink = getUrl ? ` <a href="${esc(getUrl)}" target="_blank" rel="noopener">Get key →</a>` : '';
+    const wh = key === 'whatsapp' ? Actions._whWebhook('whatsapp') : '';
+    const tgChat = key === 'telegram';
+    $('int_form').innerHTML = `
+      <input type="hidden" id="ig_presetid" value="${esc(presetId)}">
+      <p class="muted" id="ig_hint" style="font-size:12px;margin:0 0 8px">${p.hint}${getLink}</p>
+      <div class="field"><label>API key ${cur.has_key ? '<span class="tag active">set — leave blank to keep</span>' : ''}</label><input id="ig_key" type="password" placeholder="${cur.has_key ? '•••••• (leave blank to keep)' : '(paste API key)'}"></div>
+      ${tgChat ? `<div class="field"><label>Chat ID</label><input id="ig_tg_chat" placeholder="your Telegram chat/group id, e.g. 123456789"></div>` : ''}
+      ${showSecret ? `<div class="field"><label>API secret ${cur.has_secret ? '<span class="tag active">set</span>' : ''}</label><input id="ig_secret" type="password" placeholder="${cur.has_secret ? '•••••• (leave blank to keep)' : '(paste secret)'}"></div>` : ''}
+      ${showSender ? `<div class="field"><label>Sender ID</label><input id="ig_sender" value="${esc(cur.sender_id || '')}" placeholder="${esc(p.sender || '')}"></div>` : ''}
+      ${wh ? `<div class="box" style="background:#f7f8fb;border:1px solid var(--line,#e5e9f2);border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12px">
+        <b>Webhook URL</b> — give this to Meta: <code style="word-break:break-all">${esc(wh)}</code>
+        <button class="btn sm ghost" type="button" onclick="Actions.copyText('${esc(wh)}')">Copy</button>
+        <div class="field" style="margin-top:6px"><label>Verify token (you choose it in Meta)</label><input id="ig_wa_verify" placeholder="any secret string"></div>
+        <div class="field"><label>App secret (optional — verifies callbacks)</label><input id="ig_wa_appsecret" type="password"></div></div>` : ''}
+      <details style="margin:4px 0 8px"><summary class="muted" style="font-size:12px;cursor:pointer">Advanced (endpoint &amp; extra config)</summary>
+        <div class="field"><label>Base URL</label><input id="ig_url" value="${esc(cur.base_url || p.base || '')}" placeholder="${esc(p.base || '')}"></div>
+        ${showSecret ? '' : `<div class="field"><label>API secret (if any)</label><input id="ig_secret" type="password" placeholder="${cur.has_secret ? '•••••• (leave blank to keep)' : '(optional)'}"></div>`}
+        <div class="field"><label>Extra config (JSON)</label><input id="ig_extra" placeholder='${esc(p.extra || '{}')}'></div></details>
       <div class="field"><label><input type="checkbox" id="ig_active" ${cur.is_active ? 'checked' : ''}> Active</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveIntegration('${key}')">Save</button>
+        <button class="btn ghost" onclick="Actions.validateIntegration('${key}')">Validate</button>
+        ${messaging ? `<button class="btn ghost" onclick="Actions.testIntegration('${key}')">Send test</button>` : ''}
+        <button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`;
+  },
+  // Minimal custom-API form for a provider we don't have a preset for.
+  addCustomApi() {
+    UI.modal(`<h3>Add a custom API</h3>
+      <div class="row"><div class="field"><label>Key (lowercase)</label><input id="ig_newkey" placeholder="e.g. esign"></div>
+        <div class="field"><label>Name</label><input id="ig_newlabel" placeholder="e.g. eSign provider"></div></div>
+      <div class="field"><label>Category</label><select id="ig_newcat">
+        <option value="messaging">Messaging & OTP</option><option value="identity">Identity (KYC)</option>
+        <option value="verification">Verification</option><option value="other" selected>Other</option></select></div>
+      <div class="field"><label>Base URL</label><input id="ig_url" placeholder="https://api.provider.com"></div>
+      <div class="field"><label>API key</label><input id="ig_key" type="password" placeholder="(paste key)"></div>
+      <div class="field"><label>API secret (if any)</label><input id="ig_secret" type="password"></div>
+      <div class="field"><label>Extra config (JSON, optional)</label><input id="ig_extra" placeholder='{}'></div>
+      <div class="field"><label><input type="checkbox" id="ig_active"> Active</label></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveIntegration('')">Save</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
   },
   // Dedicated SMTP email form — plain labelled fields, no JSON.
@@ -4190,23 +4246,34 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async saveIntegration(key) {
-    // Adding a brand-new API slot: read the key/label/category fields.
+    // Adding a brand-new custom API slot.
     if (!key) {
       const nk = (val('ig_newkey') || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
       if (!nk) return UI.toast('Enter a key (lowercase, no spaces)', 'err');
       key = nk;
     }
-    const body = { is_active: $('ig_active').checked };
+    const body = { is_active: $('ig_active') ? $('ig_active').checked : false };
     if ($('ig_newlabel') && val('ig_newlabel')) body.label = val('ig_newlabel');
     if ($('ig_newcat')) body.category = $('ig_newcat').value;
-    if (val('ig_prov')) body.provider = val('ig_prov');
+    // Provider tile → apply its provider name, base URL and extra defaults.
+    const presetId = $('ig_presetid') ? $('ig_presetid').value : '';
+    const p = presetId ? (Actions._intPresets(key).find(x => x.id === presetId)) : null;
+    if (p && p.provider) body.provider = p.provider;
     if (val('ig_url')) body.base_url = val('ig_url');
+    else if (p && p.base) body.base_url = p.base;
     if (val('ig_key')) body.api_key = val('ig_key');
-    if (val('ig_secret')) body.api_secret = val('ig_secret');
-    if (val('ig_sender')) body.sender_id = val('ig_sender');
-    const ex = $('ig_extra') ? val('ig_extra') : '';
-    if (ex) { try { body.extra = JSON.parse(ex); } catch { return UI.toast('Advanced config must be valid JSON', 'err'); } }
-    try { await Api.put(`/admin/integrations/${key}`, body); UI.closeModal(); UI.toast('Integration saved'); App.route(); }
+    if ($('ig_secret') && val('ig_secret')) body.api_secret = val('ig_secret');
+    if ($('ig_sender') && val('ig_sender')) body.sender_id = val('ig_sender');
+    // Merge: preset extra defaults ← advanced JSON ← per-provider fields.
+    let extra = {};
+    if (p && p.extra) { try { extra = JSON.parse(p.extra); } catch { extra = {}; } }
+    const adv = $('ig_extra') ? val('ig_extra') : '';
+    if (adv) { try { Object.assign(extra, JSON.parse(adv)); } catch { return UI.toast('Advanced config must be valid JSON', 'err'); } }
+    if ($('ig_tg_chat') && val('ig_tg_chat')) extra.chat_id = val('ig_tg_chat').trim();
+    if ($('ig_wa_verify') && val('ig_wa_verify')) extra.verify_token = val('ig_wa_verify').trim();
+    if ($('ig_wa_appsecret') && val('ig_wa_appsecret')) extra.app_secret = val('ig_wa_appsecret');
+    if (Object.keys(extra).length) body.extra = extra;
+    try { await Api.put(`/admin/integrations/${key}`, body); UI.closeModal(); UI.toast('Saved'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async testIntegration(key) {
