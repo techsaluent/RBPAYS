@@ -10,6 +10,7 @@ import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
 import { rupeesToPaise, bigintToNumber, paiseToRupees } from '../../utils/money';
 import { debit, credit } from '../wallet/wallet.service';
+import { assertTxnMpin } from '../../middleware/service';
 import { logAudit } from '../audit/audit.service';
 
 // Where uploaded receipts land. Served read-only at /uploads (see app.ts).
@@ -169,10 +170,11 @@ router.get(
 // upline's wallet to the member's. Only the member's immediate parent may do it.
 router.post(
   '/incoming/:id/approve',
-  validate(z.object({ remarks: z.string().trim().max(200).optional() })),
+  validate(z.object({ remarks: z.string().trim().max(200).optional(), mpin: z.string().trim().regex(/^\d{4,6}$/).optional() })),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();
     const approverId = req.user.id;
+    await assertTxnMpin(approverId, req.user.role, (req.body as { mpin?: string }).mpin);
     const remarks = (req.body as { remarks?: string }).remarks ?? null;
 
     const result = await withTransaction(async (client) => {

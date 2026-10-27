@@ -11,6 +11,7 @@ import { query, withTransaction } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { postJournal } from '../_shared/ledger';
 import { getMemberPolicy } from './policy.service';
+import { assertTxnMpin } from '../../middleware/service';
 import {
   createMember,
   downlineCounts,
@@ -75,6 +76,7 @@ const floatSchema = z.object({
   to_username: z.string().trim().optional(),
   amount: z.coerce.number().positive().max(1_000_000),
   note: z.string().trim().max(200).optional(),
+  mpin: z.string().trim().regex(/^\d{4,6}$/).optional(),
 }).refine((v) => v.to_user_id || v.to_username, {
   message: 'Provide to_user_id or to_username',
 });
@@ -91,6 +93,7 @@ router.post(
       throw ApiError.forbidden('Retailers cannot push float; only distributors and master distributors can');
     }
     const b = req.body as z.infer<typeof floatSchema>;
+    await assertTxnMpin(me.id, me.role, b.mpin);
 
     // Resolve the target and confirm they are a direct downline of mine.
     const { rows: tgt } = await query<{ id: string; parent_id: string | null; full_name: string }>(

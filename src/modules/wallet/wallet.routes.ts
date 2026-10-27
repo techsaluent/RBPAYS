@@ -11,6 +11,7 @@ import { getWalletByUser, listLedger, credit } from './wallet.service';
 import { subBalances, debitSub } from './subwallet.service';
 import { postJournal } from '../_shared/ledger';
 import { requestWithdrawal } from '../withdrawal/withdrawal.service';
+import { assertTxnMpin } from '../../middleware/service';
 import { query } from '../../../db';
 
 const router = Router();
@@ -33,6 +34,7 @@ router.get(
 const sweepSchema = z.object({
   from: z.enum(['commission', 'settlement']),
   amount: z.coerce.number().positive().max(1_000_000),
+  mpin: z.string().trim().regex(/^\d{4,6}$/).optional(),
 });
 
 // Move a sub-wallet balance (commission / AePS settlement) into the Main wallet.
@@ -43,6 +45,7 @@ router.post(
     if (!req.user) throw ApiError.unauthorized();
     const b = req.body as z.infer<typeof sweepSchema>;
     const userId = req.user.id;
+    await assertTxnMpin(userId, req.user.role, b.mpin);
     const amountPaise = rupeesToPaise(b.amount);
     const result = await withTransaction(async (client) => {
       await debitSub(client, userId, b.from, amountPaise);
@@ -74,6 +77,7 @@ const withdrawSchema = z.object({
   account_number: z.string().trim().regex(/^\d{6,20}$/, 'Invalid account number'),
   ifsc: z.string().trim().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC'),
   mode: z.enum(['IMPS', 'NEFT', 'RTGS']).default('IMPS'),
+  mpin: z.string().trim().regex(/^\d{4,6}$/).optional(),
 });
 
 router.post(
@@ -82,6 +86,7 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();
     const b = req.body as z.infer<typeof withdrawSchema>;
+    await assertTxnMpin(req.user.id, req.user.role, b.mpin);
     const w = await requestWithdrawal(req.user.id, {
       amountPaise: rupeesToPaise(b.amount),
       accountName: b.account_name,
