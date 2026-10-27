@@ -37,6 +37,7 @@ import siteRoutes from './modules/site/site.routes';
 import developerRoutes from './modules/partner/developer.routes';
 import partnerRoutes from './modules/partner/partner.routes';
 import brandRoutes from './modules/brand/brand.routes';
+import telemetryRoutes from './modules/telemetry/telemetry.routes';
 
 const router = Router();
 
@@ -80,5 +81,7 @@ router.use('/developer', developerRoutes);
 router.use('/partner', partnerRoutes);
 // Self-service white-label brand console for a tenant owner.
 router.use('/brand', brandRoutes);
+// Client-side error self-reporting (panel + apps).
+router.use('/telemetry', telemetryRoutes);
 
 export default router;

@@ -304,6 +304,7 @@ const NAV = [
   { key: 'devdesk', label: '🛠️ AI Dev Desk', roles: ['admin', 'staff'], perm: 'devdesk.manage', section: 'API & Providers' },
   { key: 'risk', label: 'Risk & AML', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
   { key: 'opsdesk', label: 'Ops Desk', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
+  { key: 'errors', label: '🐞 Error Monitor', roles: ['admin', 'staff'], perm: 'risk.manage', section: 'Risk & Ops' },
   { key: 'ledger', label: 'Ledger', roles: ['admin', 'staff'], perm: 'ledger.view', section: 'Risk & Ops' },
   { key: 'disputes', label: 'Disputes', roles: ['admin', 'staff'], perm: 'disputes.manage', section: 'Risk & Ops' },
   { key: 'broadcast', label: '📣 Broadcast', roles: ['admin', 'staff'], perm: 'broadcast.manage', section: 'Risk & Ops' },
@@ -1769,6 +1770,67 @@ const Screens = {
       <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
   },
 
+  // Admin: Error Monitor — self-reported web/API errors + AI triage.
+  async errors() {
+    const st = State._errFilter || '';
+    const d = await Api.get('/admin/errors' + (st ? '?status=' + st : '')).catch(() => ({ items: [] }));
+    const tag = { open: '<span class="tag" style="background:#fde8e8;color:#b02a2a">open</span>', triaged: '<span class="tag">triaged</span>', resolved: UI.statusTag('resolved'), ignored: '<span class="tag">ignored</span>' };
+    const rows = (d.items || []).map(e => `<tr>
+      <td><b>${esc((e.message || '').slice(0, 90))}</b><br><span class="muted">${esc(e.source)} · ${esc(e.route || '')}</span></td>
+      <td class="right">${e.count}</td>
+      <td class="muted">${new Date(e.last_seen).toLocaleString('en-IN')}</td>
+      <td>${tag[e.status] || esc(e.status)} ${e.has_ai ? '<span class="tag">🤖 AI</span>' : ''} ${e.escalated_ref ? '<span class="tag">↗ ' + esc(e.escalated_ref) + '</span>' : ''}</td>
+      <td><button class="btn sm ghost" onclick="Actions.viewError('${e.id}')">Open</button></td>
+    </tr>`).join('');
+    const pill = (v, label) => `<button class="btn sm ${st === v ? '' : 'ghost'}" onclick="Actions.filterErrors('${v}')">${label}</button>`;
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2>🐞 Error Monitor</h2>
+        <span>${pill('', 'All')} ${pill('open', 'Open')} ${pill('triaged', 'Triaged')} ${pill('resolved', 'Resolved')} ${pill('ignored', 'Ignored')}</span></div>
+      <p class="muted">Errors the panel and API report about themselves, grouped by signature. Ask AI to diagnose and draft a fix — the fix is a suggestion you review, never auto-applied.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Error</th><th class="right">Count</th><th>Last seen</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=5 class=muted>No errors reported 🎉</td></tr>'}</tbody></table></div></div>`;
+  },
+  filterErrors(v) { State._errFilter = v; App.route(); },
+  async viewError(id) {
+    const r = await Api.get('/admin/errors/' + id).catch(() => null);
+    if (!r) return UI.toast('Could not load', 'err');
+    const e = r.error_report;
+    State._errId = id;
+    UI.modal(`<h3>${esc((e.message || '').slice(0, 120))}</h3>
+      <p class="muted">${esc(e.source)} · ${esc(e.route || '')} · seen <b>${e.count}×</b> · first ${new Date(e.first_seen).toLocaleString('en-IN')}</p>
+      ${e.stack ? `<details><summary>Stack</summary><pre style="white-space:pre-wrap;font-size:11px;max-height:200px;overflow:auto">${esc(e.stack)}</pre></details>` : ''}
+      <div id="err-ai" style="margin-top:10px">${Actions._errAiHtml(e)}</div>
+      <div class="foot" style="flex-wrap:wrap;gap:6px">
+        <button class="btn ghost" onclick="UI.closeModal()">Close</button>
+        <button class="btn ghost" onclick="Actions.errStatus('triaged')">Mark triaged</button>
+        <button class="btn ghost" onclick="Actions.errStatus('ignored')">Ignore</button>
+        <button class="btn ghost" onclick="Actions.errStatus('resolved')">Resolve</button>
+        <button class="btn ghost" onclick="Actions.escalateError()">↗ Open fix PR</button>
+        <button class="btn" onclick="Actions.diagnoseError()">🤖 Diagnose with AI</button></div>`);
+  },
+  _errAiHtml(e) {
+    if (!e.ai_diagnosis && !e.ai_suggested_fix) return '<p class="muted">No AI diagnosis yet. Click “Diagnose with AI”.</p>';
+    return `<div style="background:var(--card,#f7f7fb);border-radius:10px;padding:12px">
+      <b>🤖 Diagnosis</b><p style="margin:4px 0 10px">${esc(e.ai_diagnosis || '—')}</p>
+      ${e.ai_suggested_fix ? `<b>Suggested fix</b><pre style="white-space:pre-wrap;font-size:12px;margin-top:4px">${esc(e.ai_suggested_fix)}</pre>` : ''}
+      <p class="muted" style="font-size:11px;margin-top:8px">A suggestion for a human to review — not applied automatically.</p></div>`;
+  },
+  async diagnoseError() {
+    const box = $('err-ai'); if (box) box.innerHTML = '<p class="muted">🤖 Thinking…</p>';
+    try { const r = await Api.post(`/admin/errors/${State._errId}/diagnose`, {}); if (box) box.innerHTML = Actions._errAiHtml(r.error_report); }
+    catch (err) { if (box) box.innerHTML = `<p class="msg err">${esc(err.message)}</p>`; }
+  },
+  async errStatus(status) {
+    try { await Api.post(`/admin/errors/${State._errId}/status`, { status }); UI.toast('Marked ' + status); UI.closeModal(); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async escalateError() {
+    try {
+      const r = await Api.post(`/admin/errors/${State._errId}/escalate`, {});
+      UI.toast(r.already ? 'Already escalated' : 'Issue opened — a fix PR will follow');
+      UI.closeModal(); App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
   // Admin: ops desk — maker-checker manual adjustments.
   async opsdesk() {
     const [d, tx] = await Promise.all([
