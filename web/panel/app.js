@@ -116,6 +116,29 @@ const Api = {
   patch(p, body) { return this.call(p, { method: 'PATCH', body }); },
   put(p, body) { return this.call(p, { method: 'PUT', body }); },
   del(p) { return this.call(p, { method: 'DELETE' }); },
+  // POST that transparently satisfies a transaction MPIN / payout-OTP
+  // challenge: on the server asking, prompt once and retry with the credential.
+  // Keeps money actions from dead-ending and never sends a blank credential.
+  async postSecure(p, body) {
+    try { return await this.post(p, body); }
+    catch (err) {
+      if (err.code === 'txn_mpin_required') {
+        const mpin = await UI.askPin({ title: 'Transaction MPIN', label: 'Enter your 4–6 digit MPIN to authorise this', pattern: '\\d{4,6}' });
+        if (!mpin) throw err;
+        return this.post(p, { ...body, mpin });
+      }
+      if (err.code === 'txn_mpin_not_set') {
+        UI.toast('Set a transaction MPIN under Security first.', 'err');
+        throw err;
+      }
+      if (err.code === 'payout_otp_required') {
+        const otp = await UI.askPin({ title: 'Payout verification', label: 'Enter the 6-digit code sent to your email', pattern: '\\d{6}', hint: err.details && err.details.dev_code ? ('Dev code: ' + err.details.dev_code) : '' });
+        if (!otp) throw err;
+        return this.post(p, { ...body, otp });
+      }
+      throw err;
+    }
+  },
 };
 
 // ---------------- Auth ----------------
@@ -254,6 +277,35 @@ const UI = {
     $('modal-root').innerHTML = `<div class="modal-bg" onclick="if(event.target===this)UI.closeModal()"><div class="modal">${html}</div></div>`;
   },
   closeModal() { $('modal-root').innerHTML = ''; },
+  // Promise-based secure-code prompt (MPIN / OTP). Resolves the entered value,
+  // or null if cancelled. Masked input, numeric, Enter submits.
+  askPin({ title, label, pattern = '\\d{4,6}', hint = '' } = {}) {
+    return new Promise((resolve) => {
+      $('modal-root').innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:360px">
+        <h3 style="margin:0 0 8px">${esc(title || 'Confirm')}</h3>
+        <p class="muted" style="font-size:13px;margin:0 0 10px">${esc(label || '')}</p>
+        <input id="askpin_input" type="password" inputmode="numeric" autocomplete="off"
+          pattern="${pattern}" maxlength="6" style="width:100%;letter-spacing:4px;font-size:18px;text-align:center"
+          placeholder="••••••">
+        ${hint ? `<p class="muted" style="font-size:11px;margin:6px 0 0">${esc(hint)}</p>` : ''}
+        <div id="askpin_err" class="msg err" style="display:none;margin-top:8px"></div>
+        <div class="foot" style="margin-top:12px">
+          <button class="btn" id="askpin_ok">Confirm</button>
+          <button class="btn ghost" id="askpin_cancel">Cancel</button></div></div></div>`;
+      const input = $('askpin_input');
+      const re = new RegExp('^' + pattern + '$');
+      const done = (v) => { UI.closeModal(); resolve(v); };
+      const submit = () => {
+        const v = (input.value || '').trim();
+        if (!re.test(v)) { const e = $('askpin_err'); e.style.display = 'block'; e.textContent = 'Enter a valid code.'; return; }
+        done(v);
+      };
+      input.focus();
+      input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') submit(); if (ev.key === 'Escape') done(null); });
+      $('askpin_ok').onclick = submit;
+      $('askpin_cancel').onclick = () => done(null);
+    });
+  },
   statusTag(s) { return `<span class="tag ${esc(s)}">${esc(s)}</span>`; },
   // A single statistic tile: colour class, icon, label, big value, sub-line.
   stat(cls, ico, label, value, sub) {
@@ -1008,7 +1060,7 @@ const Screens = {
     const body = { amount: +val('wd_amt'), account_name: val('wd_name'), account_number: val('wd_acc'),
       ifsc: val('wd_ifsc').toUpperCase(), mode: val('wd_mode') };
     if (!body.amount || body.amount <= 0) return UI.toast('Enter an amount', 'err');
-    try { await Api.post('/wallet/withdraw', body); UI.closeModal(); UI.toast('Withdrawal requested'); App.route(); }
+    try { await Api.postSecure('/wallet/withdraw', body); UI.closeModal(); UI.toast('Withdrawal requested'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
 
@@ -3342,13 +3394,14 @@ const Actions = {
       $('bio-status').innerHTML = `<span style="color:#c5221f">${esc(err.message)}</span>`;
     }
   },
-  async submitTxn(mpin) {
+  async submitTxn(auth) {
     const s = SERVICES.find(x => x.key === $('svc').value);
     const v = {}; s.fields.forEach(([n]) => v[n] = document.querySelector(`#svc-fields [name="${n}"]`).value.trim());
     const body = s.build(v);
     if (s.biometric && Actions._bio) Object.assign(body, Actions._bio);
     if (s.provider && Actions._provider) body.provider_id = Actions._provider;
-    if (mpin) body.mpin = mpin;
+    if (auth && auth.mpin) body.mpin = auth.mpin;
+    if (auth && auth.otp) body.otp = auth.otp;
     $('txn-result').innerHTML = '<span class="muted">Processing…</span>';
     try {
       const d = await Api.post(s.path, body);
@@ -3361,10 +3414,16 @@ const Actions = {
       }
       App.refreshWallet();
     } catch (err) {
-      if (err.code === 'txn_mpin_required' || err.code === 'unauthorized' && /MPIN/i.test(err.message)) {
-        const pin = prompt('Enter your transaction MPIN to confirm:');
-        if (pin) return Actions.submitTxn(pin.trim());
+      if (err.code === 'txn_mpin_required' || (err.code === 'unauthorized' && /MPIN/i.test(err.message))) {
+        const pin = await UI.askPin({ title: 'Transaction MPIN', label: 'Enter your 4–6 digit MPIN to confirm this transaction', pattern: '\\d{4,6}' });
+        if (pin) return Actions.submitTxn({ ...(auth || {}), mpin: pin });
         $('txn-result').innerHTML = '<div class="msg err">Transaction cancelled — MPIN required.</div>';
+        return;
+      }
+      if (err.code === 'payout_otp_required') {
+        const otp = await UI.askPin({ title: 'Payout verification', label: 'Enter the 6-digit code sent to your email', pattern: '\\d{6}', hint: err.details && err.details.dev_code ? ('Dev code: ' + err.details.dev_code) : '' });
+        if (otp) return Actions.submitTxn({ ...(auth || {}), otp });
+        $('txn-result').innerHTML = '<div class="msg err">Payout cancelled — verification code required.</div>';
         return;
       }
       if (err.code === 'txn_mpin_not_set') {
@@ -3525,13 +3584,13 @@ const Actions = {
   async pushFloat(id, name) {
     const amt = prompt(`Push float to ${name} (₹):`, '1000');
     if (!amt) return;
-    try { await Api.post('/network/float', { to_user_id: id, amount: +amt }); UI.toast('Float pushed'); App.refreshWallet(); App.route(); }
+    try { await Api.postSecure('/network/float', { to_user_id: id, amount: +amt }); UI.toast('Float pushed'); App.refreshWallet(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async sweep(from, max) {
     const amt = prompt(`Sweep ${from} balance to main wallet (₹, max ${max}):`, String(max));
     if (!amt) return;
-    try { await Api.post('/wallet/sweep', { from, amount: +amt }); UI.toast('Swept to main'); App.refreshWallet(); App.route(); }
+    try { await Api.postSecure('/wallet/sweep', { from, amount: +amt }); UI.toast('Swept to main'); App.refreshWallet(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async saveTaxProfile() {
@@ -4917,7 +4976,7 @@ const Actions = {
   },
   async approveIncoming(id) {
     if (!confirm('Approve and transfer from your wallet to the member?')) return;
-    try { const r = await Api.post(`/topup/incoming/${id}/approve`, {}); UI.toast('Approved — ' + r.amount + ' transferred'); App.route(); }
+    try { const r = await Api.postSecure(`/topup/incoming/${id}/approve`, {}); UI.toast('Approved — ' + r.amount + ' transferred'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async rejectIncoming(id) {
