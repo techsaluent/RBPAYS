@@ -693,7 +693,22 @@ const Screens = {
     const t = r.tenant;
     State._myBrand = t;
     const base = (window.TUTIPAYS_API || (location.origin + '/api/v1')).replace(/\/$/, '');
+    // Partner KPI strip (brand GTV, members, sub-brands, share owed).
+    let kpis = '';
+    try {
+      const dd = (await Api.get('/brand/dashboard')).dashboard;
+      const roleBits = Object.entries(dd.members.by_role || {})
+        .map(([role, n]) => `${esc(role.replace(/_/g, ' '))}: <b>${n}</b>`).join(' · ') || 'none yet';
+      kpis = `<div class="grid cards">
+        ${UI.stat('a','💸','Brand GTV (this month)', money(dd.month.gtv_paise/100), dd.month.success_txns + ' successful txns')}
+        ${UI.stat('b','📈','Gross margin (month)', money(dd.month.gross_margin_paise/100), 'Your accrued share: '+money(dd.month.accrued_partner_earning_paise/100)+' @ '+(dd.partner_share_bps/100)+'%')}
+        ${UI.stat('c','👥','Members', dd.members.total, roleBits)}
+        ${UI.stat('d','💰','Share owed to you', money(dd.owed.net_payable_paise/100), dd.owed.statements + ' issued statement(s) · ' + dd.sub_brands + ' sub-brand(s)')}
+      </div>`;
+    } catch (e) { kpis = ''; }
     $('view').innerHTML = `
+      ${kpis ? `<div class="panel" style="margin-bottom:14px"><h2 style="margin:0 0 10px">📊 Partner dashboard</h2>${kpis}
+        <p class="muted" style="margin:10px 0 0">GTV and margin are for your whole white-label network this calendar month. Generate & settle statements under <b>Partner billing</b>.</p></div>` : ''}
       <div class="panel"><h2>🎨 My Brand</h2>
         <p class="muted">Your white-label brand. Changes apply to your panel, receipts and (on your custom domain) your marketing site — for your whole network.</p>
         <div class="row" style="gap:8px;flex-wrap:wrap">

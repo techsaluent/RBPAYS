@@ -11,7 +11,7 @@ import {
   tenantServiceMatrix, setTenantServiceVisibility,
   listSubTenants, createSubTenant, setTenantSetting,
 } from '../tenant/tenant.service';
-import { resellerEarningsForPeriod, generateResellerInvoice, listInvoices } from '../tenant/tenant.billing.service';
+import { resellerEarningsForPeriod, generateResellerInvoice, listInvoices, partnerDashboard } from '../tenant/tenant.billing.service';
 
 /**
  * Self-service white-label brand console (Sec2Pay-style): a partner who OWNS a
@@ -45,6 +45,12 @@ async function myTenantId(req: Request): Promise<string> {
 router.get('/', asyncHandler(async (req: Request, res: Response) => {
   const id = await myTenantId(req);
   res.json({ tenant: await getTenant(id) });
+}));
+
+// Partner dashboard: brand GTV, members, sub-brands, partner share owed.
+router.get('/dashboard', asyncHandler(async (req: Request, res: Response) => {
+  const id = await myTenantId(req);
+  res.json({ tenant: await getTenant(id), dashboard: await partnerDashboard(id) });
 }));
 
 router.put('/', validate(brandingSchema), asyncHandler(async (req: Request, res: Response) => {

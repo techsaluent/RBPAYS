@@ -64,6 +64,67 @@ export async function resellerEarningsForPeriod(resellerTenantId: string, start:
   return { reseller_share_bps: resellerBps, total_gross_margin_paise: totalGross, total_reseller_earning_paise: totalEarning, sub_tenants: breakdown };
 }
 
+/**
+ * Partner (tenant-owner) dashboard: headline KPIs for a white-label brand —
+ * this-month GTV / txns / gross margin, the partner's accrued earning for the
+ * month (margin × share, not yet invoiced), the balance owed on issued-unpaid
+ * statements, member counts by role, and the sub-brand count.
+ */
+export async function partnerDashboard(tenantId: string) {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+  const today = now.toISOString().slice(0, 10);
+
+  const shareBps = Math.max(0, Math.min(10000, parseInt(await getTenantSetting(tenantId, 'partner_share_bps', '0'), 10) || 0));
+  const { grossMargin, txnCount } = await marginForPeriod(tenantId, monthStart, today);
+  const accruedEarning = grossMargin > 0 ? Math.floor((grossMargin * shareBps) / 10000) : 0;
+
+  // GTV (successful transaction value) this month for the tenant's network.
+  const gtv = await query<{ gtv: string; n: string }>(
+    `SELECT COALESCE(SUM(t.amount_paise),0) AS gtv, COUNT(*) AS n
+       FROM transactions t JOIN users u ON u.id = t.user_id
+      WHERE u.tenant_id = $1 AND t.status = 'success'
+        AND t.created_at >= $2::date AND t.created_at < ($3::date + INTERVAL '1 day')`,
+    [tenantId, monthStart, today],
+  );
+
+  // Member counts by role in the brand.
+  const members = await query<{ role: string; n: string }>(
+    `SELECT role, COUNT(*) AS n FROM users WHERE tenant_id = $1 GROUP BY role`,
+    [tenantId],
+  );
+  const memberCounts: Record<string, number> = {};
+  let totalMembers = 0;
+  for (const m of members.rows) { memberCounts[m.role] = Number(m.n); totalMembers += Number(m.n); }
+
+  // Sub-brands (resellers) under this tenant.
+  const subs = await query<{ n: string }>(
+    'SELECT COUNT(*) AS n FROM tenants WHERE parent_tenant_id = $1', [tenantId],
+  );
+
+  // Balance owed to the partner: issued-but-unpaid statements.
+  const owed = await query<{ owed: string; count: string }>(
+    `SELECT COALESCE(SUM(net_payable_paise),0) AS owed, COUNT(*) AS count
+       FROM tenant_invoices WHERE tenant_id = $1 AND status = 'issued'`,
+    [tenantId],
+  );
+
+  return {
+    period: { month_start: monthStart, as_of: today },
+    partner_share_bps: shareBps,
+    month: {
+      gtv_paise: Number(gtv.rows[0]?.gtv ?? 0),
+      success_txns: Number(gtv.rows[0]?.n ?? 0),
+      gross_margin_paise: grossMargin,
+      margin_txns: txnCount,
+      accrued_partner_earning_paise: accruedEarning,
+    },
+    members: { total: totalMembers, by_role: memberCounts },
+    sub_brands: Number(subs.rows[0]?.n ?? 0),
+    owed: { statements: Number(owed.rows[0]?.count ?? 0), net_payable_paise: Number(owed.rows[0]?.owed ?? 0) },
+  };
+}
+
 /** Generate a reseller-earnings statement (kind='reseller') for a period. */
 export async function generateResellerInvoice(resellerTenantId: string, start: string, end: string, notes?: string) {
   const e = await resellerEarningsForPeriod(resellerTenantId, start, end);
