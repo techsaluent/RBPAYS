@@ -22,7 +22,7 @@ import { dashboardStats } from './admin.dashboard';
 import { refreshProviderRegistry } from '../../providers/registry';
 import { dryRunDynamic, liveTestDynamic } from '../../providers/dynamic';
 import { toCsv } from '../reports/reports.service';
-import { draftProviderConfig, analyzeDevRequest } from '../ai/ai.service';
+import { draftProviderConfig, analyzeDevRequest, aiChat } from '../ai/ai.service';
 import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } from '../devdesk/devdesk.service';
 import { postJournal } from '../_shared/ledger';
 import { settleByReference } from '../_shared/settle';
@@ -3183,6 +3183,44 @@ router.get(
       sandbox_count: items.filter((i) => i.status === 'sandbox').length,
       none_count: items.filter((i) => i.status === 'none_active').length,
     });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// AI advisor narrative — turns the deterministic Blueprint advisor findings
+// into a prioritized, plain-language review using the configured AI model
+// ('ai_coder'). Degrades gracefully: returns ai:false when no model is set.
+// ---------------------------------------------------------------------
+router.post(
+  '/advisor/ai-review',
+  validate(z.object({
+    findings: z.array(z.object({
+      level: z.string().trim().max(10),
+      title: z.string().trim().max(200),
+      detail: z.string().trim().max(800),
+    })).min(1).max(40),
+    context: z.string().trim().max(2000).optional(),
+  })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as { findings: Array<{ level: string; title: string; detail: string }>; context?: string };
+    const system =
+      'You are an operations, growth and compliance advisor for an Indian B2B fintech aggregator ' +
+      '(services: recharge, BBPS, DMT, AePS, payout, travel, insurance, payment gateway, with a ' +
+      'super-distributor → distributor → retailer network). You are given automated findings about ' +
+      'the platform\'s live configuration. Write a concise, prioritized review for the admin with three ' +
+      'short sections: "Do first" (the 2-3 most important actions and why), "Grow" (how to gain more ' +
+      'business advantage from what is / isn\'t set up), and "Secure & comply" (security + AML posture). ' +
+      'Be specific and practical, use short bullets, Indian context (RBI/KYC/TDS/GST where relevant). ' +
+      'Base everything ONLY on the findings given — do not invent facts or numbers.';
+    const user = 'Findings (level | title | detail):\n' +
+      b.findings.map((f) => `- ${f.level} | ${f.title} | ${f.detail}`).join('\n') +
+      (b.context ? `\n\nContext: ${b.context}` : '');
+    const out = await aiChat(system, user);
+    if (!out) {
+      res.json({ ai: false, message: 'No AI model is configured. Set one in 🤖 AI Integration Studio to enable the narrative review (a free model works).' });
+      return;
+    }
+    res.json({ ai: true, narrative: out });
   }),
 );
 
