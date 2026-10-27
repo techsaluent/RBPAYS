@@ -5,6 +5,7 @@ import { closePool, pool } from '../db';
 import { refreshProviderRegistry } from './providers/registry';
 import { refreshTaxConfig } from './modules/tax/tax.config';
 import { startAutoReconLoop } from './modules/recon/autoRecon';
+import { startBackupLoop } from './modules/backup/backup.service';
 
 async function main() {
   // Fail fast if the VPS database is unreachable at boot.
@@ -22,10 +23,13 @@ async function main() {
 
   // Background auto-reconciliation sweep (no-op unless auto_recon_hours > 0).
   const stopAutoRecon = startAutoReconLoop();
+  // Daily disaster-recovery backup to Telegram (no-op unless configured).
+  const stopBackup = startBackupLoop();
 
   const shutdown = (signal: string) => {
     logger.info({ signal }, 'shutting down');
     stopAutoRecon();
+    stopBackup();
     server.close(async () => {
       await closePool();
       process.exit(0);

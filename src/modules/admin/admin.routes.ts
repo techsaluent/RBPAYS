@@ -1951,6 +1951,56 @@ router.post(
   }),
 );
 
+// Validate ANY integration's config. Email (SMTP) actually connects +
+// authenticates; Telegram calls getMe; others check endpoint + key + active.
+router.post(
+  '/integrations/:key/validate',
+  asyncHandler(async (req: Request, res: Response) => {
+    const key = req.params.key;
+    if (key === 'email') {
+      const { validateEmailConfig } = await import('../notify/notify.service');
+      res.json(await validateEmailConfig());
+      return;
+    }
+    if (key === 'telegram') {
+      const { rows } = await query<{ api_key: string | null; is_active: boolean; extra: Record<string, unknown> | null }>(
+        "SELECT api_key, is_active, extra FROM platform_integrations WHERE key = 'telegram'",
+      );
+      const r = rows[0];
+      const token = (r?.api_key || '').trim();
+      const chatId = String((r?.extra?.chat_id as string) || '').trim();
+      const missing: string[] = [];
+      if (!token) missing.push('Bot token (API key)');
+      if (!chatId) missing.push('Chat ID (Advanced config: {"chat_id":"…"})');
+      if (missing.length) { res.json({ ok: false, active: !!r?.is_active, missing }); return; }
+      const { telegramGetMe } = await import('../backup/telegram');
+      const me = await telegramGetMe(token);
+      res.json(me.ok
+        ? { ok: true, active: !!r?.is_active, provider: `@${me.username}`, missing: [], note: r?.is_active ? undefined : 'Configured but not Active.' }
+        : { ok: false, active: !!r?.is_active, missing: [], error: me.error });
+      return;
+    }
+    const { rows } = await query<{ provider: string | null; base_url: string | null; is_active: boolean; has_key: boolean }>(
+      `SELECT provider, base_url, is_active, (api_key IS NOT NULL AND api_key <> '') AS has_key
+         FROM platform_integrations WHERE key = $1`,
+      [key],
+    );
+    const r = rows[0];
+    if (!r) throw ApiError.notFound('Integration not found');
+    const keyless = ['ifsc_lookup', 'pincode'].includes(key);
+    const missing: string[] = [];
+    if (!r.base_url) missing.push('Base URL / endpoint');
+    if (!r.has_key && !keyless) missing.push('API key');
+    res.json({
+      ok: missing.length === 0,
+      active: r.is_active,
+      provider: r.provider,
+      missing,
+      note: missing.length === 0 && !r.is_active ? 'Configured but not Active — turn it on to use it.' : undefined,
+    });
+  }),
+);
+
 // ---------------------------------------------------------------------
 // Statutory tax — verify PANs, view TDS (194H/194N) and GST records
 // ---------------------------------------------------------------------
@@ -3187,6 +3237,72 @@ router.get(
       sandbox_count: items.filter((i) => i.status === 'sandbox').length,
       none_count: items.filter((i) => i.status === 'none_active').length,
     });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Disaster-recovery backup to Telegram (daily DB dump + optional .env).
+// ---------------------------------------------------------------------
+router.get(
+  '/backup/status',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { rows } = await query<{ key: string; value: string | null }>(
+      "SELECT key, value FROM site_settings WHERE key IN ('backup_daily_hour','backup_include_env','backup_last_date','backup_last_status')",
+    );
+    const s: Record<string, string> = {};
+    rows.forEach((r) => { s[r.key] = r.value ?? ''; });
+    let last: unknown = null;
+    try { last = s.backup_last_status ? JSON.parse(s.backup_last_status) : null; } catch { last = null; }
+    const tg = await query<{ is_active: boolean }>("SELECT is_active FROM platform_integrations WHERE key = 'telegram'");
+    res.json({
+      telegram_active: !!tg.rows[0]?.is_active,
+      daily_hour: s.backup_daily_hour === '' ? null : Number(s.backup_daily_hour),
+      include_env: s.backup_include_env === 'true',
+      last_date: s.backup_last_date || null,
+      last_status: last,
+    });
+  }),
+);
+
+router.put(
+  '/backup/settings',
+  validate(z.object({
+    daily_hour: z.number().int().min(0).max(23).nullable().optional(),
+    include_env: z.boolean().optional(),
+  })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const b = req.body as { daily_hour?: number | null; include_env?: boolean };
+    const upsert = async (key: string, value: string) => query(
+      `INSERT INTO site_settings (key, value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [key, value],
+    );
+    if (b.daily_hour !== undefined) await upsert('backup_daily_hour', b.daily_hour === null ? '' : String(b.daily_hour));
+    if (b.include_env !== undefined) await upsert('backup_include_env', b.include_env ? 'true' : 'false');
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'backup.settings',
+      targetType: 'site_settings', targetId: 'backup', detail: { daily_hour: b.daily_hour, include_env: b.include_env } });
+    res.json({ ok: true });
+  }),
+);
+
+router.post(
+  '/backup/run',
+  validate(z.object({ include_env: z.boolean().optional() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { runBackup } = await import('../backup/backup.service');
+    await logAudit({ actorId: req.user?.id, actorRole: req.user?.role, action: 'backup.run', targetType: 'backup', targetId: 'manual', detail: {} });
+    const r = await runBackup({ includeEnv: (req.body as { include_env?: boolean }).include_env });
+    res.json(r);
+  }),
+);
+
+router.post(
+  '/backup/test-telegram',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const { telegramConfig, sendTelegramMessage } = await import('../backup/telegram');
+    const cfg = await telegramConfig();
+    if (!cfg) { res.json({ ok: false, message: 'Telegram not configured/active. Add bot token + chat id in the API Hub.' }); return; }
+    const ok = await sendTelegramMessage(cfg, '✅ TutiPays test message — your Telegram backup bot is connected.');
+    res.json({ ok, message: ok ? 'Test message sent — check your Telegram.' : 'Failed — check the bot token and that the bot has been started / added to the chat.' });
   }),
 );
 
