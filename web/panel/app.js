@@ -305,6 +305,7 @@ const NAV = [
   { key: 'treasury', label: 'Treasury', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'connectedbanking', label: '🏦 Connected Banking', roles: ['admin', 'staff'], perm: 'payouts.manage', section: 'Finance' },
   { key: 'apiconfig', label: '⚙️ API Configuration', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
+  { key: 'blueprint', label: '🗺️ Blueprint & Advisor', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'adminservices', label: 'Services', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providers', label: 'Providers', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
   { key: 'providerconnections', label: '🔌 Provider Connections', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'API & Providers' },
@@ -420,13 +421,15 @@ const App = {
     $('who-name').textContent = State.user.full_name;
     $('who-role').textContent = State.user.role.replace(/_/g, ' ');
     // Render nav, inserting a section header whenever the group changes.
+    // A feature search box at the top filters the whole menu as you type.
     let lastSection = null;
-    $('nav').innerHTML = NAV.filter(allowed).map(i => {
+    const navItems = NAV.filter(allowed).map(i => {
       let head = '';
       if (i.section && i.section !== lastSection) { head = `<div class="nav-sec">${esc(i.section)}</div>`; lastSection = i.section; }
       else if (!i.section) lastSection = null;
-      return `${head}<a href="#/${i.key}" data-k="${i.key}">${i.label}</a>`;
+      return `${head}<a href="#/${i.key}" data-k="${i.key}" data-label="${esc((i.label || '').toLowerCase())} ${esc((i.section || '').toLowerCase())}">${i.label}</a>`;
     }).join('');
+    $('nav').innerHTML = `<input id="nav-search" class="nav-search" type="search" placeholder="🔍 Search features…" oninput="App.filterNav(this.value)" autocomplete="off">${navItems}`;
     await App.refreshWallet();
     App.refreshNotifBadge();
     if (!App._notifTimer) App._notifTimer = setInterval(App.refreshNotifBadge, 60000);
@@ -455,6 +458,20 @@ const App = {
     $('page-title').textContent = item.label;
     $('view').innerHTML = '<div class="muted">Loading…</div>';
     (Screens[item.key] || (() => {}))();
+  },
+  // Live-filter the sidebar menu by feature name / section.
+  filterNav(q) {
+    const term = (q || '').trim().toLowerCase();
+    const links = document.querySelectorAll('#nav a');
+    links.forEach(a => { a.style.display = (!term || (a.dataset.label || '').includes(term)) ? '' : 'none'; });
+    // Hide a section header when none of its items match.
+    document.querySelectorAll('#nav .nav-sec').forEach(sec => {
+      let any = false;
+      for (let el = sec.nextElementSibling; el && !el.classList.contains('nav-sec'); el = el.nextElementSibling) {
+        if (el.tagName === 'A' && el.style.display !== 'none') { any = true; break; }
+      }
+      sec.style.display = any ? '' : 'none';
+    });
   },
 };
 
@@ -2502,6 +2519,89 @@ const Screens = {
         <thead><tr><th>Service</th><th>Provider</th><th>Key</th><th>Status</th><th></th></tr></thead>
         <tbody>${hubRows || '<tr><td colspan=5 class=muted>No hub APIs.</td></tr>'}</tbody></table></div>
     </div>`;
+  },
+
+  // Admin: Blueprint & Advisor — a live map of how money/data flows
+  // (service → active provider → webhook callback) plus an AI-style readiness,
+  // advantage & security advisor that reads the live config and flags fixes.
+  async blueprint() {
+    const [svcs, gl, ints, settings] = await Promise.all([
+      Api.get('/admin/services').catch(() => ({ items: [] })),
+      Api.get('/admin/go-live').catch(() => ({ items: [] })),
+      Api.get('/admin/integrations').catch(() => ({ items: [] })),
+      Api.get('/admin/site/settings').catch(() => ({ items: [] })),
+    ]);
+    const glMap = {}; (gl.items || []).forEach(i => { glMap[i.service_code] = i; });
+    const setVal = (k) => { const r = (settings.items || []).find(x => x.key === k); return r ? (r.value || '') : ''; };
+    const intBy = (k) => (ints.items || []).find(i => i.key === k) || {};
+    const anyActive = (keys) => keys.some(k => intBy(k).is_active);
+
+    // ---- Advisor: deterministic readiness / advantage / security checks ----
+    const adv = [];
+    const add = (level, title, detail) => adv.push({ level, title, detail });
+    const notSet = (svcs.items || []).filter(s => (glMap[s.code]?.status || 'none_active') === 'none_active').map(s => s.code);
+    const sandbox = (svcs.items || []).filter(s => glMap[s.code]?.status === 'sandbox').map(s => s.code);
+    const live = (svcs.items || []).filter(s => glMap[s.code]?.status === 'live').map(s => s.code);
+    // Security
+    if (!anyActive(['email'])) add('crit', 'Email API is OFF — logins will break', 'Email OTP at login is mandatory. Activate the Email slot in the API Hub or no one (including admins) can sign in.');
+    else add('ok', 'Email OTP delivery is active', 'Login two-factor can reach members.');
+    add(setVal('security_require_login_otp') === 'false' ? 'warn' : 'ok',
+      setVal('security_require_login_otp') === 'false' ? 'Login OTP (2FA) is disabled' : 'Login OTP (2FA) is enforced',
+      setVal('security_require_login_otp') === 'false' ? 'Turn it on in Website → Security for mandatory email 2FA.' : 'Every login needs an emailed code — strong account protection.');
+    add(setVal('security_admin_ip_allowlist').trim() ? 'ok' : 'tip',
+      setVal('security_admin_ip_allowlist').trim() ? 'Admin IP allowlist is set' : 'Set an admin IP allowlist',
+      setVal('security_admin_ip_allowlist').trim() ? 'Admin logins are restricted to your network.' : 'Advantage: block admin login from anywhere but your office/VPN. Website → Security → admin IP allowlist.');
+    add(setVal('security_require_signup_otp') === 'true' ? 'ok' : 'tip',
+      setVal('security_require_signup_otp') === 'true' ? 'Signup OTP verification is on' : 'Enable signup OTP',
+      setVal('security_require_signup_otp') === 'true' ? 'New accounts verify a mobile/email before creation.' : 'Stops fake/bulk signups — turn on in Website → Security.');
+    // AML / screening
+    add(anyActive(['cybercrime']) ? 'ok' : 'tip',
+      anyActive(['cybercrime']) ? 'Negative-list / cyber-crime screening active' : 'Enable negative-list (AML) screening',
+      anyActive(['cybercrime']) ? 'Payouts can be screened against watchlists.' : 'Advantage + compliance: screen payees against negative/cyber-crime lists. Configure in the API Hub (cyber-crime slot), then enable AML rules in Risk & AML.');
+    // Readiness / advantage
+    if (notSet.length) add('warn', `${notSet.length} service(s) have no provider`, `Not earning yet: ${notSet.join(', ')}. Assign a provider in API Configuration to switch them on.`);
+    if (sandbox.length) add('warn', `${sandbox.length} service(s) in sandbox`, `Test mode only: ${sandbox.join(', ')}. Add live keys + activate to go live.`);
+    if (live.length) add('ok', `${live.length} service(s) live`, `Earning now: ${live.join(', ')}.`);
+    // KYC
+    add(anyActive(['pan_nsdl', 'aadhaar_kyc']) ? 'ok' : 'tip',
+      anyActive(['pan_nsdl', 'aadhaar_kyc']) ? 'KYC verification provider active' : 'Plug in a KYC provider',
+      anyActive(['pan_nsdl', 'aadhaar_kyc']) ? 'PAN/Aadhaar verified instantly at onboarding.' : 'Faster onboarding + compliance — add Signzy/Protean etc. in the API Hub.');
+
+    const rank = { crit: 0, warn: 1, tip: 2, ok: 3 };
+    adv.sort((a, b) => rank[a.level] - rank[b.level]);
+    const ico = { crit: '🔴', warn: '🟠', tip: '💡', ok: '🟢' };
+    const advCards = adv.map(a => `<div class="box" style="border:1px solid var(--line,#e5e9f2);border-radius:10px;padding:10px 14px;margin-bottom:8px">
+      <b>${ico[a.level]} ${esc(a.title)}</b><div class="muted" style="font-size:12.5px;margin-top:3px">${a.detail}</div></div>`).join('');
+
+    // ---- Blueprint rows: service → active provider → webhook ----
+    const bpRows = (svcs.items || []).map(s => {
+      const g = glMap[s.code] || {};
+      const st = g.status || 'none_active';
+      const dot = st === 'live' ? '🟢 live' : st === 'sandbox' ? '🟠 sandbox' : '⚪ not set';
+      const prov = g.active_provider ? `${esc(g.active_provider)}${g.driver ? ` <span class="muted">(${esc(g.driver)})</span>` : ''}` : '<span class="muted">—</span>';
+      const wh = g.provider_id
+        ? `<button class="btn sm ghost" onclick="Actions.testProviderWebhook('${g.provider_id}','${esc(s.code)}')">Test webhook</button>`
+        : '<span class="muted" style="font-size:12px">no provider</span>';
+      return `<tr><td><b>${esc(s.name || s.code)}</b><div class="muted" style="font-size:11px">${esc(s.code)}</div></td>
+        <td style="text-align:center">→</td><td>${prov}</td>
+        <td style="text-align:center">→</td><td>${dot}</td><td>${wh}</td></tr>`;
+    }).join('');
+
+    $('view').innerHTML = `<div class="panel">
+      <h2 style="margin:0 0 4px">🗺️ Blueprint & Advisor</h2>
+      <p class="muted">A live map of how every service connects — <b>service → active provider → webhook callback</b> — with an advisor that reads your real config and tells you what to fix, where you gain advantage, and where you're exposed. All from here; no code.</p>
+    </div>
+    <div class="panel mt"><h3 style="margin:0 0 8px">Advisor — readiness, advantage &amp; security</h3>${advCards}</div>
+    <div class="panel mt"><h3 style="margin:0 0 4px">Connection blueprint</h3>
+      <p class="muted" style="font-size:12px">Each row is the live route for a service. "Test webhook" fires a signed sample at that provider's own callback URL (nothing settles — a sentinel reference is used) to prove the callback + signature work.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Service</th><th></th><th>Active provider</th><th></th><th>Status</th><th>Webhook</th></tr></thead>
+        <tbody>${bpRows || '<tr><td colspan=6 class=muted>No services.</td></tr>'}</tbody></table></div>
+    </div>
+    <div class="panel mt"><h3 style="margin:0 0 8px">Messaging, KYC &amp; verification hub</h3>
+      <div class="row" style="flex-wrap:wrap;gap:6px">
+        ${(ints.items || []).map(i => `<span class="tag ${i.is_active ? 'active' : ''}" style="font-size:11px;${i.is_active ? '' : 'background:#fce8e6;color:#c5221f'}" title="${esc(i.provider || 'not configured')}">${esc(i.label)}: ${i.is_active ? 'on' : 'off'}</span>`).join('')}
+      </div></div>`;
   },
 
   // Admin: Provider Connections — one credential set across many services.
@@ -4788,6 +4888,21 @@ const Actions = {
   // Per-driver field guidance so the form stops showing Eko hints for every driver.
   // Jump to the per-service Providers screen with that service pre-selected.
   gotoProvider(code) { Actions._provService = code; location.hash = '#/providers'; if ((location.hash.replace('#/','')) === 'providers') App.route(); },
+
+  // Fire a signed sample callback at a provider's own webhook URL (safe:
+  // sentinel reference, nothing settles) and show the verified result.
+  async testProviderWebhook(providerId, code) {
+    UI.toast('Firing test webhook…');
+    try {
+      const r = await Api.post(`/admin/providers/${providerId}/test-webhook`, {});
+      const icon = r.ok ? '✅' : (r.skipped ? 'ℹ️' : '❌');
+      UI.modal(`<h3>${icon} Webhook test — ${esc(code || '')}</h3>
+        <p><b>Auth mode:</b> ${esc(r.auth_mode || '—')}${r.http_status ? ` · <b>HTTP:</b> ${r.http_status}` : ''}</p>
+        <p style="font-size:13px">${esc(r.reason || '')}</p>
+        ${r.insecure ? '<p class="msg err" style="font-size:12px">This callback has no authentication — add HMAC/Basic/IP in Provider Connections.</p>' : ''}
+        <div class="foot"><button class="btn" onclick="UI.closeModal()">Close</button></div>`);
+    } catch (err) { UI.toast(err.message, 'err'); }
+  },
 
   // ---- Admin dashboard designer (customizable tiles) ---------------------
   _dashLabel(id) {
