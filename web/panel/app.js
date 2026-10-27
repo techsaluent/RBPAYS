@@ -106,7 +106,7 @@ const Api = {
     const data = text ? JSON.parse(text) : null;
     if (!res.ok) {
       const e = new Error(data?.error?.message || ('HTTP ' + res.status));
-      e.code = data?.error?.code; e.status = res.status;
+      e.code = data?.error?.code; e.status = res.status; e.details = data?.error?.details;
       throw e;
     }
     return data;
@@ -126,6 +126,7 @@ const Auth = {
     const body = { identifier: f.identifier.value.trim(), password: f.password.value };
     if (f.mpin && f.mpin.value.trim()) body.mpin = f.mpin.value.trim();
     if (f.totp && f.totp.value.trim()) body.totp = f.totp.value.trim();
+    if (f.email_otp && f.email_otp.value.trim()) body.email_otp = f.email_otp.value.trim();
     try {
       const d = await Api.post('/auth/login', body, false);
       // Keep the two portals separate: the admin console (super admin + staff)
@@ -152,6 +153,15 @@ const Auth = {
         $('totp-field').classList.remove('hidden');
         $('totp-field').querySelector('input').focus();
         UI.authMsg('Enter the 6-digit code from your authenticator app.', 'ok');
+      } else if (err.code === 'email_otp_required') {
+        const d = err.details || {};
+        $('emailotp-field').classList.remove('hidden');
+        $('emailotp-field').querySelector('input').focus();
+        let hint = d.email_masked ? `Code sent to ${d.email_masked}.` : 'A verification code was sent to your email.';
+        if (d.delivered === false) hint += ' If no email arrives, check the mailer configuration with your admin.';
+        if (d.dev_code) hint += ` (Test code: ${d.dev_code})`;
+        $('emailotp-hint').textContent = hint;
+        UI.authMsg('Enter the verification code we emailed you.', 'ok');
       } else if (err.code === 'account_locked') {
         UI.authMsg(err.message, 'err');
       } else { UI.authMsg(err.message, 'err'); }
@@ -2079,6 +2089,8 @@ const Screens = {
         <p class="muted">When on, retailers must enter their MPIN (set in Security) to complete each money transaction. They'll be prompted automatically.</p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_signup_otp" ${s.security_require_signup_otp==='true'?'checked':''}> Require OTP verification at sign-up (mandatory)</label></div>
         <p class="muted">When on, new users must verify with a 6-digit OTP before their account is created. The code is sent over <b>every active channel</b> — SMS, WhatsApp and Email — so verify by mobile or inbox; enable the relevant gateways in <a href="#/integrations">Integrations</a> first. Admin-created accounts never need an OTP.</p>
+        <div class="field"><label><input type="checkbox" id="ws_security_require_login_otp" ${s.security_require_login_otp!=='false'?'checked':''}> Require email OTP at login (two-factor, mandatory)</label></div>
+        <p class="muted">When on, every login needs a 6-digit code emailed to the member after their password is accepted — no session is issued until it is entered. Configure the <b>Email</b> integration in <a href="#/integrations">Integrations</a> so codes can be delivered. On by default.</p>
         ${field('security_otp_bypass_code','OTP bypass code (break-glass — blank = off)','leave blank to disable')}
         <p class="muted">⚠️ <b>Break-glass only.</b> When set, entering exactly this code at sign-up skips OTP — useful for QA, app-store review or support. Anyone who knows it bypasses verification, so keep it secret and clear it when done. It is never exposed on the public site.</p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_kyc" ${s.security_require_kyc==='true'?'checked':''}> Require KYC verification before a member can transact</label></div>
@@ -3598,6 +3610,7 @@ const Actions = {
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
+    values['security_require_login_otp'] = $('ws_security_require_login_otp').checked ? 'true' : 'false';
     values['security_require_kyc'] = $('ws_security_require_kyc').checked ? 'true' : 'false';
     values['notify_txn_sms'] = $('ws_notify_txn_sms').checked ? 'true' : 'false';
     values['notify_low_balance'] = $('ws_notify_low_balance').checked ? 'true' : 'false';

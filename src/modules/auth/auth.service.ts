@@ -290,6 +290,76 @@ async function assertNotLockedOut(identifier: string): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------
+// Login email OTP (mandatory second factor)
+// ---------------------------------------------------------------------
+/** Whether a one-time email code is required at every login. Default: on. */
+export async function loginOtpRequired(): Promise<boolean> {
+  const { rows } = await query<{ value: string | null }>(
+    "SELECT value FROM site_settings WHERE key = 'security_require_login_otp'",
+  );
+  // Default mandatory: absent setting is treated as 'true'.
+  return (rows[0]?.value ?? 'true').trim() !== 'false';
+}
+
+/** a****@gmail.com — enough for the member to recognise the inbox. */
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  const head = local.slice(0, 1);
+  return `${head}${'*'.repeat(Math.max(1, local.length - 1))}@${domain}`;
+}
+
+/**
+ * Issue a login OTP to the member's email. Reuses a code generated in the last
+ * 90s (so a double-submit doesn't send two mails); otherwise invalidates any
+ * prior unused codes and sends a fresh one. In non-prod the code is returned so
+ * the flow is testable without a live mailer.
+ */
+async function issueLoginOtp(userId: string, email: string): Promise<{ delivered: boolean; dev_code?: string }> {
+  const recent = await query<{ id: string }>(
+    `SELECT id FROM login_otps
+       WHERE user_id = $1 AND used_at IS NULL AND created_at > now() - interval '90 seconds'
+       ORDER BY created_at DESC LIMIT 1`,
+    [userId],
+  );
+  if (recent.rowCount) {
+    // A fresh code is already outstanding; do not email another one.
+    return { delivered: true };
+  }
+  await query('UPDATE login_otps SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [userId]);
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const codeHash = await hashPassword(code);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  await query(
+    'INSERT INTO login_otps (user_id, code_hash, expires_at) VALUES ($1,$2,$3)',
+    [userId, codeHash, expiresAt],
+  );
+  const text = `Your TutiPays login code is ${code}. It expires in 10 minutes. If you did not try to sign in, change your password immediately.`;
+  const sent = await dispatch({ email, text, subject: 'TutiPays login code', channels: ['email'] });
+  if (!env.isProd) logger.info({ userId, code }, 'login OTP generated');
+  return { delivered: sent.email, dev_code: env.isProd ? undefined : code };
+}
+
+/** Verify (and consume) the latest live login OTP for a user. */
+async function consumeLoginOtp(userId: string, code: string): Promise<boolean> {
+  const { rows } = await query<{ id: string; code_hash: string; attempts: number }>(
+    `SELECT id, code_hash, attempts FROM login_otps
+       WHERE user_id = $1 AND used_at IS NULL AND expires_at > now()
+       ORDER BY created_at DESC LIMIT 1`,
+    [userId],
+  );
+  const otp = rows[0];
+  if (!otp || otp.attempts >= 5) return false;
+  const ok = await verifyPassword(code, otp.code_hash);
+  if (!ok) {
+    await query('UPDATE login_otps SET attempts = attempts + 1 WHERE id = $1', [otp.id]);
+    return false;
+  }
+  await query('UPDATE login_otps SET used_at = now() WHERE id = $1', [otp.id]);
+  return true;
+}
+
 export async function login(input: LoginInput, meta: SessionMeta = {}) {
   const identifier = input.identifier.trim();
   await assertNotLockedOut(identifier);
@@ -344,6 +414,27 @@ export async function login(input: LoginInput, meta: SessionMeta = {}) {
     if (!verifyTotp(user.totp_secret, input.totp)) {
       await recordLoginAttempt(identifier, meta.ip, false);
       throw ApiError.unauthorized('Invalid authenticator code');
+    }
+  }
+
+  // Mandatory email OTP (2FA): the password (and any MPIN / authenticator)
+  // check has now passed. Before issuing tokens, the member must enter a code
+  // emailed to their registered address. First call (no code) emails one and
+  // raises an `email_otp_required` challenge; the client resubmits with the
+  // code. Admin can disable globally via security_require_login_otp.
+  if (user.email && (await loginOtpRequired())) {
+    if (!input.email_otp) {
+      const { delivered, dev_code } = await issueLoginOtp(user.id, user.email);
+      throw new ApiError(401, 'email_otp_required', 'A verification code was sent to your email.', {
+        email_masked: maskEmail(user.email),
+        delivered,
+        ...(dev_code ? { dev_code } : {}),
+      });
+    }
+    const otpOk = await consumeLoginOtp(user.id, input.email_otp);
+    if (!otpOk) {
+      await recordLoginAttempt(identifier, meta.ip, false);
+      throw ApiError.unauthorized('Invalid or expired email code');
     }
   }
 

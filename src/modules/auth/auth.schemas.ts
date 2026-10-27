@@ -48,6 +48,10 @@ export const loginSchema = z.object({
   mpin: z.string().trim().regex(/^\d{4,6}$/).optional(),
   // Optional authenticator code; required at login when 2FA is enabled.
   totp: z.string().trim().regex(/^\d{6}$/).optional(),
+  // Email OTP (second factor). Required at login when mandatory email 2FA is on
+  // (site setting security_require_login_otp); supplied on the second step after
+  // the emailed code is received.
+  email_otp: z.string().trim().regex(/^\d{6}$/).optional(),
 });
 
 export const enableTotpSchema = z.object({
