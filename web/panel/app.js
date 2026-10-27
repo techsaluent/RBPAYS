@@ -4074,8 +4074,9 @@ const Actions = {
       <div class="field"><label>Label</label><input id="dev_label" value="${k ? esc(k.label || '') : ''}" placeholder="My storefront"></div>
       ${k ? '' : `<div class="field"><label>Environment</label><select id="dev_env"><option value="live">live</option><option value="test">test</option></select></div>`}
       <div class="field"><label>Scopes (services this key may call)</label>
-        <label style="display:block;margin-bottom:4px"><input type="checkbox" id="dev_all" ${all ? 'checked' : ''} onchange="document.querySelectorAll('.dev_scope').forEach(c=>{c.disabled=this.checked})"> <b>All services (*)</b></label>
-        <div>${boxes}</div></div>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" id="dev_all" ${all ? 'checked' : ''} onchange="document.querySelectorAll('.dev_scope').forEach(c=>{c.disabled=this.checked})"> <b>All my enabled services (*)</b></label>
+        <div>${boxes || '<span class="muted" style="font-size:12px">No services enabled on your account yet — ask your upline to enable one.</span>'}</div>
+        <p class="muted" style="font-size:11px;margin:4px 0 0">You can only scope a key to services you have active. Each call is still checked per-service at run time.</p></div>
       <div class="field"><label>Callback URL (optional — receives signed settlement webhooks)</label>
         <input id="dev_cb" value="${k ? esc(k.callback_url || '') : ''}" placeholder="https://yourapp.com/tutipays/webhook"></div>
       <div class="row" style="gap:8px">

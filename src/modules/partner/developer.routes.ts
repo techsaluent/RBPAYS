@@ -7,6 +7,7 @@ import { ApiError } from '../../utils/ApiError';
 import {
   PARTNER_SERVICES, createKey, listKeys, updateKey, revokeKey, getCallbackSecret, listDeliveries,
   sendTestCallback, getCallbackDefaultInfo, getCallbackDefaultSecret, setCallbackDefault,
+  enabledPartnerServices,
 } from './partner.service';
 
 // Member-facing management of the partner/reseller API keys. JWT-authenticated
@@ -35,10 +36,13 @@ const updateSchema = z.object({
   callback_url: z.string().trim().url().max(500).nullable().optional(),
 });
 
-// The scopes a key can be granted (for the panel's scope picker).
-router.get('/services', (_req: Request, res: Response) => {
-  res.json({ services: PARTNER_SERVICES });
-});
+// The scopes a key can be granted — only the services THIS member has enabled
+// (admin/staff get the full catalog). The panel's scope picker reads this.
+router.get('/services', asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user) throw ApiError.unauthorized();
+  const services = await enabledPartnerServices(req.user.id, req.user.role);
+  res.json({ services, catalog: PARTNER_SERVICES });
+}));
 
 router.get(
   '/keys',
@@ -55,11 +59,16 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();
     const b = req.body as z.infer<typeof createSchema>;
+    const allowedServices = await enabledPartnerServices(req.user.id, req.user.role);
+    if (allowedServices.length === 0) {
+      throw ApiError.unprocessable('You have no active services to issue an API key for. Ask your upline to enable a service first.');
+    }
     const key = await createKey({
       userId: req.user.id,
       label: b.label,
       environment: b.environment,
       scopes: b.scopes,
+      allowedServices,
       allowedIps: b.allowed_ips,
       rateLimitPerMin: b.rate_limit_per_min,
       callbackUrl: b.callback_url ?? null,
@@ -74,9 +83,11 @@ router.put(
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();
     const b = req.body as z.infer<typeof updateSchema>;
+    const allowedServices = b.scopes !== undefined ? await enabledPartnerServices(req.user.id, req.user.role) : undefined;
     const key = await updateKey(req.user.id, req.params.id, {
       label: b.label,
       scopes: b.scopes,
+      allowedServices,
       allowedIps: b.allowed_ips,
       rateLimitPerMin: b.rate_limit_per_min,
       callbackUrl: b.callback_url,

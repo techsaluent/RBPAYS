@@ -17,6 +17,7 @@ export interface NewKeyInput {
   label?: string;
   environment?: 'live' | 'test';
   scopes?: string[];
+  allowedServices?: string[]; // services the member may scope for (defaults to all)
   allowedIps?: string[];
   rateLimitPerMin?: number;
   callbackUrl?: string | null;
@@ -80,13 +81,31 @@ function normalizeCallback(url: string | null | undefined): string | null {
   return assertSafeCallbackUrl(t);
 }
 
-/** Normalize/validate a requested scope list against the known services. */
-function cleanScopes(scopes?: string[]): string[] {
-  if (!scopes || scopes.length === 0) return ['*'];
-  if (scopes.includes('*')) return ['*'];
-  const allowed = new Set<string>(PARTNER_SERVICES as readonly string[]);
-  const out = scopes.filter((s) => allowed.has(s));
-  if (out.length === 0) throw ApiError.badRequest('No valid service scopes given');
+/**
+ * The partner-API service codes a member may scope a key for: the intersection
+ * of PARTNER_SERVICES and the services the member actually has enabled
+ * (user_services). admin/staff may scope for every partner service.
+ */
+export async function enabledPartnerServices(userId: string, role?: string): Promise<string[]> {
+  if (role === 'admin' || role === 'staff') return [...PARTNER_SERVICES];
+  const { rows } = await query<{ service_code: string }>(
+    'SELECT service_code FROM user_services WHERE user_id = $1 AND active = true',
+    [userId],
+  );
+  const enabled = new Set(rows.map((r) => r.service_code));
+  return (PARTNER_SERVICES as readonly string[]).filter((s) => enabled.has(s));
+}
+
+/**
+ * Normalize/validate a requested scope list. Scopes must be services the member
+ * has enabled (`allowed`); '*' means "all my enabled services" (execution is
+ * still gated per-service by requireService, so '*' can never exceed them).
+ */
+function cleanScopes(scopes: string[] | undefined, allowed: string[]): string[] {
+  if (!scopes || scopes.length === 0 || scopes.includes('*')) return ['*'];
+  const allowedSet = new Set(allowed);
+  const out = scopes.filter((s) => allowedSet.has(s));
+  if (out.length === 0) throw ApiError.badRequest('None of the requested scopes are services you have enabled');
   return Array.from(new Set(out));
 }
 
@@ -100,7 +119,7 @@ export async function createKey(input: NewKeyInput) {
   const rawKey = `pk_${env}_${randHex(24)}`;
   const keyPrefix = rawKey.slice(0, 16); // e.g. pk_live_1a2b3c4d
   const callbackSecret = `whsec_${randHex(24)}`;
-  const scopes = cleanScopes(input.scopes);
+  const scopes = cleanScopes(input.scopes, input.allowedServices ?? [...PARTNER_SERVICES]);
   const callbackUrl = normalizeCallback(input.callbackUrl);
 
   const { rows } = await query(
@@ -134,9 +153,9 @@ export async function listKeys(userId: string) {
 /** Update mutable settings on a key the member owns. */
 export async function updateKey(
   userId: string, keyId: string,
-  patch: { label?: string; scopes?: string[]; allowedIps?: string[]; rateLimitPerMin?: number; callbackUrl?: string | null },
+  patch: { label?: string; scopes?: string[]; allowedServices?: string[]; allowedIps?: string[]; rateLimitPerMin?: number; callbackUrl?: string | null },
 ) {
-  const scopes = patch.scopes !== undefined ? cleanScopes(patch.scopes) : undefined;
+  const scopes = patch.scopes !== undefined ? cleanScopes(patch.scopes, patch.allowedServices ?? [...PARTNER_SERVICES]) : undefined;
   // undefined => leave callback unchanged; null/'' => clear; else validate.
   const touchCallback = patch.callbackUrl !== undefined;
   const callbackUrl = touchCallback ? normalizeCallback(patch.callbackUrl) : null;
