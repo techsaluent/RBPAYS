@@ -271,6 +271,7 @@ const NAV = [
   { key: 'rewards', label: '🎁 Refer & Earn', roles: NETWORK_ROLES },
   { key: 'mydisputes', label: 'My Disputes', roles: NETWORK_ROLES },
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
+  { key: 'fundrequests', label: '💰 Fund Requests', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
   { key: 'developer', label: '🧩 Developer API', roles: NETWORK_ROLES },
@@ -1011,7 +1012,10 @@ const Screens = {
           <option value="upi">UPI</option><option value="other">Other</option></select></div>
         <div class="field"><label>Deposited to account</label><select id="tu_bank"><option value="">— select —</option>${bankOpts}</select></div>
         <div class="field"><label>Reference / UTR</label><input id="tu_ref" placeholder="UTR / txn id"></div>
-        <div class="field"><label>Proof URL (optional)</label><input id="tu_proof" placeholder="https://…"></div>
+        <div class="field"><label>Receipt (upload image/PDF, or paste a URL)</label>
+          <input id="tu_file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onchange="Actions.uploadProof(this)">
+          <input id="tu_proof" placeholder="https://… (or upload above)" style="margin-top:6px">
+          <span id="tu_proofmsg" class="muted" style="font-size:12px"></span></div>
         <button class="btn" onclick="Actions.submitTopup()">Submit request</button></div>
       <div class="panel mt"><h2>My top-up requests</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Amount</th><th>Method</th><th>Reference</th><th>Status</th><th>Remarks</th><th>When</th></tr></thead>
@@ -4164,6 +4168,48 @@ const Actions = {
   },
 
   // ----- wallet top-up (member) -----
+  // Upline: approve/reject direct-downline members' top-up requests (float transfer).
+  async fundrequests() {
+    const d = await Api.get('/topup/incoming?status=pending').catch(() => ({ items: [] }));
+    const rows = (d.items || []).map(t => `<tr>
+      <td>${esc(t.member_name || '')}<br><span class="muted">${esc(t.member_phone || '')}</span></td>
+      <td class="right"><b>${money(t.amount)}</b></td>
+      <td>${esc(t.method)}${t.reference ? '<br><span class="muted">' + esc(t.reference) + '</span>' : ''}</td>
+      <td>${t.proof_url ? '<a href="' + esc(t.proof_url) + '" target="_blank" rel="noopener">view receipt</a>' : '<span class="muted">—</span>'}</td>
+      <td class="muted">${new Date(t.created_at).toLocaleString('en-IN')}</td>
+      <td style="white-space:nowrap">
+        <button class="btn sm" onclick="Actions.approveIncoming('${t.id}')">Approve</button>
+        <button class="btn sm ghost danger" onclick="Actions.rejectIncoming('${t.id}')">Reject</button></td></tr>`).join('');
+    $('view').innerHTML = `<div class="panel"><h2>💰 Fund Requests from my network</h2>
+      <p class="muted">Approve a member's add-money request against their receipt. Approving moves the amount <b>from your wallet</b> to theirs (float transfer); your wallet must have the balance. Admin can also approve from the platform.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Member</th><th class="right">Amount</th><th>Method / ref</th><th>Receipt</th><th>When</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=6 class=muted>No pending requests from your network.</td></tr>'}</tbody></table></div></div>`;
+  },
+  async approveIncoming(id) {
+    if (!confirm('Approve and transfer from your wallet to the member?')) return;
+    try { const r = await Api.post(`/topup/incoming/${id}/approve`, {}); UI.toast('Approved — ' + r.amount + ' transferred'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async rejectIncoming(id) {
+    const remarks = prompt('Reason for rejecting (required):');
+    if (remarks === null) return;
+    if (!remarks.trim()) return UI.toast('A reason is required', 'err');
+    try { await Api.post(`/topup/incoming/${id}/reject`, { remarks: remarks.trim() }); UI.toast('Request rejected'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async uploadProof(input) {
+    const file = input && input.files && input.files[0];
+    if (!file) return;
+    const msg = $('tu_proofmsg');
+    if (file.size > 3 * 1024 * 1024) { if (msg) msg.textContent = 'File is larger than 3 MB'; input.value = ''; return; }
+    if (msg) msg.textContent = 'Uploading…';
+    try {
+      const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+      const r = await Api.post('/topup/proof', { content_base64: b64, content_type: file.type, filename: file.name });
+      if ($('tu_proof')) $('tu_proof').value = r.url;
+      if (msg) msg.textContent = 'Receipt uploaded ✓';
+    } catch (err) { if (msg) msg.textContent = err.message; }
+  },
   async submitTopup() {
     const body = { amount: +val('tu_amt'), method: val('tu_method'), reference: val('tu_ref') };
     if (val('tu_bank')) body.bank_account_id = val('tu_bank');

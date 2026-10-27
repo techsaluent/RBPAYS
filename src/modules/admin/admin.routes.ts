@@ -2277,7 +2277,7 @@ router.post(
       );
       const upd = await client.query(
         `UPDATE wallet_topup_requests
-            SET status = 'approved', reviewed_by = $1, reviewed_at = now(),
+            SET status = 'approved', approval_mode = 'admin', reviewed_by = $1, reviewed_at = now(),
                 remarks = $2, wallet_txn_id = $3
           WHERE id = $4 RETURNING id, user_id, amount_paise, status, reviewed_at`,
         [adminId, remarks ?? null, txn.rows[0]?.id ?? null, topupId],
