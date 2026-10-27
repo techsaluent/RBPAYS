@@ -173,6 +173,8 @@ router.post(
   validate(z.object({ remarks: z.string().trim().max(200).optional(), mpin: z.string().trim().regex(/^\d{4,6}$/).optional() })),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.user) throw ApiError.unauthorized();
+    // Consistency with float-push: retailers do not fund a downline.
+    if (req.user.role === 'retailer') throw ApiError.forbidden('Retailers cannot fund a downline; ask your distributor.');
     const approverId = req.user.id;
     await assertTxnMpin(approverId, req.user.role, (req.body as { mpin?: string }).mpin);
     const remarks = (req.body as { remarks?: string }).remarks ?? null;

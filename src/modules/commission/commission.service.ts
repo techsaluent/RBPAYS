@@ -117,17 +117,28 @@ export async function computeDistribution(
     admin: adminId,
   };
 
+  const chargePaise = valueToPaise(rule.charge_type, rule.charge_value, amountPaise);
+
+  // Retailer / distributor / MD cuts come from the rule; the admin (platform)
+  // share is the RESIDUAL (charge − those), so the split always sums to the
+  // charge to the paise — no rounding drift that could unbalance the ledger.
   const entries: CommissionEntry[] = [];
+  let distributed = 0;
   for (const level of LEVELS) {
+    if (level === 'admin') continue;
     const beneficiaryId = beneficiaryFor[level];
     if (!beneficiaryId) continue;
     const type = rule[`${level}_type` as keyof RuleRow] as string;
     const value = rule[`${level}_value` as keyof RuleRow] as string;
-    const amt = valueToPaise(type, value, amountPaise);
-    if (amt > 0) entries.push({ level, beneficiaryId, amountPaise: amt });
+    let amt = valueToPaise(type, value, amountPaise);
+    if (distributed + amt > chargePaise) amt = Math.max(0, chargePaise - distributed); // never exceed the charge
+    if (amt > 0) { entries.push({ level, beneficiaryId, amountPaise: amt }); distributed += amt; }
+  }
+  const adminResidual = chargePaise - distributed;
+  if (adminResidual > 0 && beneficiaryFor.admin) {
+    entries.push({ level: 'admin', beneficiaryId: beneficiaryFor.admin, amountPaise: adminResidual });
   }
 
-  const chargePaise = valueToPaise(rule.charge_type, rule.charge_value, amountPaise);
   const retailerPaise = entries.find((e) => e.level === 'retailer')?.amountPaise ?? 0;
   return { ruleMatched: true, chargePaise, retailerPaise, entries };
 }
