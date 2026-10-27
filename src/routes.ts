@@ -38,6 +38,7 @@ import developerRoutes from './modules/partner/developer.routes';
 import partnerRoutes from './modules/partner/partner.routes';
 import brandRoutes from './modules/brand/brand.routes';
 import telemetryRoutes from './modules/telemetry/telemetry.routes';
+import documentsRoutes from './modules/documents/documents.routes';
 
 const router = Router();
 
@@ -83,5 +84,7 @@ router.use('/partner', partnerRoutes);
 router.use('/brand', brandRoutes);
 // Client-side error self-reporting (panel + apps).
 router.use('/telemetry', telemetryRoutes);
+// Branded member documents (ID card, certificate, letterhead).
+router.use('/documents', documentsRoutes);
 
 export default router;

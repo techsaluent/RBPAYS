@@ -183,4 +183,71 @@ router.get(
   }),
 );
 
+// ---------------------------------------------------------------------
+// Service management over the downline: an upline turns each service on/off
+// for a DIRECT downline member (distributor → retailer, MD → distributor…).
+// You can only grant a service you yourself have active — never widen access
+// beyond your own.
+// ---------------------------------------------------------------------
+async function requireDirectChild(meId: string, childId: string): Promise<void> {
+  const { rows } = await query<{ parent_id: string | null }>('SELECT parent_id FROM users WHERE id = $1', [childId]);
+  if (!rows[0]) throw ApiError.notFound('Member not found');
+  if (rows[0].parent_id !== meId) throw ApiError.forbidden('Not your direct downline member');
+}
+
+// List a direct-downline member's services with active flags, marking which
+// ones the caller is allowed to grant (i.e. has active themselves).
+router.get(
+  '/members/:id/services',
+  asyncHandler(async (req: Request, res: Response) => {
+    const me = requireMember(req);
+    await requireDirectChild(me.id, req.params.id);
+    const { rows } = await query<{ code: string; name: string; enabled: boolean; child_active: boolean | null; mine_active: boolean | null }>(
+      `SELECT s.code, s.name, s.enabled,
+              cu.active AS child_active,
+              mu.active AS mine_active
+         FROM services s
+         LEFT JOIN user_services cu ON cu.service_code = s.code AND cu.user_id = $2
+         LEFT JOIN user_services mu ON mu.service_code = s.code AND mu.user_id = $1
+        WHERE s.enabled = true
+        ORDER BY s.code`,
+      [me.id, req.params.id],
+    );
+    res.json({
+      items: rows.map((r) => ({
+        code: r.code, name: r.name,
+        active: r.child_active === true,
+        // The caller may toggle it only if they hold it (or are admin — admins use the admin UI).
+        can_grant: r.mine_active === true || me.role === 'admin',
+      })),
+    });
+  }),
+);
+
+router.put(
+  '/members/:id/services/:code',
+  validate(z.object({ active: z.boolean() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const me = requireMember(req);
+    await requireDirectChild(me.id, req.params.id);
+    const active = (req.body as { active: boolean }).active;
+    const code = req.params.code;
+
+    const svc = await query<{ enabled: boolean }>('SELECT enabled FROM services WHERE code = $1', [code]);
+    if (!svc.rows[0]) throw ApiError.notFound('Unknown service');
+    if (svc.rows[0].enabled === false) throw ApiError.badRequest('Service is disabled platform-wide');
+
+    if (active) {
+      const mine = await query('SELECT 1 FROM user_services WHERE user_id = $1 AND service_code = $2 AND active = true', [me.id, code]);
+      if (!mine.rowCount && me.role !== 'admin') throw ApiError.forbidden(`You don't have ${code} active, so you can't grant it`);
+    }
+    await query(
+      `INSERT INTO user_services (user_id, service_code, active) VALUES ($1,$2,$3)
+       ON CONFLICT (user_id, service_code) DO UPDATE SET active = EXCLUDED.active`,
+      [req.params.id, code, active],
+    );
+    res.json({ ok: true, code, active });
+  }),
+);
+
 export default router;

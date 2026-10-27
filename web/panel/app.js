@@ -574,7 +574,8 @@ const Screens = {
         <div class="ma comm-pos">${money(e.amount_paise/100)}</div></div>`).join('');
       const members = (dl.items || []).slice(0, 6).map(m => `<div class="mini"><span class="mi">${(m.role||'r')[0].toUpperCase()}</span>
         <div class="mm"><b>${esc(m.full_name || m.username || m.phone || 'Member')}</b><span>${esc((m.role||'').replace(/_/g,' '))} · ${esc(m.phone||m.email||'')}</span></div>
-        <div class="ma"><small>${UI.statusTag(m.status||'active')}</small></div>`+`</div>`).join('');
+        <div class="ma" style="display:flex;gap:6px;align-items:center"><small>${UI.statusTag(m.status||'active')}</small>
+          <button class="btn sm ghost" onclick="Actions.memberServices('${m.id}','${esc((m.full_name||m.username||'Member').replace(/'/g,"\\'"))}')">Services</button></div>`+`</div>`).join('');
       $('view').innerHTML = `
         <div class="stats">
           ${UI.stat('b','👛','Wallet balance', money(wl.balance), `Available <b>${money(avail)}</b>`)}
@@ -728,6 +729,14 @@ const Screens = {
         <div class="field"><label>Role</label><input value="${esc((u.role||'').replace(/_/g,' '))}" disabled></div>
         ${u.username ? `<div class="field"><label>Username</label><input value="${esc(u.username)}" disabled></div>` : ''}
         <button class="btn" onclick="Actions.saveProfile()">Save profile</button></div>
+      ${['user'].includes(u.role) ? '' : `
+      <div class="panel mt" style="max-width:520px"><h2>My documents</h2>
+        <p class="muted" style="font-size:12px">Branded with your partner brand — print or save as PDF.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          ${['admin','staff'].includes(u.role) ? '' : `<button class="btn sm ghost" onclick="Actions.myDoc('id-card')">🪪 ID card</button>
+          <button class="btn sm ghost" onclick="Actions.myDoc('certificate')">📜 Certificate</button>`}
+          <button class="btn sm ghost" onclick="Actions.myDoc('letterhead')">📄 Letterhead</button>
+        </div></div>`}
       ${companyNote}
       ${['admin','staff'].includes(u.role) ? '' : `
       <div class="panel mt" style="max-width:520px;border:1px solid #f3c2c2">
@@ -3330,6 +3339,28 @@ const Actions = {
     } catch (err) { UI.toast(err.message, 'err'); }
   },
   _range(pfx) { const f = val(pfx + '_from'), t = val(pfx + '_to'); const qs = []; if (f) qs.push('from=' + f); if (t) qs.push('to=' + t); return qs.join('&'); },
+  // Upline: turn each service on/off for a direct downline member.
+  async memberServices(id, name) {
+    UI.modal(`<h3>Services — ${esc(name)}</h3><div id="msvc_body"><p class="muted">Loading…</p></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+    try {
+      const d = await Api.get('/network/members/' + id + '/services');
+      const body = $('msvc_body'); if (!body) return;
+      body.innerHTML = `<p class="muted" style="font-size:12px">Toggle what this member can sell. You can only grant services you hold yourself.</p>
+        <div style="display:grid;gap:6px">${(d.items || []).map(s => `
+        <label class="row" style="justify-content:space-between;align-items:center;border:1px solid var(--line,#e5e9f2);border-radius:8px;padding:8px 12px">
+          <span>${esc(s.name)} <span class="muted" style="font-size:11px">${esc(s.code)}</span>${s.can_grant ? '' : ' <span class="muted" style="font-size:11px">(you lack this)</span>'}</span>
+          <input type="checkbox" ${s.active ? 'checked' : ''} ${s.can_grant ? '' : 'disabled'} onchange="Actions.setMemberService('${id}','${esc(s.code)}',this.checked,this)">
+        </label>`).join('')}</div>`;
+    } catch (err) { const b = $('msvc_body'); if (b) b.innerHTML = `<p class="msg err">${esc(err.message)}</p>`; }
+  },
+  async setMemberService(id, code, active, el) {
+    try { await Api.put(`/network/members/${id}/services/${code}`, { active }); UI.toast(`${code} ${active ? 'enabled' : 'disabled'}`); }
+    catch (err) { if (el) el.checked = !active; UI.toast(err.message, 'err'); }
+  },
+  // Open a branded member document (ID card / certificate / letterhead).
+  myDoc(kind) { Actions.openDoc('/documents/' + kind); },
+
   addMember(asAdmin) {
     const roleOpts = (asAdmin ? MEMBER_ROLES : MEMBER_ROLES.filter(r => rank(r) < rank(State.user.role)))
       .map(r => `<option value="${r}">${r.replace(/_/g,' ')}</option>`).join('');
