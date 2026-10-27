@@ -293,13 +293,15 @@ async function assertNotLockedOut(identifier: string): Promise<void> {
 // ---------------------------------------------------------------------
 // Login email OTP (mandatory second factor)
 // ---------------------------------------------------------------------
-/** Whether a one-time email code is required at every login. Default: on. */
+/** Whether a one-time email code is required at every login. Opt-in: the admin
+ *  turns it on in Website → Security once the Email (SMTP) provider is set and
+ *  tested, so nobody is locked out before email delivery works. Default: off. */
 export async function loginOtpRequired(): Promise<boolean> {
   const { rows } = await query<{ value: string | null }>(
     "SELECT value FROM site_settings WHERE key = 'security_require_login_otp'",
   );
-  // Default mandatory: absent setting is treated as 'true'.
-  return (rows[0]?.value ?? 'true').trim() !== 'false';
+  // Absent setting is treated as 'false' (off until explicitly enabled).
+  return (rows[0]?.value ?? 'false').trim() === 'true';
 }
 
 /** a****@gmail.com — enough for the member to recognise the inbox. */
