@@ -137,6 +137,54 @@ async function sendEmailSmtp(cfg: MessagingConfig, to: string, subject: string, 
   }
 }
 
+/**
+ * Validate the email integration and, for SMTP, actually open a connection and
+ * authenticate (nodemailer verify). Reports exactly which details are missing
+ * or what the server rejected — no secrets are returned.
+ */
+export async function validateEmailConfig(): Promise<{
+  ok: boolean; active: boolean; provider: string | null; missing: string[]; error?: string;
+  host?: string; port?: number; secure?: boolean; from?: string; user_set: boolean; pass_set: boolean;
+}> {
+  const { rows } = await query<{
+    provider: string | null; base_url: string | null; api_key: string | null;
+    api_secret: string | null; sender_id: string | null; is_active: boolean; extra: Record<string, unknown> | null;
+  }>("SELECT provider, base_url, api_key, api_secret, sender_id, is_active, extra FROM platform_integrations WHERE key = 'email'");
+  const r = rows[0];
+  if (!r) return { ok: false, active: false, provider: null, missing: ['the email integration row'], user_set: false, pass_set: false };
+
+  const extra = r.extra ?? {};
+  const isSmtp = (r.provider || '').toLowerCase() === 'smtp' || String(extra.transport || '').toLowerCase() === 'smtp';
+  const host = String((extra.smtp_host as string) || r.base_url || '').trim();
+  const port = Number(extra.smtp_port) || 587;
+  const secure = extra.smtp_secure === true || extra.smtp_secure === 'true' || port === 465;
+  const from = r.sender_id || r.api_key || '';
+  const userSet = !!(r.api_key && r.api_key.trim());
+  const passSet = !!(r.api_secret && r.api_secret.trim());
+
+  const missing: string[] = [];
+  if (!isSmtp && !r.base_url) missing.push('Base URL (API endpoint)');
+  if (isSmtp) {
+    if (!host) missing.push('SMTP host');
+    if (!userSet) missing.push('Username');
+    if (!passSet) missing.push('Password');
+    if (!from) missing.push('From email');
+  }
+  const base = { active: r.is_active, provider: r.provider, missing, host, port, secure, from, user_set: userSet, pass_set: passSet };
+  if (missing.length) return { ok: false, ...base };
+
+  // For SMTP, actually connect + authenticate.
+  if (isSmtp) {
+    try {
+      const transporter = nodemailer.createTransport({ host, port, secure, auth: { user: r.api_key as string, pass: (r.api_secret as string) || '' }, connectionTimeout: 12000 });
+      await transporter.verify();
+    } catch (err) {
+      return { ok: false, error: (err as Error).message, ...base };
+    }
+  }
+  return { ok: true, ...base };
+}
+
 export async function sendEmail(to: string, subject: string, text: string): Promise<boolean> {
   const cfg = await integrationConfig(['email']);
   if (!cfg || !to) return false;

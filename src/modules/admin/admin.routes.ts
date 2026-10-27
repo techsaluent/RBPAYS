@@ -1951,6 +1951,38 @@ router.post(
   }),
 );
 
+// Validate ANY integration's config. Email (SMTP) actually connects +
+// authenticates; others check that endpoint + key are present and active.
+router.post(
+  '/integrations/:key/validate',
+  asyncHandler(async (req: Request, res: Response) => {
+    const key = req.params.key;
+    if (key === 'email') {
+      const { validateEmailConfig } = await import('../notify/notify.service');
+      res.json(await validateEmailConfig());
+      return;
+    }
+    const { rows } = await query<{ provider: string | null; base_url: string | null; is_active: boolean; has_key: boolean }>(
+      `SELECT provider, base_url, is_active, (api_key IS NOT NULL AND api_key <> '') AS has_key
+         FROM platform_integrations WHERE key = $1`,
+      [key],
+    );
+    const r = rows[0];
+    if (!r) throw ApiError.notFound('Integration not found');
+    const keyless = ['ifsc_lookup', 'pincode'].includes(key);
+    const missing: string[] = [];
+    if (!r.base_url) missing.push('Base URL / endpoint');
+    if (!r.has_key && !keyless) missing.push('API key');
+    res.json({
+      ok: missing.length === 0,
+      active: r.is_active,
+      provider: r.provider,
+      missing,
+      note: missing.length === 0 && !r.is_active ? 'Configured but not Active — turn it on to use it.' : undefined,
+    });
+  }),
+);
+
 // ---------------------------------------------------------------------
 // Statutory tax — verify PANs, view TDS (194H/194N) and GST records
 // ---------------------------------------------------------------------

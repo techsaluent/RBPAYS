@@ -2386,9 +2386,8 @@ const Screens = {
         <div class="muted" style="font-size:12px;margin:8px 0">${i.has_key ? '🔑 key set' : '<span style="color:#c5221f">no key</span>'}${i.base_url ? ' · endpoint set' : ''}</div>
         <div class="row" style="gap:6px;flex-wrap:wrap">
           <button class="btn sm" onclick="Actions.editIntegration('${i.key}')">Configure</button>
-          ${canTest(i.key)
-            ? `<button class="btn sm ghost" onclick="Actions.testIntegration('${i.key}')">Send test</button>`
-            : `<button class="btn sm ghost" onclick="Actions.checkIntegration('${i.key}')">Check</button>`}
+          <button class="btn sm ghost" onclick="Actions.validateIntegration('${i.key}')">Validate</button>
+          ${canTest(i.key) ? `<button class="btn sm ghost" onclick="Actions.testIntegration('${i.key}')">Send test</button>` : ''}
           ${i.is_active
             ? `<button class="btn sm ghost" onclick="Actions.toggleIntegration('${i.key}',false)">Turn off</button>`
             : (ready ? `<button class="btn sm ghost" onclick="Actions.toggleIntegration('${i.key}',true)">Activate</button>` : '')}
@@ -2410,7 +2409,7 @@ const Screens = {
       <div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
         <h2 style="margin:0">API Hub</h2>
         <button class="btn sm" onclick="Actions.editIntegration('')">+ Add API</button></div>
-      <p class="muted">Each tile is one API — <b>Configure</b> (pick a provider preset, paste keys), <b>Send test</b> / <b>Check</b>, and toggle on/off right here. Keys are write-only (stored masked). ${active} of ${(d.items||[]).length} active.</p>
+      <p class="muted">Each tile is one API — <b>Configure</b> (pick a provider preset, paste keys), <b>Validate</b> (checks credentials — Email actually connects to the SMTP server), <b>Send test</b> (messaging), toggle on/off. Keys are write-only (stored masked). ${active} of ${(d.items||[]).length} active.</p>
       <p class="muted" style="font-size:12px">Transaction rails — recharge, BBPS, DMT, AePS, payout, <b>travel / ticket booking</b>, <b>insurance</b>, loans, credit-card — are configured per service under <a href="#/providerconnections">Provider Connections</a>. This hub holds OTP/messaging, KYC and verification APIs.</p>
       </div>${sections}`;
   },
@@ -2419,14 +2418,31 @@ const Screens = {
     try { await Api.put('/admin/integrations/' + key, { is_active: active }); UI.toast(active ? 'Activated' : 'Turned off'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
-  // Lightweight config check for non-messaging APIs (no live call needed).
-  checkIntegration(key) {
-    const i = (Actions._intCache && Actions._intCache[key]) || {};
-    const missing = [];
-    if (!i.base_url) missing.push('endpoint / base URL');
-    if (!i.has_key && key !== 'ifsc_lookup' && key !== 'pincode') missing.push('API key');
-    if (!i.is_active) missing.push('not active');
-    UI.toast(missing.length ? `${i.label}: needs ${missing.join(', ')}` : `${i.label}: configured & active ✓`, missing.length ? 'err' : 'ok');
+  // Validate an integration's credentials. Email actually connects to the SMTP
+  // server; others report exactly which details are missing + active state.
+  async validateIntegration(key) {
+    const label = (Actions._intCache && Actions._intCache[key] && Actions._intCache[key].label) || key;
+    UI.toast('Validating…');
+    try {
+      const r = await Api.post(`/admin/integrations/${key}/validate`, {});
+      if (r.ok) {
+        const extra = r.host ? ` — connected to ${esc(r.host)}:${r.port}${r.secure ? ' (SSL)' : ''}` : '';
+        const warn = r.note ? `<p class="msg" style="background:#fef7e0;color:#8a5a00;font-size:12px">${esc(r.note)}</p>` : '';
+        UI.modal(`<h3>✅ ${esc(label)} — credentials valid</h3>
+          <p style="font-size:13px">Configuration checks out${extra}.${r.active ? ' Active.' : ''}</p>${warn}
+          <div class="foot"><button class="btn" onclick="UI.closeModal()">Close</button></div>`);
+      } else {
+        const parts = [];
+        if (r.missing && r.missing.length) parts.push('<b>Missing:</b> ' + esc(r.missing.join(', ')));
+        if (r.error) parts.push('<b>Server said:</b> ' + esc(r.error));
+        if (!r.active && (!r.missing || !r.missing.length)) parts.push('Not marked <b>Active</b>.');
+        UI.modal(`<h3>❌ ${esc(label)} — not valid</h3>
+          <p style="font-size:13px">${parts.join('<br>') || 'Not configured.'}</p>
+          <p class="muted" style="font-size:12px">Fix via <b>Configure</b>, then Validate again.</p>
+          <div class="foot"><button class="btn" onclick="Actions.editIntegration('${key}')">Configure</button>
+            <button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+      }
+    } catch (err) { UI.toast(err.message, 'err'); }
   },
 
   // Admin: AI Integration Studio — draft a config-driven provider from docs,
