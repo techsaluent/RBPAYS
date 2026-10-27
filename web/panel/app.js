@@ -2371,29 +2371,62 @@ const Screens = {
       { id: 'other',        title: '🧩 Other APIs', note: 'Anything else you plug in.' },
     ];
     const canTest = (k) => ['sms','otp','whatsapp','email'].includes(k);
-    const card = (i) => `<tr>
-      <td><b>${esc(i.label)}</b><div class="muted" style="font-size:11px">key: <code>${esc(i.key)}</code></div></td>
-      <td>${i.provider ? esc(i.provider) : '<span class="muted">—</span>'}</td>
-      <td>${i.has_key ? '🔑 set' : '<span class="muted">no key</span>'}</td>
-      <td>${i.is_active ? '<span class="tag active">active</span>' : '<span class="tag blocked">off</span>'}</td>
-      <td><button class="btn sm" onclick="Actions.editIntegration('${i.key}')">Configure</button>
-        ${canTest(i.key) ? `<button class="btn sm ghost" onclick="Actions.testIntegration('${i.key}')">Send test</button>` : ''}</td></tr>`;
+    const ICON = { email:'✉️', sms:'💬', otp:'🔑', whatsapp:'🟢', aadhaar_kyc:'🪪', pan_nsdl:'🆔',
+      penny_drop:'🏦', ifsc_lookup:'🏛️', pincode:'📮', upi_verify:'🆚', gst_verify:'🧾',
+      cybercrime:'🚨', vahan:'🚗', ai_coder:'🤖' };
+    // Each integration is a tile: status, provider, Configure + Test, inline toggle.
+    const tile = (i) => {
+      const ready = i.has_key || i.base_url || canTest(i.key);
+      return `<div class="api-tile">
+        <div class="row" style="justify-content:space-between;align-items:flex-start">
+          <div><span style="font-size:18px">${ICON[i.key] || '🔌'}</span> <b>${esc(i.label)}</b>
+            <div class="muted" style="font-size:11px"><code>${esc(i.key)}</code>${i.provider ? ' · ' + esc(i.provider) : ''}</div></div>
+          ${i.is_active ? '<span class="tag active">active</span>' : '<span class="tag" style="background:#fce8e6;color:#c5221f">off</span>'}
+        </div>
+        <div class="muted" style="font-size:12px;margin:8px 0">${i.has_key ? '🔑 key set' : '<span style="color:#c5221f">no key</span>'}${i.base_url ? ' · endpoint set' : ''}</div>
+        <div class="row" style="gap:6px;flex-wrap:wrap">
+          <button class="btn sm" onclick="Actions.editIntegration('${i.key}')">Configure</button>
+          ${canTest(i.key)
+            ? `<button class="btn sm ghost" onclick="Actions.testIntegration('${i.key}')">Send test</button>`
+            : `<button class="btn sm ghost" onclick="Actions.checkIntegration('${i.key}')">Check</button>`}
+          ${i.is_active
+            ? `<button class="btn sm ghost" onclick="Actions.toggleIntegration('${i.key}',false)">Turn off</button>`
+            : (ready ? `<button class="btn sm ghost" onclick="Actions.toggleIntegration('${i.key}',true)">Activate</button>` : '')}
+        </div></div>`;
+    };
     const sections = CATS.map(c => {
-      const items = (d.items || []).filter(i => (i.category || 'other') === c.id);
+      const items = (d.items || []).filter(i => (i.category || 'other') === c.id && i.key !== 'ai_coder');
       if (!items.length) return '';
       return `<div class="panel mt"><h3 style="margin:0 0 4px">${c.title}</h3>
         <p class="muted" style="font-size:12px;margin:0 0 10px">${c.note}</p>
-        <div class="tbl-wrap"><table>
-          <thead><tr><th>Service</th><th>Provider</th><th>Key</th><th>Status</th><th></th></tr></thead>
-          <tbody>${items.map(card).join('')}</tbody></table></div></div>`;
+        <div class="api-grid">${items.map(tile).join('')}</div></div>`;
     }).join('');
     const active = (d.items || []).filter(i => i.is_active).length;
-    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+    $('view').innerHTML = `
+      <style>
+        .api-grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); }
+        .api-tile { border:1px solid var(--line,#e5e9f2); border-radius:12px; padding:14px; background:var(--card,#fff); }
+      </style>
+      <div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
         <h2 style="margin:0">API Hub</h2>
         <button class="btn sm" onclick="Actions.editIntegration('')">+ Add API</button></div>
-      <p class="muted">Plug external services in here — pick a provider preset to auto-fill the endpoint and field map, paste your keys, mark <b>Active</b>. Keys are write-only (stored masked, never shown back). ${active} of ${(d.items||[]).length} active.</p>
-      <p class="muted" style="font-size:12px">Transaction rails — recharge, BBPS, DMT, AePS, payout, <b>travel / ticket booking</b>, <b>insurance</b>, loans, credit-card — are configured per service under <a href="#/providerconnections">Provider Connections</a> (one credential set drives many services). This hub holds OTP/messaging, KYC and verification APIs.</p>
+      <p class="muted">Each tile is one API — <b>Configure</b> (pick a provider preset, paste keys), <b>Send test</b> / <b>Check</b>, and toggle on/off right here. Keys are write-only (stored masked). ${active} of ${(d.items||[]).length} active.</p>
+      <p class="muted" style="font-size:12px">Transaction rails — recharge, BBPS, DMT, AePS, payout, <b>travel / ticket booking</b>, <b>insurance</b>, loans, credit-card — are configured per service under <a href="#/providerconnections">Provider Connections</a>. This hub holds OTP/messaging, KYC and verification APIs.</p>
       </div>${sections}`;
+  },
+  // Quick activate/deactivate from a hub tile (no modal).
+  async toggleIntegration(key, active) {
+    try { await Api.put('/admin/integrations/' + key, { is_active: active }); UI.toast(active ? 'Activated' : 'Turned off'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  // Lightweight config check for non-messaging APIs (no live call needed).
+  checkIntegration(key) {
+    const i = (Actions._intCache && Actions._intCache[key]) || {};
+    const missing = [];
+    if (!i.base_url) missing.push('endpoint / base URL');
+    if (!i.has_key && key !== 'ifsc_lookup' && key !== 'pincode') missing.push('API key');
+    if (!i.is_active) missing.push('not active');
+    UI.toast(missing.length ? `${i.label}: needs ${missing.join(', ')}` : `${i.label}: configured & active ✓`, missing.length ? 'err' : 'ok');
   },
 
   // Admin: AI Integration Studio — draft a config-driven provider from docs,
