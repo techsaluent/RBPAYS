@@ -17,11 +17,17 @@ interface VerifyConfig {
   apiSecret: string | null;
 }
 async function verifyConfig(kind: 'pan' | 'aadhaar'): Promise<VerifyConfig | null> {
+  // Accept both the short key and the API-Hub slot key (seeded as pan_nsdl /
+  // aadhaar_kyc), then the shared 'verification' row — first active wins.
+  const keys = kind === 'pan'
+    ? ['pan', 'pan_nsdl', 'verification']
+    : ['aadhaar', 'aadhaar_kyc', 'verification'];
+  const order = keys.map((k, i) => `WHEN '${k}' THEN ${i}`).join(' ');
   const { rows } = await query<{ base_url: string | null; api_key: string | null; api_secret: string | null }>(
     `SELECT base_url, api_key, api_secret FROM platform_integrations
-      WHERE key IN ($1, 'verification') AND is_active = true
-      ORDER BY CASE key WHEN $1 THEN 0 ELSE 1 END LIMIT 1`,
-    [kind],
+      WHERE key = ANY($1) AND is_active = true
+      ORDER BY CASE key ${order} ELSE 99 END LIMIT 1`,
+    [keys],
   );
   const r = rows[0];
   if (!r?.base_url) return null;
