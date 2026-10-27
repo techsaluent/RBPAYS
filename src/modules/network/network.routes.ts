@@ -11,6 +11,7 @@ import { query, withTransaction } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { postJournal } from '../_shared/ledger';
 import { getMemberPolicy } from './policy.service';
+import { powerProfile, powerMatrix, roleCan } from './powers';
 import { assertTxnMpin } from '../../middleware/service';
 import {
   createMember,
@@ -89,7 +90,7 @@ router.post(
   validate(floatSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const me = requireMember(req);
-    if (me.role === 'retailer') {
+    if (!roleCan(me.role, 'downline.fund')) {
       throw ApiError.forbidden('Retailers cannot push float; only distributors and master distributors can');
     }
     const b = req.body as z.infer<typeof floatSchema>;
@@ -302,5 +303,19 @@ router.put('/members/:id/policy', validate(policySchema), asyncHandler(async (re
   await upsertPolicy(req.params.id, me.id, req.body as z.infer<typeof policySchema>);
   res.json({ ok: true });
 }));
+
+// Hierarchy power map — the signed-in member's own capabilities plus the full
+// role × capability matrix, so the panel renders exactly what each role can do.
+router.get(
+  '/powers',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const owns = await query('SELECT 1 FROM tenants WHERE owner_user_id = $1 LIMIT 1', [req.user.id]);
+    res.json({
+      me: powerProfile(req.user.role, (owns.rowCount ?? 0) > 0),
+      matrix: powerMatrix(),
+    });
+  }),
+);
 
 export default router;

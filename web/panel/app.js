@@ -281,6 +281,7 @@ const NAV = [
   { key: 'rewards', label: '🎁 Refer & Earn', roles: NETWORK_ROLES },
   { key: 'mydisputes', label: 'My Disputes', roles: NETWORK_ROLES },
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
+  { key: 'powers', label: '🛡️ My Powers', roles: NETWORK_ROLES },
   { key: 'fundrequests', label: '💰 Fund Requests', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
@@ -3016,6 +3017,36 @@ const Screens = {
       <div class="panel mt"><h2>Referrals</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Referrer</th><th>Referred</th><th>Status</th><th class="right">Bonus</th><th>When</th></tr></thead>
         <tbody>${rr || '<tr><td colspan=5 class=muted>No referrals yet</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Hierarchy power map: what this member can do, plus the full role matrix.
+  async powers() {
+    const d = await Api.get('/network/powers');
+    const me = d.me, mx = d.matrix;
+    const held = new Set(me.capabilities);
+    const roleLabel = { retailer: 'Retailer', distributor: 'Distributor', master_distributor: 'Master Distributor', admin: 'Admin' };
+    // Group the member's own capabilities.
+    const groups = {};
+    mx.capabilities.forEach(c => { (groups[c.group] = groups[c.group] || []).push(c); });
+    const mine = Object.entries(groups).map(([g, caps]) => `
+      <div class="panel mt"><h3 style="margin:0 0 8px">${esc(g)}</h3>
+        <div style="display:grid;gap:6px">${caps.map(c => {
+          const on = held.has(c.key);
+          return `<div class="row" style="justify-content:space-between;align-items:center;gap:10px;opacity:${on?1:0.5}">
+            <span>${on?'✅':'🔒'} ${esc(c.label)}${c.note?`<br><span class="muted" style="font-size:11px">${esc(c.note)}</span>`:''}</span></div>`;
+        }).join('')}</div></div>`).join('');
+    // Full matrix grid.
+    const head = ['Capability', ...mx.roles.map(r => roleLabel[r] || r)];
+    const rows = mx.capabilities.map(c => `<tr>
+      <td>${esc(c.label)}</td>${mx.roles.map(r => `<td class="right">${mx.grid[c.key][r] ? '✅' : '—'}</td>`).join('')}</tr>`).join('');
+    $('view').innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">My Powers</h2>
+        <span class="muted">You are a <b>${esc(roleLabel[me.role] || me.role)}</b>${me.tenant_owner ? ' · White-label partner' : ''}</span></div>
+      <p class="muted">What your role can do across the hierarchy. 🔒 means a higher role is required. This map is the single source of truth the platform enforces.</p>
+      ${mine}
+      <div class="panel mt"><h3 style="margin:0 0 8px">Full role power map</h3><div class="tbl-wrap"><table>
+        <thead><tr>${head.map((h, i) => `<th${i ? ' class="right"' : ''}>${esc(h)}</th>`).join('')}</tr></thead>
+        <tbody>${rows}</tbody></table></div></div>`;
   },
 
   async myearnings() {
