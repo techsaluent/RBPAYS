@@ -1457,13 +1457,39 @@ const Screens = {
 
   async kycreview() {
     const d = await Api.get('/kyc/pending');
-    const rows = d.items.map(k => `<tr><td>${esc(k.full_name)}</td><td>${esc(k.role)}</td>
-      <td>${esc(k.doc_type)}</td><td>${esc(k.doc_number || '')}</td>
-      <td><button class="btn sm" onclick="Actions.reviewKyc('${k.id}','verified')">Approve</button>
+    // AI recommendation chip from the stored ai_* fields (if any).
+    const aiCell = (k) => {
+      if (!k.ai_verdict) return '<span class="muted" style="font-size:12px">—</span>';
+      const col = k.ai_verdict === 'approve' ? '#16a34a' : k.ai_verdict === 'reject' ? '#dc2626' : '#b26a00';
+      const ex = k.ai_extracted || {};
+      const nm = ex.name_match === true ? '✓ name match' : ex.name_match === false ? '✗ name mismatch' : '';
+      return `<div style="font-size:12px"><b style="color:${col};text-transform:uppercase">${esc(k.ai_verdict)}</b> · ${k.ai_confidence ?? 0}%
+        ${nm ? `<br><span class="muted">${nm}</span>` : ''}
+        ${ex.name ? `<br><span class="muted">name: ${esc(String(ex.name))}</span>` : ''}
+        ${ex.id_number ? `<br><span class="muted">id: ${esc(String(ex.id_number))}</span>` : ''}
+        ${k.ai_reason ? `<br><span class="muted" title="${esc(k.ai_reason)}">${esc(String(k.ai_reason).slice(0,60))}</span>` : ''}</div>`;
+    };
+    const rows = d.items.map(k => `<tr><td>${esc(k.full_name)}<br><span class="muted" style="font-size:11px">${esc(k.role)}</span></td>
+      <td>${esc(k.doc_type)}${k.doc_number ? '<br><span class="muted" style="font-size:11px">' + esc(k.doc_number) + '</span>' : ''}
+          ${k.file_url ? `<br><a href="${esc(k.file_url)}" target="_blank" style="font-size:11px">view doc ↗</a>` : '<br><span class="muted" style="font-size:11px">no image</span>'}</td>
+      <td>${aiCell(k)}</td>
+      <td><button class="btn sm ghost" onclick="Actions.aiReviewKyc('${k.id}')">🤖 AI review</button><br>
+          <button class="btn sm" style="margin-top:4px" onclick="Actions.reviewKyc('${k.id}','verified')">Approve</button>
           <button class="btn sm ghost" onclick="Actions.reviewKyc('${k.id}','rejected')">Reject</button></td></tr>`).join('');
-    $('view').innerHTML = `<div class="panel"><h2>Pending KYC</h2><div class="tbl-wrap"><table>
-      <thead><tr><th>User</th><th>Role</th><th>Document</th><th>Number</th><th></th></tr></thead>
-      <tbody>${rows || '<tr><td colspan=5 class=muted>Nothing pending</td></tr>'}</tbody></table></div></div>`;
+    $('view').innerHTML = `<div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">Pending KYC</h2>
+        <span class="muted" style="font-size:12px">🤖 AI reads the document and recommends — you confirm. Enable auto-review for new uploads under Website settings.</span></div>
+      <div class="tbl-wrap mt"><table>
+      <thead><tr><th>User</th><th>Document</th><th>AI recommendation</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan=4 class=muted>Nothing pending</td></tr>'}</tbody></table></div></div>`;
+  },
+  async aiReviewKyc(id) {
+    UI.toast('🤖 Reading the document…');
+    try {
+      const { recommendation: r } = await Api.post(`/kyc/${id}/ai-review`, {});
+      UI.toast(`AI: ${r.verdict.toUpperCase()} (${r.confidence}%)${r.reason ? ' — ' + r.reason : ''}`, r.verdict === 'reject' ? 'err' : 'ok');
+      App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
   },
 
   async plans() {
@@ -2275,6 +2301,8 @@ const Screens = {
         <h2 class="mt">Security policy</h2>
         <div class="field"><label><input type="checkbox" id="ws_security_require_txn_mpin" ${s.security_require_txn_mpin==='true'?'checked':''}> Require MPIN to confirm every transaction</label></div>
         <p class="muted">When on, retailers must enter their MPIN (set in Security) to complete each money transaction. They'll be prompted automatically.</p>
+        <div class="field"><label><input type="checkbox" id="ws_kyc_ai_review" ${s.kyc_ai_review==='true'?'checked':''}> AI-assist KYC: read uploaded documents and recommend (human confirms)</label></div>
+        <p class="muted">When on, each uploaded KYC document is read by your AI vision model (<a href="#/integrations">API Hub → AI</a>), which recommends approve/reject with a confidence score and the extracted name/number on the <a href="#/kycreview">KYC Review</a> screen. A human still confirms — the AI never approves on its own. Degrades to manual when AI isn't set. <b>Off by default.</b></p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_signup_otp" ${s.security_require_signup_otp==='true'?'checked':''}> Require OTP verification at sign-up (mandatory)</label></div>
         <p class="muted">When on, new users must verify with a 6-digit OTP before their account is created. The code is sent over <b>every active channel</b> — SMS, WhatsApp and Email — so verify by mobile or inbox; enable the relevant gateways in <a href="#/integrations">Integrations</a> first. Admin-created accounts never need an OTP.</p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_login_otp" ${s.security_require_login_otp==='true'?'checked':''}> Require email OTP at login (two-factor)</label></div>
@@ -4426,6 +4454,7 @@ const Actions = {
     const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','security_otp_bypass_code','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours','referral_bonus'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
+    if ($('ws_kyc_ai_review')) values['kyc_ai_review'] = $('ws_kyc_ai_review').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
     values['security_require_login_otp'] = $('ws_security_require_login_otp').checked ? 'true' : 'false';
     values['security_require_kyc'] = $('ws_security_require_kyc').checked ? 'true' : 'false';
