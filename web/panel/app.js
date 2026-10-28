@@ -2301,6 +2301,8 @@ const Screens = {
         <h2 class="mt">Security policy</h2>
         <div class="field"><label><input type="checkbox" id="ws_security_require_txn_mpin" ${s.security_require_txn_mpin==='true'?'checked':''}> Require MPIN to confirm every transaction</label></div>
         <p class="muted">When on, retailers must enter their MPIN (set in Security) to complete each money transaction. They'll be prompted automatically.</p>
+        ${field('custom_domain_target','White-label domain target (your server IP, or a CNAME host)','e.g. 203.0.113.10')}
+        <p class="muted">Partners point their custom domain here. An IP shows them an <b>A</b> record; a hostname shows a <b>CNAME</b>. This is the public IP of this server (the same one you whitelist with providers). Shown in each partner's My Brand → Domains.</p>
         <div class="field"><label><input type="checkbox" id="ws_kyc_ai_review" ${s.kyc_ai_review==='true'?'checked':''}> AI-assist KYC: read uploaded documents and recommend (human confirms)</label></div>
         <p class="muted">When on, each uploaded KYC document is read by your AI vision model (<a href="#/integrations">API Hub → AI</a>), which recommends approve/reject with a confidence score and the extracted name/number on the <a href="#/kycreview">KYC Review</a> screen. A human still confirms — the AI never approves on its own. Degrades to manual when AI isn't set. <b>Off by default.</b></p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_signup_otp" ${s.security_require_signup_otp==='true'?'checked':''}> Require OTP verification at sign-up (mandatory)</label></div>
@@ -4451,7 +4453,7 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','security_otp_bypass_code','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours','referral_bonus'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','security_otp_bypass_code','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours','referral_bonus','custom_domain_target'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     if ($('ws_kyc_ai_review')) values['kyc_ai_review'] = $('ws_kyc_ai_review').checked ? 'true' : 'false';
@@ -4698,15 +4700,26 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async myBrandDomains() {
-    const d = await Api.get('/brand/domains').catch(() => ({ items: [] }));
+    const d = await Api.get('/brand/domains').catch(() => ({ items: [], routing: null }));
+    const routing = d.routing; // {type:'A'|'CNAME', target} or null
+    const rec = (label, host, value) => `<div class="row" style="gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;margin:3px 0">
+        <span style="min-width:64px"><b>${esc(label)}</b></span>
+        <code style="font-size:11px">${esc(host)}</code> → <code style="font-size:11px">${esc(value)}</code>
+        <button class="btn sm ghost" style="padding:1px 7px" onclick="Actions.copyText(${JSON.stringify(value)})">Copy</button></div>`;
     const rows = (d.items || []).map(x => `<tr>
       <td><b>${esc(x.domain)}</b>${x.is_primary ? ' <span class="tag">primary</span>' : ''}</td>
       <td>${x.verified_at ? UI.statusTag('verified') : '<span class="tag">pending DNS</span>'}</td>
       <td style="white-space:nowrap">
         ${x.verified_at ? '' : `<button class="btn sm ghost" onclick="Actions.myVerifyDomain('${x.id}')">Check DNS</button>`}
-        <button class="btn sm ghost danger" onclick="Actions.myDeleteDomain('${x.id}')">✕</button></td>
-      ${x.verified_at ? '' : `<tr><td colspan=3 class=muted style="font-size:12px">Add a <b>TXT</b> record <code>_tutipays-verify.${esc(x.domain)}</code> = <code>${esc(x.verify_token)}</code>, then Check DNS. Point the host (A/CNAME) at our server.</td></tr>`}`).join('');
+        <button class="btn sm ghost danger" onclick="Actions.myDeleteDomain('${x.id}')">✕</button></td></tr>
+      ${x.verified_at ? '' : `<tr><td colspan=3 style="background:#f7f8fb">
+        <div class="muted" style="font-size:12px;margin-bottom:4px">At your domain's DNS, add these two records, then <b>Check DNS</b>:</div>
+        ${routing ? rec(routing.type, x.domain, routing.target) : '<div class="muted" style="font-size:12px;color:#c5221f">Routing target not set yet — ask the platform admin to set the server IP under Website settings.</div>'}
+        ${rec('TXT', '_tutipays-verify.' + x.domain, x.verify_token)}
+        <div class="muted" style="font-size:11px;margin-top:4px">The ${routing && routing.type === 'A' ? 'A' : 'CNAME'} record routes your domain to our server; the TXT proves you own it. HTTPS is provisioned once verified.</div>
+      </td></tr>`}`).join('');
     UI.modal(`<h3>My custom domains</h3>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Serve your branded panel on your own host, e.g. <b>pay.yourbrand.com</b>. Add the domain, create the two DNS records shown, then Check DNS.</p>
       <div class="tbl-wrap"><table><thead><tr><th>Domain</th><th>Ownership</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=3 class=muted>No domains yet.</td></tr>'}</tbody></table></div>
       <div class="row" style="gap:8px;margin-top:10px"><input id="mbd_new" placeholder="pay.yourbrand.com" style="flex:1">
