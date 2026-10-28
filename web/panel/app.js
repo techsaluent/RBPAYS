@@ -324,6 +324,7 @@ const NETWORK_ROLES = ['retailer', 'user', 'distributor', 'master_distributor'];
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', roles: '*' },
   { key: 'new', label: 'New Transaction', roles: TXN_ROLES },
+  { key: 'billpay', label: '🧾 Bill Pay (BBPS)', roles: TXN_ROLES },
   { key: 'beneficiaries', label: 'Beneficiaries', roles: TXN_ROLES },
   { key: 'devices', label: 'My Devices', roles: TXN_ROLES },
   { key: 'wallet', label: 'Wallet', roles: NETWORK_ROLES },
@@ -532,6 +533,68 @@ const App = {
 
 // ---------------- Screens ----------------
 const Screens = {
+  // EzeePay-style distributor/MD home sections, powered by /network/dashboard.
+  _mgmtSections(dash, isMD) {
+    const n = dash.network || {}, tb = dash.today_business || {}, e = dash.earnings || {};
+    const topList = (arr, empty) => (arr && arr.length)
+      ? arr.map((t, i) => `<div class="mini"><span class="mi">${i + 1}</span>
+          <div class="mm"><b>${esc(t.name || 'Member')}</b><span>${t.txns} txn${t.txns === 1 ? '' : 's'}</span></div>
+          <div class="ma">${money(t.gtv_paise / 100)}</div></div>`).join('')
+      : `<div class="muted" style="padding:8px 0">${empty}</div>`;
+    return `
+      <div class="panel mt"><h2 style="margin:0 0 10px">🕸️ My Network</h2>
+        <div class="grid cards">
+          ${UI.stat('o','🧑‍🤝‍🧑','Total agents', n.total||0)}
+          ${UI.stat('g','✅','Active (30d)', n.active||0)}
+          ${UI.stat('p','🟢','Active today', n.today_active||0)}
+          ${UI.stat('r','💤','Inactive', n.inactive||0)}
+        </div></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:baseline">
+          <h2 style="margin:0">💼 Today's business</h2><span class="muted" style="font-size:12px">Successful ₹ across your network today</span></div>
+        <div class="grid cards mt">
+          ${UI.stat('b','🏧','AEPS', money((tb.aeps||0)/100))}
+          ${UI.stat('b','💳','Micro ATM', money((tb.matm||0)/100))}
+          ${UI.stat('b','💸','Money transfer', money((tb.dmt||0)/100))}
+          ${UI.stat('b','🧾','BBPS', money((tb.bbps||0)/100))}
+          ${UI.stat('b','📱','Recharge & bills', money((tb.recharge||0)/100))}
+        </div></div>
+      <div class="dash-cols mt">
+        <div class="panel"><h2 style="margin:0 0 8px">🏆 Top retailers · this month</h2>${topList(dash.top_retailers,'No retailer activity yet this month.')}</div>
+        ${isMD
+          ? `<div class="panel"><h2 style="margin:0 0 8px">🏆 Top distributors · this month</h2>${topList(dash.top_distributors,'No distributor activity yet this month.')}</div>`
+          : `<div class="panel"><h2 style="margin:0 0 8px">📈 My performance</h2>
+             <div class="grid cards">${UI.stat('g','₹','Earned today', money((e.today_paise||0)/100))}${UI.stat('g','₹','Earned this month', money((e.month_paise||0)/100))}</div></div>`}
+      </div>
+      <div class="panel mt"><h2 style="margin:0 0 10px">⚡ Quick actions</h2>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <button class="btn sm" onclick="Actions.addMember(false)">＋ New member</button>
+          <a class="btn sm ghost" href="#/network">📋 Business report</a>
+          <a class="btn sm ghost" href="#/fundrequests">💰 Fund requests</a>
+          <a class="btn sm ghost" href="#/myearnings">📊 My performance</a>
+          <a class="btn sm ghost" href="#/powers">🛡️ My powers</a>
+          <a class="btn sm ghost" href="#/kyc">🪪 KYC</a>
+        </div></div>`;
+  },
+  // Bharat BillPay flow: category → biller → consumer number → fetch → pay.
+  async billpay() {
+    const cats = await Api.get('/bbps/categories').catch(() => ({ items: [] }));
+    const catOpts = ['<option value="">Select category…</option>']
+      .concat((cats.items || []).map(c => `<option value="${esc(c.category)}">${esc(String(c.category).replace(/_/g,' '))} (${c.billers})</option>`)).join('');
+    $('view').innerHTML = `
+      <div class="panel" style="max-width:560px">
+        <h2 style="margin:0 0 4px">🧾 Bill Pay (BBPS)</h2>
+        <p class="muted" style="font-size:13px;margin:0 0 12px">Electricity, gas, water, DTH, broadband, FASTag, loan EMI, insurance premium &amp; more — via Bharat BillPay.</p>
+        <div class="field"><label>Category</label><select id="bp_cat" onchange="Actions.bbpsLoadBillers()">${catOpts}</select></div>
+        <div class="field"><label>Biller</label><select id="bp_biller" disabled><option>Pick a category first</option></select></div>
+        <div class="field"><label>Consumer / account number</label><input id="bp_consumer" placeholder="as printed on the bill"></div>
+        <button class="btn sm ghost" onclick="Actions.bbpsFetch()">🔍 Fetch bill</button>
+        <div id="bp_bill" class="mt muted" style="font-size:13px"></div>
+        <div class="field mt"><label>Amount (₹)</label><input id="bp_amount" type="number" min="1" step="0.01"></div>
+        <button class="btn" onclick="Actions.bbpsPay()">Pay bill</button>
+        <div id="bp_result" class="mt"></div>
+      </div>`;
+  },
+
   async dashboard() {
     if (State.user.role === 'staff') {
       // Staff see a focused console: only the sections they're granted.
@@ -609,12 +672,13 @@ const Screens = {
     } else if (MGMT_ROLES.includes(State.user.role)) {
       // Distributor / Master distributor — network, earnings & downline.
       const isMD = State.user.role === 'master_distributor';
-      const [p, w, st, dl, inc] = await Promise.all([
+      const [p, w, st, dl, inc, dash] = await Promise.all([
         Api.get('/network/panel').catch(() => null),
         Api.get('/wallet'),
         Api.get('/transactions/stats/summary').catch(() => null),
         Api.get('/network/downline').catch(() => ({ items: [] })),
         Api.get('/topup/incoming').catch(() => ({ items: [] })),
+        Api.get('/network/dashboard').catch(() => null),
       ]);
       const earn = p ? p.earnings.total_paise / 100 : 0;
       const counts = p ? (p.downline_counts || {}) : {};
@@ -641,6 +705,7 @@ const Screens = {
           ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, isMD ? 'Distributors & retailers' : 'Retailers')}
           ${pendingApprovals ? UI.stat('r','⏳','Top-up approvals', pendingApprovals, '<a href="#/fundrequests">Review now →</a>') : (st ? UI.stat('p','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : '')}
         </div>
+        ${dash ? Screens._mgmtSections(dash, isMD) : ''}
         <div class="dash-cols mt">
           <div>
             ${st && st.daily ? `<div class="panel"><div class="row" style="justify-content:space-between"><h2>Network volume — last 7 days</h2>
@@ -706,6 +771,27 @@ const Screens = {
             <div class="panel"><div class="row" style="justify-content:space-between"><h2>Services</h2>
               <a class="btn sm" href="#/new">＋ New transaction</a></div>
               ${svcTiles(SERVICES.map(x => x.key))}</div>
+            <div class="panel mt"><h2 style="margin:0 0 10px">⚡ Quick actions</h2>
+              <div class="svc-tiles">
+                ${[
+                  ['🔁','Wallet transfer','#/new',"Actions.presetSvc('wallet_transfer')"],
+                  ['💵','CMS cash collect','#/new',"Actions.presetSvc('cms')"],
+                  ['🏧','AEPS withdrawal','#/new',"Actions.presetSvc('aeps')"],
+                  ['💳','Micro ATM','#/new',"Actions.presetSvc('matm')"],
+                  ['＋','Add money','#/addmoney',''],
+                  ['🧾','Passbook','',"Actions.openDoc('/wallet/statement?format=html')"],
+                  ['🪪','My ID card','',"Actions.myDoc('id-card')"],
+                  ['🎖️','Certificate','',"Actions.myDoc('certificate')"],
+                  ['🎁','Refer & earn','#/rewards',''],
+                  ['📣','Marketing','#/marketing',''],
+                  ['🧩','Developer API','#/developer',''],
+                  ['📊','My earnings','#/myearnings',''],
+                  ['🪪','KYC','#/kyc',''],
+                  ['🆔','PAN & TDS','#/tax',''],
+                  ['🛡️','My powers','#/powers',''],
+                ].map(([ico,label,href,act]) => `<a class="svc-tile" ${href?`href="${href}"`:'style="cursor:pointer"'} ${act?`onclick="${act}"`:''}>
+                    <span class="si">${ico}</span><b>${label}</b></a>`).join('')}
+              </div></div>
             ${s.daily ? `<div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My volume — last 7 days</h2>
               <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
               ${Charts.area(s.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
@@ -2549,13 +2635,17 @@ const Screens = {
             : (ready ? `<button class="btn sm ghost" onclick="Actions.toggleIntegration('${i.key}',true)">Activate</button>` : '')}
         </div></div>`;
     };
-    const sections = CATS.map(c => {
+    // Two parts: Financial services (KYC + verification/screening) and
+    // Other / management (messaging/OTP + Telegram backup / AI / misc).
+    const TAB = Actions._intTab === 'other' ? 'other' : 'financial';
+    const TAB_CATS = { financial: ['identity', 'verification'], other: ['messaging', 'other'] };
+    const sections = CATS.filter(c => TAB_CATS[TAB].includes(c.id)).map(c => {
       const items = (d.items || []).filter(i => (i.category || 'other') === c.id && i.key !== 'ai_coder');
       if (!items.length) return '';
       return `<div class="panel mt"><h3 style="margin:0 0 4px">${c.title}</h3>
         <p class="muted" style="font-size:12px;margin:0 0 10px">${c.note}</p>
         <div class="api-grid">${items.map(tile).join('')}</div></div>`;
-    }).join('');
+    }).join('') || `<div class="panel mt"><p class="muted">No APIs in this part yet. Use <b>+ Add API</b>.</p></div>`;
     const active = (d.items || []).filter(i => i.is_active).length;
     $('view').innerHTML = `
       <style>
@@ -2565,8 +2655,14 @@ const Screens = {
       <div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
         <h2 style="margin:0">API Hub</h2>
         <button class="btn sm" onclick="Actions.editIntegration('')">+ Add API</button></div>
-      <p class="muted">Each tile is one API — <b>Configure</b> (pick a provider preset, paste keys), <b>Validate</b> (checks credentials — Email actually connects to the SMTP server), <b>Send test</b> (messaging), toggle on/off. Keys are write-only (stored masked). ${active} of ${(d.items||[]).length} active.</p>
-      <p class="muted" style="font-size:12px">Transaction rails — recharge, BBPS, DMT, AePS, payout, <b>travel / ticket booking</b>, <b>insurance</b>, loans, credit-card — are configured per service under <a href="#/providerconnections">Provider Connections</a>. This hub holds OTP/messaging, KYC and verification APIs.</p>
+      <div class="row" style="gap:8px;margin:10px 0 4px">
+        <button class="btn sm ${TAB==='financial'?'':'ghost'}" onclick="Actions._intTab='financial';App.route()">💳 Financial services</button>
+        <button class="btn sm ${TAB==='other'?'':'ghost'}" onclick="Actions._intTab='other';App.route()">🛠️ Other / management</button>
+      </div>
+      <p class="muted">Each tile is one API — <b>Configure</b> (pick a provider preset, paste keys), <b>Validate</b>, <b>Send test</b> (messaging), toggle on/off. Keys are write-only (stored masked). ${active} of ${(d.items||[]).length} active.</p>
+      ${TAB==='financial'
+        ? `<p class="muted" style="font-size:12px"><b>Financial services:</b> KYC (Aadhaar e-KYC, PAN) and verification/screening (bank penny-drop name match, IFSC/PIN/UPI/GST lookups, AML negative-list, Vahan) that support onboarding &amp; transactions. The <b>transaction rails themselves</b> — recharge, BBPS, DMT, AePS, payout, travel, insurance, loans — live under <a href="#/providerconnections">Provider Connections</a> and <a href="#/providers">Providers</a>.</p>`
+        : `<p class="muted" style="font-size:12px"><b>Other / management:</b> messaging &amp; OTP (SMS, WhatsApp, Email, dedicated OTP), plus platform tooling like the <b>Telegram backup bot</b> and the AI endpoint. <b>Email must be active</b> for login OTP.</p>`}
       </div>${sections}`;
   },
   // ---- Backup & DR -------------------------------------------------------
@@ -3979,6 +4075,42 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   presetSvc(key) { Actions._preset = key; },
+  // ---- Bill Pay (BBPS) flow ----
+  async bbpsLoadBillers() {
+    const cat = val('bp_cat'); const sel = $('bp_biller');
+    if (!cat) { sel.innerHTML = '<option>Pick a category first</option>'; sel.disabled = true; return; }
+    sel.disabled = true; sel.innerHTML = '<option>Loading…</option>';
+    try {
+      const d = await Api.get('/bbps/billers?category=' + encodeURIComponent(cat));
+      sel.innerHTML = ['<option value="">Select biller…</option>']
+        .concat((d.items || []).map(b => `<option value="${esc(b.biller_id)}" data-name="${esc(b.name)}">${esc(b.name)}</option>`)).join('');
+      sel.disabled = false;
+    } catch (e) { sel.innerHTML = '<option>Failed to load</option>'; }
+  },
+  async bbpsFetch() {
+    const biller = val('bp_biller'), consumer = val('bp_consumer'), out = $('bp_bill');
+    if (!biller || !consumer) { out.innerHTML = '<span class="msg err">Pick a biller and enter the consumer number.</span>'; return; }
+    out.innerHTML = 'Fetching…';
+    try {
+      const r = await Api.post('/bbps/fetch', { biller_id: biller, consumer_number: consumer, category: val('bp_cat') });
+      if (r.fetch_supported === false) { out.innerHTML = esc(r.message || 'Fetch not supported — enter the amount manually.'); return; }
+      if (r.amount != null && $('bp_amount')) $('bp_amount').value = r.amount;
+      out.innerHTML = `<span class="msg ok">Bill: <b>₹${money(r.amount)}</b>${r.customer_name ? ' · ' + esc(r.customer_name) : ''}${r.due_date ? ' · due ' + esc(r.due_date) : ''}${r.bill_number ? ' · ' + esc(r.bill_number) : ''}</span>`;
+    } catch (err) { out.innerHTML = `<span class="msg err">${esc(err.message)}</span>`; }
+  },
+  async bbpsPay() {
+    const sel = $('bp_biller'), biller = val('bp_biller');
+    const name = (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].dataset.name) || '';
+    const consumer = val('bp_consumer'), amount = +val('bp_amount'), out = $('bp_result');
+    if (!biller || !consumer || !amount || amount <= 0) { out.innerHTML = '<span class="msg err">Biller, consumer number and a positive amount are required.</span>'; return; }
+    out.innerHTML = 'Processing…';
+    try {
+      const d = await Api.postSecure('/bbps/pay', { biller_id: biller, biller_name: name, category: val('bp_cat'), consumer_number: consumer, amount });
+      const t = d.transaction;
+      out.innerHTML = `<div class="msg ok">Done — status: <b>${esc(t.status)}</b>${t.reference ? ' · ref ' + esc(t.reference) : ''}</div>`;
+      App.refreshWallet();
+    } catch (err) { out.innerHTML = `<span class="msg err">${esc(err.message)}</span>`; }
+  },
   async saveProfile() {
     const body = {};
     if (val('pf_name')) body.full_name = val('pf_name');

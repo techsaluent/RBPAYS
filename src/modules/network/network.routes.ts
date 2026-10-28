@@ -12,6 +12,7 @@ import { rupeesToPaise } from '../../utils/money';
 import { postJournal } from '../_shared/ledger';
 import { getMemberPolicy } from './policy.service';
 import { powerProfile, powerMatrix, roleCan } from './powers';
+import { distributorDashboard } from './dashboard.service';
 import { assertTxnMpin } from '../../middleware/service';
 import {
   createMember,
@@ -303,6 +304,17 @@ router.put('/members/:id/policy', validate(policySchema), asyncHandler(async (re
   await upsertPolicy(req.params.id, me.id, req.body as z.infer<typeof policySchema>);
   res.json({ ok: true });
 }));
+
+// Rich distributor / MD home dashboard: network health, today's business by
+// service, own earnings, and top downline performers.
+router.get(
+  '/dashboard',
+  asyncHandler(async (req: Request, res: Response) => {
+    const me = requireMember(req);
+    if (!roleCan(me.role, 'member.view')) throw ApiError.forbidden('Only distributors and master distributors have a network dashboard');
+    res.json(await distributorDashboard(me.id));
+  }),
+);
 
 // Hierarchy power map — the signed-in member's own capabilities plus the full
 // role × capability matrix, so the panel renders exactly what each role can do.

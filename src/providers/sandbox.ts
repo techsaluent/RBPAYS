@@ -72,6 +72,21 @@ export const sandboxBbps: BbpsProvider = {
     const status = outcome(input.amountPaise);
     return { status, providerRef: ref('sbxbb'), message: `sandbox BBPS ${status}` };
   },
+  async fetchBill(input) {
+    // Deterministic demo bill derived from the consumer number so the fetch →
+    // pay flow is testable without a live biller.
+    const digits = (input.consumerNumber.match(/\d/g) || []).join('');
+    const amountPaise = digits ? 10000 + (Number(digits.slice(-4) || '0') % 5000) * 100 : 54700;
+    const due = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+    return {
+      fetchSupported: true,
+      amountPaise,
+      customerName: 'Sandbox Customer',
+      dueDate: due,
+      billNumber: 'SBX' + digits.slice(-6),
+      message: 'sandbox bill fetched',
+    };
+  },
 };
 
 export const sandboxRecharge: RechargeProvider = {
