@@ -532,6 +532,48 @@ const App = {
 
 // ---------------- Screens ----------------
 const Screens = {
+  // EzeePay-style distributor/MD home sections, powered by /network/dashboard.
+  _mgmtSections(dash, isMD) {
+    const n = dash.network || {}, tb = dash.today_business || {}, e = dash.earnings || {};
+    const topList = (arr, empty) => (arr && arr.length)
+      ? arr.map((t, i) => `<div class="mini"><span class="mi">${i + 1}</span>
+          <div class="mm"><b>${esc(t.name || 'Member')}</b><span>${t.txns} txn${t.txns === 1 ? '' : 's'}</span></div>
+          <div class="ma">${money(t.gtv_paise / 100)}</div></div>`).join('')
+      : `<div class="muted" style="padding:8px 0">${empty}</div>`;
+    return `
+      <div class="panel mt"><h2 style="margin:0 0 10px">🕸️ My Network</h2>
+        <div class="grid cards">
+          ${UI.stat('o','🧑‍🤝‍🧑','Total agents', n.total||0)}
+          ${UI.stat('g','✅','Active (30d)', n.active||0)}
+          ${UI.stat('p','🟢','Active today', n.today_active||0)}
+          ${UI.stat('r','💤','Inactive', n.inactive||0)}
+        </div></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:baseline">
+          <h2 style="margin:0">💼 Today's business</h2><span class="muted" style="font-size:12px">Successful ₹ across your network today</span></div>
+        <div class="grid cards mt">
+          ${UI.stat('b','🏧','AEPS', money((tb.aeps||0)/100))}
+          ${UI.stat('b','💳','Micro ATM', money((tb.matm||0)/100))}
+          ${UI.stat('b','💸','Money transfer', money((tb.dmt||0)/100))}
+          ${UI.stat('b','🧾','BBPS', money((tb.bbps||0)/100))}
+          ${UI.stat('b','📱','Recharge & bills', money((tb.recharge||0)/100))}
+        </div></div>
+      <div class="dash-cols mt">
+        <div class="panel"><h2 style="margin:0 0 8px">🏆 Top retailers · this month</h2>${topList(dash.top_retailers,'No retailer activity yet this month.')}</div>
+        ${isMD
+          ? `<div class="panel"><h2 style="margin:0 0 8px">🏆 Top distributors · this month</h2>${topList(dash.top_distributors,'No distributor activity yet this month.')}</div>`
+          : `<div class="panel"><h2 style="margin:0 0 8px">📈 My performance</h2>
+             <div class="grid cards">${UI.stat('g','₹','Earned today', money((e.today_paise||0)/100))}${UI.stat('g','₹','Earned this month', money((e.month_paise||0)/100))}</div></div>`}
+      </div>
+      <div class="panel mt"><h2 style="margin:0 0 10px">⚡ Quick actions</h2>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <button class="btn sm" onclick="Actions.addMember(false)">＋ New member</button>
+          <a class="btn sm ghost" href="#/network">📋 Business report</a>
+          <a class="btn sm ghost" href="#/fundrequests">💰 Fund requests</a>
+          <a class="btn sm ghost" href="#/myearnings">📊 My performance</a>
+          <a class="btn sm ghost" href="#/powers">🛡️ My powers</a>
+          <a class="btn sm ghost" href="#/kyc">🪪 KYC</a>
+        </div></div>`;
+  },
   async dashboard() {
     if (State.user.role === 'staff') {
       // Staff see a focused console: only the sections they're granted.
@@ -609,12 +651,13 @@ const Screens = {
     } else if (MGMT_ROLES.includes(State.user.role)) {
       // Distributor / Master distributor — network, earnings & downline.
       const isMD = State.user.role === 'master_distributor';
-      const [p, w, st, dl, inc] = await Promise.all([
+      const [p, w, st, dl, inc, dash] = await Promise.all([
         Api.get('/network/panel').catch(() => null),
         Api.get('/wallet'),
         Api.get('/transactions/stats/summary').catch(() => null),
         Api.get('/network/downline').catch(() => ({ items: [] })),
         Api.get('/topup/incoming').catch(() => ({ items: [] })),
+        Api.get('/network/dashboard').catch(() => null),
       ]);
       const earn = p ? p.earnings.total_paise / 100 : 0;
       const counts = p ? (p.downline_counts || {}) : {};
@@ -641,6 +684,7 @@ const Screens = {
           ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, isMD ? 'Distributors & retailers' : 'Retailers')}
           ${pendingApprovals ? UI.stat('r','⏳','Top-up approvals', pendingApprovals, '<a href="#/fundrequests">Review now →</a>') : (st ? UI.stat('p','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : '')}
         </div>
+        ${dash ? Screens._mgmtSections(dash, isMD) : ''}
         <div class="dash-cols mt">
           <div>
             ${st && st.daily ? `<div class="panel"><div class="row" style="justify-content:space-between"><h2>Network volume — last 7 days</h2>
