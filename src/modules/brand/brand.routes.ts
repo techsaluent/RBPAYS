@@ -5,6 +5,7 @@ import { validate } from '../../middleware/validate';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { logAudit } from '../audit/audit.service';
+import { query } from '../../../db';
 import {
   requireOwnedTenantId, getTenant, updateTenant,
   listDomains, addDomain, verifyDomain, deleteDomain,
@@ -64,7 +65,17 @@ router.put('/', validate(brandingSchema), asyncHandler(async (req: Request, res:
 
 // ---- My custom domains --------------------------------------------------
 router.get('/domains', asyncHandler(async (req: Request, res: Response) => {
-  res.json({ items: await listDomains(await myTenantId(req)) });
+  const items = await listDomains(await myTenantId(req));
+  // The routing record a partner must create so their host reaches our server.
+  // Admin sets `custom_domain_target` (an IP -> A record, else a host -> CNAME)
+  // under Website settings; blank until configured.
+  const target = (
+    await query<{ value: string }>("SELECT value FROM site_settings WHERE key = 'custom_domain_target'")
+  ).rows[0]?.value?.trim() || '';
+  const routing = target
+    ? { type: /^\d{1,3}(\.\d{1,3}){3}$/.test(target) ? 'A' : 'CNAME', target }
+    : null;
+  res.json({ items, routing, verify_prefix: '_tutipays-verify' });
 }));
 
 router.post('/domains', validate(z.object({ domain: z.string().trim().min(3).max(255) })),
