@@ -2635,13 +2635,17 @@ const Screens = {
             : (ready ? `<button class="btn sm ghost" onclick="Actions.toggleIntegration('${i.key}',true)">Activate</button>` : '')}
         </div></div>`;
     };
-    const sections = CATS.map(c => {
+    // Two parts: Financial services (KYC + verification/screening) and
+    // Other / management (messaging/OTP + Telegram backup / AI / misc).
+    const TAB = Actions._intTab === 'other' ? 'other' : 'financial';
+    const TAB_CATS = { financial: ['identity', 'verification'], other: ['messaging', 'other'] };
+    const sections = CATS.filter(c => TAB_CATS[TAB].includes(c.id)).map(c => {
       const items = (d.items || []).filter(i => (i.category || 'other') === c.id && i.key !== 'ai_coder');
       if (!items.length) return '';
       return `<div class="panel mt"><h3 style="margin:0 0 4px">${c.title}</h3>
         <p class="muted" style="font-size:12px;margin:0 0 10px">${c.note}</p>
         <div class="api-grid">${items.map(tile).join('')}</div></div>`;
-    }).join('');
+    }).join('') || `<div class="panel mt"><p class="muted">No APIs in this part yet. Use <b>+ Add API</b>.</p></div>`;
     const active = (d.items || []).filter(i => i.is_active).length;
     $('view').innerHTML = `
       <style>
@@ -2651,8 +2655,14 @@ const Screens = {
       <div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
         <h2 style="margin:0">API Hub</h2>
         <button class="btn sm" onclick="Actions.editIntegration('')">+ Add API</button></div>
-      <p class="muted">Each tile is one API — <b>Configure</b> (pick a provider preset, paste keys), <b>Validate</b> (checks credentials — Email actually connects to the SMTP server), <b>Send test</b> (messaging), toggle on/off. Keys are write-only (stored masked). ${active} of ${(d.items||[]).length} active.</p>
-      <p class="muted" style="font-size:12px">Transaction rails — recharge, BBPS, DMT, AePS, payout, <b>travel / ticket booking</b>, <b>insurance</b>, loans, credit-card — are configured per service under <a href="#/providerconnections">Provider Connections</a>. This hub holds OTP/messaging, KYC and verification APIs.</p>
+      <div class="row" style="gap:8px;margin:10px 0 4px">
+        <button class="btn sm ${TAB==='financial'?'':'ghost'}" onclick="Actions._intTab='financial';App.route()">💳 Financial services</button>
+        <button class="btn sm ${TAB==='other'?'':'ghost'}" onclick="Actions._intTab='other';App.route()">🛠️ Other / management</button>
+      </div>
+      <p class="muted">Each tile is one API — <b>Configure</b> (pick a provider preset, paste keys), <b>Validate</b>, <b>Send test</b> (messaging), toggle on/off. Keys are write-only (stored masked). ${active} of ${(d.items||[]).length} active.</p>
+      ${TAB==='financial'
+        ? `<p class="muted" style="font-size:12px"><b>Financial services:</b> KYC (Aadhaar e-KYC, PAN) and verification/screening (bank penny-drop name match, IFSC/PIN/UPI/GST lookups, AML negative-list, Vahan) that support onboarding &amp; transactions. The <b>transaction rails themselves</b> — recharge, BBPS, DMT, AePS, payout, travel, insurance, loans — live under <a href="#/providerconnections">Provider Connections</a> and <a href="#/providers">Providers</a>.</p>`
+        : `<p class="muted" style="font-size:12px"><b>Other / management:</b> messaging &amp; OTP (SMS, WhatsApp, Email, dedicated OTP), plus platform tooling like the <b>Telegram backup bot</b> and the AI endpoint. <b>Email must be active</b> for login OTP.</p>`}
       </div>${sections}`;
   },
   // ---- Backup & DR -------------------------------------------------------
