@@ -2791,13 +2791,16 @@ router.get(
       'SELECT * FROM service_providers WHERE service_code = $1 ORDER BY priority, created_at',
       [req.params.code],
     );
-    // Never leak raw secrets; expose a callback URL + "is a secret set?" flags.
+    // Never leak raw secrets/keys; expose "is it set?" flags + a callback URL.
     const items = rows.map((p) => ({
       ...p,
+      api_key: undefined,
       api_secret: undefined,
       auth_token: undefined,
       webhook_secret: undefined,
+      has_api_key: Boolean(p.api_key),
       has_api_secret: Boolean(p.api_secret),
+      has_auth_token: Boolean(p.auth_token),
       has_webhook_secret: Boolean(p.webhook_secret),
       callback_url: `${base}/api/v1/webhooks/provider/${p.id}`,
     }));

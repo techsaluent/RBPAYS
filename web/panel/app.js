@@ -2930,11 +2930,13 @@ const Screens = {
     const sel = Actions._provService && codes.includes(Actions._provService) ? Actions._provService : codes[0];
     const opts = svcs.items.map(s => `<option value="${s.code}" ${s.code===sel?'selected':''}>${esc(s.code)} — ${esc(s.name)}</option>`).join('');
     const list = await Api.get(`/admin/services/${sel}/providers`);
+    Actions._provRows = {}; list.items.forEach(p => { Actions._provRows[p.id] = p; });
     const rows = list.items.map(p => `<tr>
       <td>${esc(p.label)}</td><td>${esc(p.driver)}</td><td class="muted">${esc(p.base_url||'')}</td>
       <td>${p.is_active ? '<span class="tag active">active</span>' : ''}</td>
-      <td>${p.api_key ? '••••' : '<span class="muted">no key</span>'}</td>
-      <td><button class="btn sm ghost" onclick="Actions.testProvider('${p.id}','${esc(p.label)}')">Test</button>
+      <td>${p.has_api_key ? '🔑 key' : '<span class="muted">no key</span>'}${p.has_api_secret ? ' + secret' : ''}</td>
+      <td><button class="btn sm" onclick="Actions.editProvider('${p.id}')">Keys</button>
+          <button class="btn sm ghost" onclick="Actions.testProvider('${p.id}','${esc(p.label)}')">Test</button>
           ${p.is_active
           ? `<button class="btn sm ghost" onclick="Actions.deactivateProvider('${p.id}')">Deactivate</button>`
           : `<button class="btn sm" onclick="Actions.activateProvider('${p.id}')">Activate</button>`}
@@ -5391,6 +5393,46 @@ const Actions = {
     $('p_key_l').textContent = h ? h[1] : 'API key';
     $('p_secret_l').textContent = h ? h[2] : 'API secret';
     $('p_partner_l').textContent = d === 'eko' ? 'Partner ID (initiator_id)' : 'Partner ID';
+  },
+  // Driver-aware credential labels so AeronPay/Eko show their real field names.
+  _provCredLabels(driver) {
+    const M = {
+      aeronpay: { key: 'Client ID', keyHint: 'client-id', secret: 'Client Secret', secretHint: 'client-secret', partner: '', token: '' },
+      eko: { key: 'API key (developer_key)', keyHint: 'developer_key', secret: 'API secret (access_key)', secretHint: 'access_key', partner: 'Partner ID (initiator_id)', token: '' },
+      razorpay: { key: 'Key ID', keyHint: 'rzp key id', secret: 'Key Secret', secretHint: 'rzp secret', partner: '', token: '' },
+    };
+    return M[driver] || { key: 'API key', keyHint: '', secret: 'API secret', secretHint: '', partner: 'Partner ID', token: 'Auth token' };
+  },
+  // Set / update a provider's API credentials AFTER it's created (e.g. paste the
+  // AeronPay Client ID + Client Secret). Blank fields keep the existing value.
+  editProvider(id) {
+    const p = (Actions._provRows || {})[id];
+    if (!p) return UI.toast('Reload the page and try again', 'err');
+    const L = Actions._provCredLabels(p.driver);
+    const setTag = (on) => on ? '<span class="tag active" style="font-size:10px">set</span>' : '<span class="tag" style="font-size:10px">not set</span>';
+    UI.modal(`<h3>API credentials — ${esc(p.label)} <span class="muted" style="font-weight:400;font-size:13px">(${esc(p.driver)})</span></h3>
+      <p class="muted" style="font-size:12px">Paste the keys this provider gave you. Leave a field blank to keep what's already stored. Secrets are stored write-only (masked).</p>
+      <div class="field"><label>Base URL <span class="muted">(blank = provider default)</span></label><input id="ep_url" value="${esc(p.base_url||'')}" placeholder="https://api.provider.com"></div>
+      <div class="field"><label>${esc(L.key)} ${setTag(p.has_api_key)}</label><input id="ep_key" placeholder="${p.has_api_key?'leave blank to keep':esc(L.keyHint||'')}"></div>
+      <div class="field"><label>${esc(L.secret)} ${setTag(p.has_api_secret)}</label><input id="ep_secret" placeholder="${p.has_api_secret?'leave blank to keep':esc(L.secretHint||'')}"></div>
+      ${L.partner ? `<div class="field"><label>${esc(L.partner)}</label><input id="ep_partner" value="${esc(p.partner_id||'')}"></div>` : ''}
+      ${L.token ? `<div class="field"><label>${esc(L.token)} ${setTag(p.has_auth_token)}</label><input id="ep_token" placeholder="${p.has_auth_token?'leave blank to keep':''}"></div>` : ''}
+      <div class="field"><label>Advanced config (JSON) <span class="muted">— blank = keep</span></label><input id="ep_extra" placeholder='{"user_code":"..."}'></div>
+      <div class="foot"><button class="btn" onclick="Actions.saveProviderKeys('${id}')">Save credentials</button>
+        <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
+  },
+  async saveProviderKeys(id) {
+    const body = {};
+    const url = val('ep_url'); if (url) body.base_url = url;
+    if (val('ep_key')) body.api_key = val('ep_key');
+    if (val('ep_secret')) body.api_secret = val('ep_secret');
+    if ($('ep_partner') && val('ep_partner')) body.partner_id = val('ep_partner');
+    if ($('ep_token') && val('ep_token')) body.auth_token = val('ep_token');
+    const ex = $('ep_extra') ? val('ep_extra') : '';
+    if (ex) { try { body.extra = JSON.parse(ex); } catch { return UI.toast('Advanced config must be valid JSON', 'err'); } }
+    if (!Object.keys(body).length) return UI.toast('Nothing to save — enter a credential', 'err');
+    try { await Api.patch(`/admin/providers/${id}`, body); UI.closeModal(); UI.toast('Credentials saved — now Test, then Activate'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
   },
   editProviderSecret(id, label) {
     UI.modal(`<h3>Callback secret — ${esc(label)}</h3>
