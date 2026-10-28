@@ -750,6 +750,27 @@ const Screens = {
             <div class="panel"><div class="row" style="justify-content:space-between"><h2>Services</h2>
               <a class="btn sm" href="#/new">＋ New transaction</a></div>
               ${svcTiles(SERVICES.map(x => x.key))}</div>
+            <div class="panel mt"><h2 style="margin:0 0 10px">⚡ Quick actions</h2>
+              <div class="svc-tiles">
+                ${[
+                  ['🔁','Wallet transfer','#/new',"Actions.presetSvc('wallet_transfer')"],
+                  ['💵','CMS cash collect','#/new',"Actions.presetSvc('cms')"],
+                  ['🏧','AEPS withdrawal','#/new',"Actions.presetSvc('aeps')"],
+                  ['💳','Micro ATM','#/new',"Actions.presetSvc('matm')"],
+                  ['＋','Add money','#/addmoney',''],
+                  ['🧾','Passbook','',"Actions.openDoc('/wallet/statement?format=html')"],
+                  ['🪪','My ID card','',"Actions.myDoc('id-card')"],
+                  ['🎖️','Certificate','',"Actions.myDoc('certificate')"],
+                  ['🎁','Refer & earn','#/rewards',''],
+                  ['📣','Marketing','#/marketing',''],
+                  ['🧩','Developer API','#/developer',''],
+                  ['📊','My earnings','#/myearnings',''],
+                  ['🪪','KYC','#/kyc',''],
+                  ['🆔','PAN & TDS','#/tax',''],
+                  ['🛡️','My powers','#/powers',''],
+                ].map(([ico,label,href,act]) => `<a class="svc-tile" ${href?`href="${href}"`:'style="cursor:pointer"'} ${act?`onclick="${act}"`:''}>
+                    <span class="si">${ico}</span><b>${label}</b></a>`).join('')}
+              </div></div>
             ${s.daily ? `<div class="panel mt"><div class="row" style="justify-content:space-between"><h2>My volume — last 7 days</h2>
               <span class="muted" style="font-size:12px">Successful ₹ per day</span></div>
               ${Charts.area(s.daily.map(x => ({ day: x.day, value: x.amount_paise })), { fmt: Charts.money })}</div>` : ''}
