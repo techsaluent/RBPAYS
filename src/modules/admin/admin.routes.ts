@@ -21,7 +21,7 @@ import { usernameSchema } from '../auth/auth.schemas';
 import { dashboardStats } from './admin.dashboard';
 import { refreshProviderRegistry } from '../../providers/registry';
 import { dryRunDynamic, liveTestDynamic } from '../../providers/dynamic';
-import { toCsv } from '../reports/reports.service';
+import { toCsv, sendXlsx } from '../reports/reports.service';
 import { draftProviderConfig, analyzeDevRequest, aiChat } from '../ai/ai.service';
 import { createDevRequest, listDevRequests, getDevRequest, setPlan, setStatus } from '../devdesk/devdesk.service';
 import { postJournal } from '../_shared/ledger';
@@ -35,6 +35,8 @@ import * as bank from '../bank/bank.service';
 import { listErrors, getError, setErrorStatus, diagnoseError } from '../telemetry/error.service';
 import { escalateError } from '../telemetry/escalate.service';
 import { runReconciliation, MisRow } from '../recon/recon.service';
+import { trialBalance, walletReconciliation } from '../recon/ledgerReport.service';
+import { statementHtml } from '../reports/reports.service';
 import { assessOnboarding } from '../onboarding/onboarding.service';
 import { refreshTaxConfig } from '../tax/tax.config';
 import { adminResetPassword } from '../auth/auth.service';
@@ -1525,6 +1527,103 @@ router.get(
 );
 
 // ---------------------------------------------------------------------
+// Ledger integrity: trial balance + journal↔wallet reconciliation.
+// These prove the double-entry books balance and that the fast wallet
+// tables agree with the journal. JSON for the console; HTML/XLSX export.
+// ---------------------------------------------------------------------
+const trialBalSchema = z.object({
+  as_of: z.string().trim().optional(), // YYYY-MM-DD; end-of-day cut-off
+  format: z.enum(['json', 'html', 'xlsx']).default('json'),
+});
+router.get(
+  '/ledger/trial-balance',
+  validate(trialBalSchema, 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as z.infer<typeof trialBalSchema>;
+    const tb = await trialBalance(q.as_of);
+    const r = (p: number) => paiseToRupees(String(p));
+    if (q.format === 'xlsx') {
+      sendXlsx(
+        res,
+        `trial_balance_${q.as_of || 'now'}.xlsx`,
+        ['Account', 'Code', 'Type', 'Normal', 'Debit (₹)', 'Credit (₹)', 'Balance (₹)'],
+        tb.rows.map((x) => [x.name, x.code, x.type, x.normal_balance, Number(r(x.debit_paise)), Number(r(x.credit_paise)), Number(r(x.balance_paise))]),
+        'Trial balance',
+      );
+      return;
+    }
+    if (q.format === 'html') {
+      res.type('html').send(
+        statementHtml({
+          title: 'Trial balance',
+          subtitle: q.as_of ? `As of ${q.as_of}` : 'All time',
+          meta: [
+            ['Total debit', '₹' + r(tb.total_debit_paise)],
+            ['Total credit', '₹' + r(tb.total_credit_paise)],
+            ['Status', tb.balanced ? 'BALANCED ✓' : `OUT BY ₹${r(Math.abs(tb.difference_paise))} ✗`],
+          ],
+          columns: [
+            { label: 'Account' }, { label: 'Type' }, { label: 'Normal' },
+            { label: 'Debit', align: 'right' }, { label: 'Credit', align: 'right' }, { label: 'Balance', align: 'right' },
+          ],
+          rows: tb.rows.map((x) => [
+            x.name, x.type, x.normal_balance,
+            '₹' + r(x.debit_paise), '₹' + r(x.credit_paise), '₹' + r(x.balance_paise),
+          ]),
+          totals: ['Total', '', '', '₹' + r(tb.total_debit_paise), '₹' + r(tb.total_credit_paise), tb.balanced ? '✓' : '✗'],
+        }),
+      );
+      return;
+    }
+    res.json(tb);
+  }),
+);
+
+router.get(
+  '/ledger/wallet-recon',
+  validate(z.object({ format: z.enum(['json', 'html', 'xlsx']).default('json') }), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    const q = req.query as unknown as { format: 'json' | 'html' | 'xlsx' };
+    const rec = await walletReconciliation();
+    const r = (p: number) => paiseToRupees(String(p));
+    if (q.format === 'xlsx') {
+      sendXlsx(
+        res,
+        'wallet_reconciliation.xlsx',
+        ['Member', 'User ID', 'Account', 'Ledger (₹)', 'Wallet (₹)', 'Drift (₹)'],
+        rec.drift_rows.map((x) => [x.full_name || '', x.user_id, x.account, Number(r(x.ledger_paise)), Number(r(x.balance_paise)), Number(r(x.drift_paise))]),
+        'Wallet drift',
+      );
+      return;
+    }
+    if (q.format === 'html') {
+      res.type('html').send(
+        statementHtml({
+          title: 'Wallet reconciliation',
+          subtitle: 'Journal balances vs live wallet tables',
+          meta: [
+            ['Accounts checked', String(rec.checked)],
+            ['Reconciled', String(rec.reconciled)],
+            ['Drifted', String(rec.drifted)],
+            ['Total drift', '₹' + r(rec.total_drift_paise)],
+          ],
+          columns: [
+            { label: 'Member' }, { label: 'Account' },
+            { label: 'Ledger', align: 'right' }, { label: 'Wallet', align: 'right' }, { label: 'Drift', align: 'right' },
+          ],
+          rows: rec.drift_rows.map((x) => [
+            x.full_name || x.user_id, x.account,
+            '₹' + r(x.ledger_paise), '₹' + r(x.balance_paise), '₹' + r(x.drift_paise),
+          ]),
+        }),
+      );
+      return;
+    }
+    res.json(rec);
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Maker-checker manual adjustments (dual control)
 // ---------------------------------------------------------------------
 const adjProposeSchema = z.object({
@@ -2070,7 +2169,7 @@ router.put(
 const taxReportSchema = z.object({
   from: z.string().trim().optional(),
   to: z.string().trim().optional(),
-  format: z.enum(['json', 'csv']).default('json'),
+  format: z.enum(['json', 'csv', 'xlsx']).default('json'),
 });
 router.get(
   '/tds',
@@ -2078,6 +2177,7 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const p = req.query as unknown as z.infer<typeof taxReportSchema>;
     const csv = p.format === 'csv';
+    const bulk = p.format === 'csv' || p.format === 'xlsx';
     const totals = await query<{ gross: string; tds: string }>(
       `SELECT COALESCE(SUM(gross_paise),0) gross, COALESCE(SUM(tds_paise),0) tds FROM tds_records
         WHERE ($1::timestamptz IS NULL OR created_at >= $1)
@@ -2092,7 +2192,7 @@ router.get(
          LEFT JOIN tax_profiles tp ON tp.user_id = t.user_id
         WHERE ($1::timestamptz IS NULL OR t.created_at >= $1)
           AND ($2::timestamptz IS NULL OR t.created_at < ($2::timestamptz + interval '1 day'))
-        ORDER BY t.created_at DESC ${csv ? 'LIMIT 100000' : 'LIMIT 100'}`,
+        ORDER BY t.created_at DESC ${bulk ? 'LIMIT 100000' : 'LIMIT 100'}`,
       [p.from || null, p.to || null],
     );
     if (csv) {
@@ -2106,6 +2206,19 @@ router.get(
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="tds_26q_${p.from || 'all'}_${p.to || 'now'}.csv"`);
       res.send(out);
+      return;
+    }
+    if (p.format === 'xlsx') {
+      sendXlsx(
+        res,
+        `tds_26q_${p.from || 'all'}_${p.to || 'now'}.xlsx`,
+        ['Date', 'Member', 'PAN', 'Section', 'Service', 'Gross (₹)', 'Rate %', 'TDS (₹)', 'Net (₹)'],
+        rows.map((r) => [
+          new Date(r.created_at).toISOString().slice(0, 10), r.full_name, r.pan || '', r.section, String(r.service_code || '').replace(/_/g, ' '),
+          Number(paiseToRupees(r.gross_paise)), Number((r.rate_bps / 100).toFixed(2)), Number(paiseToRupees(r.tds_paise)), Number(paiseToRupees(r.net_paise)),
+        ]),
+        'Form 26Q',
+      );
       return;
     }
     res.json({
@@ -2130,6 +2243,7 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const p = req.query as unknown as z.infer<typeof taxReportSchema>;
     const csv = p.format === 'csv';
+    const bulk = p.format === 'csv' || p.format === 'xlsx';
     const totals = await query<{ base: string; cgst: string; sgst: string; igst: string }>(
       `SELECT COALESCE(SUM(taxable_base_paise),0) base, COALESCE(SUM(cgst_paise),0) cgst,
               COALESCE(SUM(sgst_paise),0) sgst, COALESCE(SUM(igst_paise),0) igst FROM gst_invoices
@@ -2142,7 +2256,7 @@ router.get(
          FROM gst_invoices
         WHERE ($1::timestamptz IS NULL OR created_at >= $1)
           AND ($2::timestamptz IS NULL OR created_at < ($2::timestamptz + interval '1 day'))
-        ORDER BY created_at DESC ${csv ? 'LIMIT 100000' : 'LIMIT 100'}`,
+        ORDER BY created_at DESC ${bulk ? 'LIMIT 100000' : 'LIMIT 100'}`,
       [p.from || null, p.to || null],
     );
     if (csv) {
@@ -2157,6 +2271,20 @@ router.get(
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="gst_${p.from || 'all'}_${p.to || 'now'}.csv"`);
       res.send(out);
+      return;
+    }
+    if (p.format === 'xlsx') {
+      sendXlsx(
+        res,
+        `gst_${p.from || 'all'}_${p.to || 'now'}.xlsx`,
+        ['Date', 'Service', 'Place of supply', 'Taxable base (₹)', 'CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total GST (₹)'],
+        rows.map((r) => [
+          new Date(r.created_at).toISOString().slice(0, 10), String(r.service_code || '').replace(/_/g, ' '), r.place_of_supply || '',
+          Number(paiseToRupees(r.taxable_base_paise)), Number(paiseToRupees(r.cgst_paise)), Number(paiseToRupees(r.sgst_paise)), Number(paiseToRupees(r.igst_paise)),
+          Number(paiseToRupees(String(Number(r.cgst_paise) + Number(r.sgst_paise) + Number(r.igst_paise)))),
+        ]),
+        'GSTR working',
+      );
       return;
     }
     const t = totals.rows[0];
@@ -2373,7 +2501,7 @@ router.post(
 // ---------------------------------------------------------------------
 const settlementSchema = z.object({
   date: z.string().trim().optional(), // YYYY-MM-DD; defaults to yesterday
-  format: z.enum(['json', 'csv']).default('json'),
+  format: z.enum(['json', 'csv', 'xlsx']).default('json'),
 });
 router.get(
   '/settlement-report',
@@ -2405,6 +2533,16 @@ router.get(
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="settlement_${reportDate}.csv"`);
       res.send(csv);
+      return;
+    }
+    if (q.format === 'xlsx') {
+      sendXlsx(
+        res,
+        `settlement_${reportDate}.xlsx`,
+        ['Member', 'Phone', 'Role', 'Txns', 'GTV (₹)', 'Commission (₹)', 'Charge (₹)'],
+        rows.map((x) => [x.full_name, x.phone, String(x.role).replace(/_/g, ' '), Number(x.txns), Number(r(x.gtv_paise)), Number(r(x.commission_paise)), Number(r(x.charge_paise))]),
+        'Settlement',
+      );
       return;
     }
     const totals = {

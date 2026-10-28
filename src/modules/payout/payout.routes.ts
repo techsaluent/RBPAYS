@@ -10,6 +10,8 @@ import { getPayoutProvider } from '../../providers';
 import { runServiceTransaction } from '../_shared/transaction';
 import { resolveProviderChoice, failoverCandidates } from '../_shared/providerChoice';
 import { requireService } from '../../middleware/service';
+import { getMemberPolicy } from '../network/policy.service';
+import { issueLoginOtp, consumeLoginOtp } from '../auth/auth.service';
 
 const router = Router();
 router.use(requireAuth);
@@ -23,6 +25,7 @@ const createSchema = z.object({
   charge: z.coerce.number().min(0).default(0),
   provider_id: z.string().uuid().optional(),
   reference: z.string().trim().max(64).optional(),
+  otp: z.string().trim().regex(/^\d{6}$/).optional(),
 });
 
 const listSchema = z.object({
@@ -43,6 +46,22 @@ router.post(
     const amountPaise = rupeesToPaise(body.amount);
     const providerId = resolveProviderChoice('payout', body.provider_id);
     const provider = getPayoutProvider(providerId);
+
+    // Per-member payout gates: require KYC and/or an email OTP before cash-out.
+    const policy = await getMemberPolicy(userId);
+    if (policy.payout_require_kyc || policy.payout_require_otp) {
+      const u = (await query<{ kyc_status: string; email: string }>('SELECT kyc_status, email FROM users WHERE id = $1', [userId])).rows[0];
+      if (policy.payout_require_kyc && u?.kyc_status !== 'verified') {
+        throw ApiError.unprocessable('Payout is locked until your KYC is verified.');
+      }
+      if (policy.payout_require_otp) {
+        if (!body.otp) {
+          const { dev_code } = await issueLoginOtp(userId, u.email);
+          throw new ApiError(401, 'payout_otp_required', 'A verification code was sent to your email — re-submit with it to pay out.', dev_code ? { dev_code } : undefined);
+        }
+        if (!(await consumeLoginOtp(userId, body.otp))) throw ApiError.unauthorized('Invalid or expired payout code');
+      }
+    }
 
     const { transaction, idempotent } = await runServiceTransaction({
       userId,

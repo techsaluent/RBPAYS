@@ -117,17 +117,28 @@ export async function computeDistribution(
     admin: adminId,
   };
 
+  const chargePaise = valueToPaise(rule.charge_type, rule.charge_value, amountPaise);
+
+  // Retailer / distributor / MD cuts come from the rule; the admin (platform)
+  // share is the RESIDUAL (charge − those), so the split always sums to the
+  // charge to the paise — no rounding drift that could unbalance the ledger.
   const entries: CommissionEntry[] = [];
+  let distributed = 0;
   for (const level of LEVELS) {
+    if (level === 'admin') continue;
     const beneficiaryId = beneficiaryFor[level];
     if (!beneficiaryId) continue;
     const type = rule[`${level}_type` as keyof RuleRow] as string;
     const value = rule[`${level}_value` as keyof RuleRow] as string;
-    const amt = valueToPaise(type, value, amountPaise);
-    if (amt > 0) entries.push({ level, beneficiaryId, amountPaise: amt });
+    let amt = valueToPaise(type, value, amountPaise);
+    if (distributed + amt > chargePaise) amt = Math.max(0, chargePaise - distributed); // never exceed the charge
+    if (amt > 0) { entries.push({ level, beneficiaryId, amountPaise: amt }); distributed += amt; }
+  }
+  const adminResidual = chargePaise - distributed;
+  if (adminResidual > 0 && beneficiaryFor.admin) {
+    entries.push({ level: 'admin', beneficiaryId: beneficiaryFor.admin, amountPaise: adminResidual });
   }
 
-  const chargePaise = valueToPaise(rule.charge_type, rule.charge_value, amountPaise);
   const retailerPaise = entries.find((e) => e.level === 'retailer')?.amountPaise ?? 0;
   return { ruleMatched: true, chargePaise, retailerPaise, entries };
 }
@@ -153,9 +164,12 @@ export async function applyUplineCredits(
     if (ins.rowCount !== 1) continue; // already distributed (idempotent)
 
     if (e.level === 'admin') {
-      // Admin share = platform margin; carve out 18% GST for reporting and
-      // still credit the admin operational wallet (unchanged money movement).
-      await recordGst(client, {
+      // Admin share = platform margin; carve out 18% GST and still credit the
+      // admin operational wallet in full (unchanged money movement). The
+      // journal recognises the GST as an output-GST liability (gst_output):
+      //   DR platform_margin (share + gst)
+      //   CR member_wallet(admin) share   |   CR gst_output gst
+      const { gstPaise } = await recordGst(client, {
         serviceTxnId: p.serviceTxnId,
         serviceCode: p.service,
         inclusivePaise: e.amountPaise,
@@ -166,6 +180,20 @@ export async function applyUplineCredits(
         source: 'commission',
         referenceId: p.serviceTxnId,
         description: `platform margin for ${p.service} (${p.serviceTxnId})`,
+      });
+      const marginLines: JournalLine[] = [
+        { account: 'platform_margin', direction: 'debit', amountPaise: e.amountPaise },
+        { account: 'member_wallet', direction: 'credit', amountPaise: e.amountPaise, walletUserId: e.beneficiaryId },
+      ];
+      if (gstPaise > 0) {
+        marginLines.push({ account: 'platform_margin', direction: 'debit', amountPaise: gstPaise });
+        marginLines.push({ account: 'gst_output', direction: 'credit', amountPaise: gstPaise });
+      }
+      await postJournal(client, {
+        source: 'commission',
+        reference: p.serviceTxnId,
+        narration: `platform margin for ${p.service}${gstPaise > 0 ? ' (GST output recognised)' : ''}`,
+        lines: marginLines,
       });
       continue;
     }

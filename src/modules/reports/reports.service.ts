@@ -1,4 +1,6 @@
-/** Shared helpers for CSV + printable HTML statements / settlement reports. */
+/** Shared helpers for CSV + XLSX + printable HTML statements / settlement reports. */
+
+import { deflateRawSync } from 'zlib';
 
 function esc(v: unknown): string {
   const s = v == null ? '' : String(v);
@@ -10,6 +12,234 @@ export function toCsv(headers: string[], rows: (string | number | null | undefin
   const lines = [headers.map(esc).join(',')];
   for (const r of rows) lines.push(r.map(esc).join(','));
   return lines.join('\r\n');
+}
+
+// ---------------------------------------------------------------------------
+// XLSX (genuine OOXML) — zero dependencies. We build the minimal set of parts
+// an .xlsx needs and pack them into a ZIP with Node's built-in zlib, so the
+// file opens cleanly in Excel, LibreOffice and Google Sheets with no "repair"
+// or format-mismatch warnings. Numbers stay numeric; everything else is a
+// shared string so Indian text / references survive intact.
+// ---------------------------------------------------------------------------
+
+export type Cell = string | number | null | undefined;
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(buf: Buffer): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+function xe(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c] as string));
+}
+
+// A1-style column name for a 0-based index (0 -> A, 26 -> AA).
+function colName(i: number): string {
+  let s = '';
+  for (i += 1; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + ((i - 1) % 26)) + s;
+  return s;
+}
+
+/**
+ * A single-sheet .xlsx workbook as a Buffer. Pass a header row and data rows;
+ * cells that are finite numbers are written as numbers (right-aligned, usable
+ * in formulas), all other cells as text. `sheetName` shows on the tab.
+ */
+export function toXlsx(headers: string[], rows: Cell[][], sheetName = 'Report'): Buffer {
+  // Shared-string table: header cells + every non-numeric data cell.
+  const shared: string[] = [];
+  const sharedIndex = new Map<string, number>();
+  const intern = (s: string): number => {
+    let idx = sharedIndex.get(s);
+    if (idx === undefined) { idx = shared.length; shared.push(s); sharedIndex.set(s, idx); }
+    return idx;
+  };
+
+  const isNum = (v: Cell): v is number => typeof v === 'number' && Number.isFinite(v);
+
+  const sheetRows: string[] = [];
+  const headerCells = headers
+    .map((hh, c) => `<c r="${colName(c)}1" t="s" s="1"><v>${intern(String(hh ?? ''))}</v></c>`)
+    .join('');
+  sheetRows.push(`<row r="1">${headerCells}</row>`);
+
+  rows.forEach((row, r) => {
+    const rn = r + 2; // row 1 is the header
+    const cells = row
+      .map((v, c) => {
+        const ref = `${colName(c)}${rn}`;
+        if (isNum(v)) return `<c r="${ref}"><v>${v}</v></c>`;
+        const s = v == null ? '' : String(v);
+        if (s === '') return `<c r="${ref}"/>`;
+        return `<c r="${ref}" t="s"><v>${intern(s)}</v></c>`;
+      })
+      .join('');
+    sheetRows.push(`<row r="${rn}">${cells}</row>`);
+  });
+
+  const lastCol = colName(Math.max(1, headers.length) - 1);
+  const dimension = `A1:${lastCol}${rows.length + 1}`;
+  const safeName = (sheetName || 'Report').replace(/[\\/*?:[\]]/g, ' ').slice(0, 31) || 'Report';
+
+  const sheetXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    `<dimension ref="${dimension}"/>` +
+    `<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="15"/>` +
+    `<sheetData>${sheetRows.join('')}</sheetData>` +
+    `</worksheet>`;
+
+  const sstXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${shared.length}" uniqueCount="${shared.length}">` +
+    shared.map((s) => `<si><t xml:space="preserve">${xe(s)}</t></si>`).join('') +
+    `</sst>`;
+
+  const stylesXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+    `<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>` +
+    `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+    `<borders count="1"><border/></borders>` +
+    `<cellStyleXfs count="1"><xf/></cellStyleXfs>` +
+    `<cellXfs count="2"><xf/><xf fontId="1" applyFont="1"/></cellXfs>` +
+    `</styleSheet>`;
+
+  const workbookXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    `<sheets><sheet name="${xe(safeName)}" sheetId="1" r:id="rId1"/></sheets>` +
+    `</workbook>`;
+
+  const workbookRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
+    `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+    `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>` +
+    `</Relationships>`;
+
+  const rootRels =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>` +
+    `</Relationships>`;
+
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+    `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+    `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
+    `<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>` +
+    `</Types>`;
+
+  const parts: [string, string][] = [
+    ['[Content_Types].xml', contentTypes],
+    ['_rels/.rels', rootRels],
+    ['xl/workbook.xml', workbookXml],
+    ['xl/_rels/workbook.xml.rels', workbookRels],
+    ['xl/worksheets/sheet1.xml', sheetXml],
+    ['xl/styles.xml', stylesXml],
+    ['xl/sharedStrings.xml', sstXml],
+  ];
+
+  return zipParts(parts);
+}
+
+/** Pack name/content parts into a ZIP archive (deflate) — the .xlsx container. */
+function zipParts(parts: [string, string][]): Buffer {
+  const local: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+
+  for (const [name, content] of parts) {
+    const nameBuf = Buffer.from(name, 'utf8');
+    const data = Buffer.from(content, 'utf8');
+    const crc = crc32(data);
+    const compressed = deflateRawSync(data);
+    const useStore = compressed.length >= data.length;
+    const body = useStore ? data : compressed;
+    const method = useStore ? 0 : 8; // 0 = store, 8 = deflate
+
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4); // version needed
+    localHeader.writeUInt16LE(0, 6); // flags
+    localHeader.writeUInt16LE(method, 8);
+    localHeader.writeUInt16LE(0, 10); // mod time
+    localHeader.writeUInt16LE(0x21, 12); // mod date (fixed, valid)
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(body.length, 18);
+    localHeader.writeUInt32LE(data.length, 22);
+    localHeader.writeUInt16LE(nameBuf.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    local.push(localHeader, nameBuf, body);
+
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4); // version made by
+    centralHeader.writeUInt16LE(20, 6); // version needed
+    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(method, 10);
+    centralHeader.writeUInt16LE(0, 12);
+    centralHeader.writeUInt16LE(0x21, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(body.length, 20);
+    centralHeader.writeUInt32LE(data.length, 24);
+    centralHeader.writeUInt16LE(nameBuf.length, 28);
+    centralHeader.writeUInt16LE(0, 30); // extra len
+    centralHeader.writeUInt16LE(0, 32); // comment len
+    centralHeader.writeUInt16LE(0, 34); // disk number
+    centralHeader.writeUInt16LE(0, 36); // internal attrs
+    centralHeader.writeUInt32LE(0, 38); // external attrs
+    centralHeader.writeUInt32LE(offset, 42);
+    central.push(centralHeader, nameBuf);
+
+    offset += localHeader.length + nameBuf.length + body.length;
+  }
+
+  const centralBuf = Buffer.concat(central);
+  const localBuf = Buffer.concat(local);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(parts.length, 8);
+  end.writeUInt16LE(parts.length, 10);
+  end.writeUInt32LE(centralBuf.length, 12);
+  end.writeUInt32LE(localBuf.length, 16);
+  end.writeUInt16LE(0, 20);
+
+  return Buffer.concat([localBuf, centralBuf, end]);
+}
+
+/** Express helper: send an array-of-arrays as an .xlsx download. */
+export function sendXlsx(
+  res: { setHeader: (k: string, v: string) => void; send: (b: Buffer) => void },
+  filename: string,
+  headers: string[],
+  rows: Cell[][],
+  sheetName = 'Report',
+): void {
+  const buf = toXlsx(headers, rows, sheetName);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/[^\w.\- ]+/g, '_')}"`);
+  res.send(buf);
 }
 
 const h = (s: unknown): string =>

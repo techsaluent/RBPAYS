@@ -10,6 +10,9 @@ import { earningsFor } from '../commission/commission.service';
 import { query, withTransaction } from '../../../db';
 import { rupeesToPaise } from '../../utils/money';
 import { postJournal } from '../_shared/ledger';
+import { getMemberPolicy } from './policy.service';
+import { powerProfile, powerMatrix, roleCan } from './powers';
+import { assertTxnMpin } from '../../middleware/service';
 import {
   createMember,
   downlineCounts,
@@ -74,6 +77,7 @@ const floatSchema = z.object({
   to_username: z.string().trim().optional(),
   amount: z.coerce.number().positive().max(1_000_000),
   note: z.string().trim().max(200).optional(),
+  mpin: z.string().trim().regex(/^\d{4,6}$/).optional(),
 }).refine((v) => v.to_user_id || v.to_username, {
   message: 'Provide to_user_id or to_username',
 });
@@ -86,10 +90,11 @@ router.post(
   validate(floatSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const me = requireMember(req);
-    if (me.role === 'retailer') {
+    if (!roleCan(me.role, 'downline.fund')) {
       throw ApiError.forbidden('Retailers cannot push float; only distributors and master distributors can');
     }
     const b = req.body as z.infer<typeof floatSchema>;
+    await assertTxnMpin(me.id, me.role, b.mpin);
 
     // Resolve the target and confirm they are a direct downline of mine.
     const { rows: tgt } = await query<{ id: string; parent_id: string | null; full_name: string }>(
@@ -180,6 +185,136 @@ router.get(
     const me = requireMember(req);
     const q = req.query as unknown as z.infer<typeof earningsSchema>;
     res.json(await earningsFor(me.id, q.limit, q.offset));
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Service management over the downline: an upline turns each service on/off
+// for a DIRECT downline member (distributor → retailer, MD → distributor…).
+// You can only grant a service you yourself have active — never widen access
+// beyond your own.
+// ---------------------------------------------------------------------
+async function requireDirectChild(meId: string, childId: string): Promise<void> {
+  const { rows } = await query<{ parent_id: string | null }>('SELECT parent_id FROM users WHERE id = $1', [childId]);
+  if (!rows[0]) throw ApiError.notFound('Member not found');
+  if (rows[0].parent_id !== meId) throw ApiError.forbidden('Not your direct downline member');
+}
+
+// List a direct-downline member's services with active flags, marking which
+// ones the caller is allowed to grant (i.e. has active themselves).
+router.get(
+  '/members/:id/services',
+  asyncHandler(async (req: Request, res: Response) => {
+    const me = requireMember(req);
+    await requireDirectChild(me.id, req.params.id);
+    const { rows } = await query<{ code: string; name: string; enabled: boolean; child_active: boolean | null; mine_active: boolean | null }>(
+      `SELECT s.code, s.name, s.enabled,
+              cu.active AS child_active,
+              mu.active AS mine_active
+         FROM services s
+         LEFT JOIN user_services cu ON cu.service_code = s.code AND cu.user_id = $2
+         LEFT JOIN user_services mu ON mu.service_code = s.code AND mu.user_id = $1
+        WHERE s.enabled = true
+        ORDER BY s.code`,
+      [me.id, req.params.id],
+    );
+    res.json({
+      items: rows.map((r) => ({
+        code: r.code, name: r.name,
+        active: r.child_active === true,
+        // The caller may toggle it only if they hold it (or are admin — admins use the admin UI).
+        can_grant: r.mine_active === true || me.role === 'admin',
+      })),
+    });
+  }),
+);
+
+router.put(
+  '/members/:id/services/:code',
+  validate(z.object({ active: z.boolean() })),
+  asyncHandler(async (req: Request, res: Response) => {
+    const me = requireMember(req);
+    await requireDirectChild(me.id, req.params.id);
+    const active = (req.body as { active: boolean }).active;
+    const code = req.params.code;
+
+    const svc = await query<{ enabled: boolean }>('SELECT enabled FROM services WHERE code = $1', [code]);
+    if (!svc.rows[0]) throw ApiError.notFound('Unknown service');
+    if (svc.rows[0].enabled === false) throw ApiError.badRequest('Service is disabled platform-wide');
+
+    if (active) {
+      const mine = await query('SELECT 1 FROM user_services WHERE user_id = $1 AND service_code = $2 AND active = true', [me.id, code]);
+      if (!mine.rowCount && me.role !== 'admin') throw ApiError.forbidden(`You don't have ${code} active, so you can't grant it`);
+    }
+    await query(
+      `INSERT INTO user_services (user_id, service_code, active) VALUES ($1,$2,$3)
+       ON CONFLICT (user_id, service_code) DO UPDATE SET active = EXCLUDED.active`,
+      [req.params.id, code, active],
+    );
+    res.json({ ok: true, code, active });
+  }),
+);
+
+// ---------------------------------------------------------------------
+// Per-member transaction policy (limits + payout gates). A member sets their
+// own; an upline sets it for a direct downline member.
+// ---------------------------------------------------------------------
+const policySchema = z.object({
+  min_txn: z.coerce.number().min(0).max(1_000_000).default(0),
+  max_txn: z.coerce.number().min(0).max(1_000_000).default(0),
+  min_txn_nonkyc: z.coerce.number().min(0).max(1_000_000).default(0),
+  max_txn_nonkyc: z.coerce.number().min(0).max(1_000_000).default(0),
+  payout_require_kyc: z.boolean().default(false),
+  payout_require_otp: z.boolean().default(false),
+});
+
+async function upsertPolicy(targetId: string, setBy: string, b: z.infer<typeof policySchema>): Promise<void> {
+  await query(
+    `INSERT INTO member_txn_policy
+       (user_id, min_txn_paise, max_txn_paise, min_txn_nonkyc_paise, max_txn_nonkyc_paise, payout_require_kyc, payout_require_otp, set_by, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now())
+     ON CONFLICT (user_id) DO UPDATE SET
+       min_txn_paise = EXCLUDED.min_txn_paise, max_txn_paise = EXCLUDED.max_txn_paise,
+       min_txn_nonkyc_paise = EXCLUDED.min_txn_nonkyc_paise, max_txn_nonkyc_paise = EXCLUDED.max_txn_nonkyc_paise,
+       payout_require_kyc = EXCLUDED.payout_require_kyc, payout_require_otp = EXCLUDED.payout_require_otp,
+       set_by = EXCLUDED.set_by, updated_at = now()`,
+    [targetId, rupeesToPaise(b.min_txn), rupeesToPaise(b.max_txn), rupeesToPaise(b.min_txn_nonkyc), rupeesToPaise(b.max_txn_nonkyc),
+     b.payout_require_kyc, b.payout_require_otp, setBy],
+  );
+}
+
+router.get('/me/policy', asyncHandler(async (req: Request, res: Response) => {
+  const me = requireMember(req);
+  res.json({ policy: await getMemberPolicy(me.id) });
+}));
+router.put('/me/policy', validate(policySchema), asyncHandler(async (req: Request, res: Response) => {
+  const me = requireMember(req);
+  await upsertPolicy(me.id, me.id, req.body as z.infer<typeof policySchema>);
+  res.json({ ok: true });
+}));
+router.get('/members/:id/policy', asyncHandler(async (req: Request, res: Response) => {
+  const me = requireMember(req);
+  await requireDirectChild(me.id, req.params.id);
+  res.json({ policy: await getMemberPolicy(req.params.id) });
+}));
+router.put('/members/:id/policy', validate(policySchema), asyncHandler(async (req: Request, res: Response) => {
+  const me = requireMember(req);
+  await requireDirectChild(me.id, req.params.id);
+  await upsertPolicy(req.params.id, me.id, req.body as z.infer<typeof policySchema>);
+  res.json({ ok: true });
+}));
+
+// Hierarchy power map — the signed-in member's own capabilities plus the full
+// role × capability matrix, so the panel renders exactly what each role can do.
+router.get(
+  '/powers',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const owns = await query('SELECT 1 FROM tenants WHERE owner_user_id = $1 LIMIT 1', [req.user.id]);
+    res.json({
+      me: powerProfile(req.user.role, (owns.rowCount ?? 0) > 0),
+      matrix: powerMatrix(),
+    });
   }),
 );
 

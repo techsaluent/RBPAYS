@@ -116,6 +116,29 @@ const Api = {
   patch(p, body) { return this.call(p, { method: 'PATCH', body }); },
   put(p, body) { return this.call(p, { method: 'PUT', body }); },
   del(p) { return this.call(p, { method: 'DELETE' }); },
+  // POST that transparently satisfies a transaction MPIN / payout-OTP
+  // challenge: on the server asking, prompt once and retry with the credential.
+  // Keeps money actions from dead-ending and never sends a blank credential.
+  async postSecure(p, body) {
+    try { return await this.post(p, body); }
+    catch (err) {
+      if (err.code === 'txn_mpin_required') {
+        const mpin = await UI.askPin({ title: 'Transaction MPIN', label: 'Enter your 4–6 digit MPIN to authorise this', pattern: '\\d{4,6}' });
+        if (!mpin) throw err;
+        return this.post(p, { ...body, mpin });
+      }
+      if (err.code === 'txn_mpin_not_set') {
+        UI.toast('Set a transaction MPIN under Security first.', 'err');
+        throw err;
+      }
+      if (err.code === 'payout_otp_required') {
+        const otp = await UI.askPin({ title: 'Payout verification', label: 'Enter the 6-digit code sent to your email', pattern: '\\d{6}', hint: err.details && err.details.dev_code ? ('Dev code: ' + err.details.dev_code) : '' });
+        if (!otp) throw err;
+        return this.post(p, { ...body, otp });
+      }
+      throw err;
+    }
+  },
 };
 
 // ---------------- Auth ----------------
@@ -254,6 +277,35 @@ const UI = {
     $('modal-root').innerHTML = `<div class="modal-bg" onclick="if(event.target===this)UI.closeModal()"><div class="modal">${html}</div></div>`;
   },
   closeModal() { $('modal-root').innerHTML = ''; },
+  // Promise-based secure-code prompt (MPIN / OTP). Resolves the entered value,
+  // or null if cancelled. Masked input, numeric, Enter submits.
+  askPin({ title, label, pattern = '\\d{4,6}', hint = '' } = {}) {
+    return new Promise((resolve) => {
+      $('modal-root').innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:360px">
+        <h3 style="margin:0 0 8px">${esc(title || 'Confirm')}</h3>
+        <p class="muted" style="font-size:13px;margin:0 0 10px">${esc(label || '')}</p>
+        <input id="askpin_input" type="password" inputmode="numeric" autocomplete="off"
+          pattern="${pattern}" maxlength="6" style="width:100%;letter-spacing:4px;font-size:18px;text-align:center"
+          placeholder="••••••">
+        ${hint ? `<p class="muted" style="font-size:11px;margin:6px 0 0">${esc(hint)}</p>` : ''}
+        <div id="askpin_err" class="msg err" style="display:none;margin-top:8px"></div>
+        <div class="foot" style="margin-top:12px">
+          <button class="btn" id="askpin_ok">Confirm</button>
+          <button class="btn ghost" id="askpin_cancel">Cancel</button></div></div></div>`;
+      const input = $('askpin_input');
+      const re = new RegExp('^' + pattern + '$');
+      const done = (v) => { UI.closeModal(); resolve(v); };
+      const submit = () => {
+        const v = (input.value || '').trim();
+        if (!re.test(v)) { const e = $('askpin_err'); e.style.display = 'block'; e.textContent = 'Enter a valid code.'; return; }
+        done(v);
+      };
+      input.focus();
+      input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') submit(); if (ev.key === 'Escape') done(null); });
+      $('askpin_ok').onclick = submit;
+      $('askpin_cancel').onclick = () => done(null);
+    });
+  },
   statusTag(s) { return `<span class="tag ${esc(s)}">${esc(s)}</span>`; },
   // A single statistic tile: colour class, icon, label, big value, sub-line.
   stat(cls, ico, label, value, sub) {
@@ -281,11 +333,13 @@ const NAV = [
   { key: 'rewards', label: '🎁 Refer & Earn', roles: NETWORK_ROLES },
   { key: 'mydisputes', label: 'My Disputes', roles: NETWORK_ROLES },
   { key: 'network', label: 'My Network', roles: MGMT_ROLES },
+  { key: 'powers', label: '🛡️ My Powers', roles: NETWORK_ROLES },
   { key: 'fundrequests', label: '💰 Fund Requests', roles: MGMT_ROLES },
   { key: 'kyc', label: 'My KYC', roles: NETWORK_ROLES },
   { key: 'tax', label: 'PAN & TDS', roles: NETWORK_ROLES },
   { key: 'developer', label: '🧩 Developer API', roles: NETWORK_ROLES },
   { key: 'mybrand', label: '🎨 My Brand', roles: NETWORK_ROLES, flag: 'manages_brand' },
+  { key: 'marketing', label: '📣 Marketing Studio', roles: NETWORK_ROLES },
   { key: 'profile', label: 'Profile', roles: '*' },
   { key: 'security', label: 'Security', roles: '*' },
   // Admin console — grouped into sidebar sections; each maps to a staff permission.
@@ -555,16 +609,19 @@ const Screens = {
     } else if (MGMT_ROLES.includes(State.user.role)) {
       // Distributor / Master distributor — network, earnings & downline.
       const isMD = State.user.role === 'master_distributor';
-      const [p, w, st, dl] = await Promise.all([
+      const [p, w, st, dl, inc] = await Promise.all([
         Api.get('/network/panel').catch(() => null),
         Api.get('/wallet'),
         Api.get('/transactions/stats/summary').catch(() => null),
         Api.get('/network/downline').catch(() => ({ items: [] })),
+        Api.get('/topup/incoming').catch(() => ({ items: [] })),
       ]);
       const earn = p ? p.earnings.total_paise / 100 : 0;
       const counts = p ? (p.downline_counts || {}) : {};
       const totalDown = Object.values(counts).reduce((a, n) => a + Number(n), 0);
       const wl = w.wallet;
+      const sw = w.sub_wallets || { commission: '0.00', settlement: '0.00', commission_paise: 0, settlement_paise: 0 };
+      const pendingApprovals = (inc.items || []).length;
       const avail = (wl.available_paise != null ? wl.available_paise : wl.balance_paise) / 100;
       const roleCard = (k, ico) => `<div class="mini"><span class="mi">${ico}</span>
         <div class="mm"><b>${(k).replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}</b><span>${Number(counts[k]||0)} member${Number(counts[k]||0)===1?'':'s'}</span></div>
@@ -574,13 +631,15 @@ const Screens = {
         <div class="ma comm-pos">${money(e.amount_paise/100)}</div></div>`).join('');
       const members = (dl.items || []).slice(0, 6).map(m => `<div class="mini"><span class="mi">${(m.role||'r')[0].toUpperCase()}</span>
         <div class="mm"><b>${esc(m.full_name || m.username || m.phone || 'Member')}</b><span>${esc((m.role||'').replace(/_/g,' '))} · ${esc(m.phone||m.email||'')}</span></div>
-        <div class="ma"><small>${UI.statusTag(m.status||'active')}</small></div>`+`</div>`).join('');
+        <div class="ma" style="display:flex;gap:6px;align-items:center"><small>${UI.statusTag(m.status||'active')}</small>
+          <button class="btn sm ghost" onclick="Actions.memberServices('${m.id}','${esc((m.full_name||m.username||'Member').replace(/'/g,"\\'"))}')">Services</button>
+          <button class="btn sm ghost" onclick="Actions.memberPolicy('${m.id}','${esc((m.full_name||m.username||'Member').replace(/'/g,"\\'"))}')">Limits</button></div>`+`</div>`).join('');
       $('view').innerHTML = `
         <div class="stats">
           ${UI.stat('b','👛','Wallet balance', money(wl.balance), `Available <b>${money(avail)}</b>`)}
-          ${UI.stat('g','💰','Commission earned', money(earn), 'Net of TDS, lifetime')}
+          ${UI.stat('g','💰','Commission wallet', money(sw.commission), `Net of TDS · ${money(earn)} lifetime gross`)}
           ${UI.stat('o','🧑‍🤝‍🧑','My network', totalDown, isMD ? 'Distributors & retailers' : 'Retailers')}
-          ${st ? UI.stat('p','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : ''}
+          ${pendingApprovals ? UI.stat('r','⏳','Top-up approvals', pendingApprovals, '<a href="#/fundrequests">Review now →</a>') : (st ? UI.stat('p','📈','This month GTV', money((st.month_amount_paise||0)/100), `<b>${st.today_count||0}</b> today`) : '')}
         </div>
         <div class="dash-cols mt">
           <div>
@@ -599,6 +658,8 @@ const Screens = {
                 <b style="font-size:20px">${money(avail)}</b></div>
               <button class="btn sm" style="width:100%;justify-content:center;margin-top:12px" onclick="Actions.withdraw()">💸 Withdraw to bank</button>
               <a class="btn sm ghost" style="width:100%;justify-content:center;margin-top:8px;box-sizing:border-box" href="#/addmoney">＋ Add money</a>
+              ${sw.commission_paise > 0 ? `<div class="row" style="justify-content:space-between;align-items:center;margin-top:10px;font-size:13px"><span class="muted">Commission (net): <b>${money(sw.commission)}</b></span>
+                <button class="btn sm ghost" onclick="Actions.sweep('commission',${sw.commission_paise/100})">Sweep to main</button></div>` : ''}
             </div>
             <div class="rail-card">
               <h2 style="margin:0 0 4px;font-size:15px">Network breakdown</h2>
@@ -685,7 +746,22 @@ const Screens = {
     const t = r.tenant;
     State._myBrand = t;
     const base = (window.TUTIPAYS_API || (location.origin + '/api/v1')).replace(/\/$/, '');
+    // Partner KPI strip (brand GTV, members, sub-brands, share owed).
+    let kpis = '';
+    try {
+      const dd = (await Api.get('/brand/dashboard')).dashboard;
+      const roleBits = Object.entries(dd.members.by_role || {})
+        .map(([role, n]) => `${esc(role.replace(/_/g, ' '))}: <b>${n}</b>`).join(' · ') || 'none yet';
+      kpis = `<div class="grid cards">
+        ${UI.stat('a','💸','Brand GTV (this month)', money(dd.month.gtv_paise/100), dd.month.success_txns + ' successful txns')}
+        ${UI.stat('b','📈','Gross margin (month)', money(dd.month.gross_margin_paise/100), 'Your accrued share: '+money(dd.month.accrued_partner_earning_paise/100)+' @ '+(dd.partner_share_bps/100)+'%')}
+        ${UI.stat('c','👥','Members', dd.members.total, roleBits)}
+        ${UI.stat('d','💰','Share owed to you', money(dd.owed.net_payable_paise/100), dd.owed.statements + ' issued statement(s) · ' + dd.sub_brands + ' sub-brand(s)')}
+      </div>`;
+    } catch (e) { kpis = ''; }
     $('view').innerHTML = `
+      ${kpis ? `<div class="panel" style="margin-bottom:14px"><h2 style="margin:0 0 10px">📊 Partner dashboard</h2>${kpis}
+        <p class="muted" style="margin:10px 0 0">GTV and margin are for your whole white-label network this calendar month. Generate & settle statements under <b>Partner billing</b>.</p></div>` : ''}
       <div class="panel"><h2>🎨 My Brand</h2>
         <p class="muted">Your white-label brand. Changes apply to your panel, receipts and (on your custom domain) your marketing site — for your whole network.</p>
         <div class="row" style="gap:8px;flex-wrap:wrap">
@@ -728,6 +804,18 @@ const Screens = {
         <div class="field"><label>Role</label><input value="${esc((u.role||'').replace(/_/g,' '))}" disabled></div>
         ${u.username ? `<div class="field"><label>Username</label><input value="${esc(u.username)}" disabled></div>` : ''}
         <button class="btn" onclick="Actions.saveProfile()">Save profile</button></div>
+      ${['user'].includes(u.role) ? '' : `
+      <div class="panel mt" style="max-width:520px"><h2>My documents</h2>
+        <p class="muted" style="font-size:12px">Branded with your partner brand — print or save as PDF.</p>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          ${['admin','staff'].includes(u.role) ? '' : `<button class="btn sm ghost" onclick="Actions.myDoc('id-card')">🪪 ID card</button>
+          <button class="btn sm ghost" onclick="Actions.myDoc('certificate')">📜 Certificate</button>`}
+          <button class="btn sm ghost" onclick="Actions.myDoc('letterhead')">📄 Letterhead</button>
+        </div></div>
+      ${['admin','staff','user'].includes(u.role) ? '' : `
+      <div class="panel mt" style="max-width:520px"><h2>My limits & payout policy</h2>
+        <p class="muted" style="font-size:12px">Set your per-transaction limits and whether payouts need KYC/OTP.</p>
+        <button class="btn sm" onclick="Actions.memberPolicy('me','My account')">Set limits & policy</button></div>`}`}
       ${companyNote}
       ${['admin','staff'].includes(u.role) ? '' : `
       <div class="panel mt" style="max-width:520px;border:1px solid #f3c2c2">
@@ -949,6 +1037,7 @@ const Screens = {
         <div class="row" style="gap:8px">
           <button class="btn sm ghost" onclick="Actions.openDoc('/wallet/statement?format=html')">🧾 Passbook</button>
           <button class="btn sm ghost" onclick="Actions.dl('/wallet/statement?format=csv','passbook.csv')">⬇ CSV</button>
+          <button class="btn sm ghost" onclick="Actions.dl('/wallet/statement?format=xlsx','passbook.xlsx')">⬇ Excel</button>
           <button class="btn sm" onclick="Actions.topup()">Top up (test gateway)</button></div></div>
         <div class="tbl-wrap"><table><thead><tr><th>Amount</th><th>Source</th><th>Description</th><th class="right">Balance</th><th>When</th></tr></thead>
         <tbody>${rows || '<tr><td colspan=5 class=muted>No transactions yet</td></tr>'}</tbody></table></div></div>
@@ -972,7 +1061,7 @@ const Screens = {
     const body = { amount: +val('wd_amt'), account_name: val('wd_name'), account_number: val('wd_acc'),
       ifsc: val('wd_ifsc').toUpperCase(), mode: val('wd_mode') };
     if (!body.amount || body.amount <= 0) return UI.toast('Enter an amount', 'err');
-    try { await Api.post('/wallet/withdraw', body); UI.closeModal(); UI.toast('Withdrawal requested'); App.route(); }
+    try { await Api.postSecure('/wallet/withdraw', body); UI.closeModal(); UI.toast('Withdrawal requested'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
 
@@ -1004,7 +1093,8 @@ const Screens = {
         <div class="row" style="gap:6px">
           <select id="tx_fy" style="max-width:150px">${taxFyOptions()}</select>
           <button class="btn sm ghost" onclick="Actions.openDoc('/tax/tds/statement?format=html&fy='+val('tx_fy'))">🧾 Certificate</button>
-          <button class="btn sm" onclick="Actions.dl('/tax/tds/statement?format=csv&fy='+val('tx_fy'),'tds_'+val('tx_fy')+'.csv')">⬇ CSV</button>
+          <button class="btn sm ghost" onclick="Actions.dl('/tax/tds/statement?format=csv&fy='+val('tx_fy'),'tds_'+val('tx_fy')+'.csv')">⬇ CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/tax/tds/statement?format=xlsx&fy='+val('tx_fy'),'tds_'+val('tx_fy')+'.xlsx')">⬇ Excel</button>
         </div></div>
         <div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th class="right">Net</th><th>When</th></tr></thead>
@@ -1083,7 +1173,8 @@ const Screens = {
           <div class="field" style="margin:0"><label>From</label><input id="st_from" type="date"></div>
           <div class="field" style="margin:0"><label>To</label><input id="st_to" type="date"></div>
           <button class="btn sm ghost" onclick="Actions.openDoc('/transactions/statement?format=html&'+Actions._range('st'))">🧾 Print statement</button>
-          <button class="btn sm" onclick="Actions.dl('/transactions/statement?format=csv&'+Actions._range('st'),'statement.csv')">⬇ CSV</button>
+          <button class="btn sm ghost" onclick="Actions.dl('/transactions/statement?format=csv&'+Actions._range('st'),'statement.csv')">⬇ CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/transactions/statement?format=xlsx&'+Actions._range('st'),'statement.xlsx')">⬇ Excel</button>
         </div></div>
       <div class="tbl-wrap mt"><table>
       <thead><tr><th>Service</th><th>Dir</th><th class="right">Amount</th><th class="right">Net</th><th>Status</th><th>Reference</th><th>When</th><th></th></tr></thead>
@@ -1522,13 +1613,15 @@ const Screens = {
       <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <h2 style="margin:0">TDS records (Section 194H / 194N)</h2>
           ${_rangeCtl('tx')}
-          <button class="btn sm" onclick="Actions.dl('/admin/tds?format=csv&'+Actions._range('tx'),'tds_26q.csv')">⬇ 26Q CSV</button></div>
+          <button class="btn sm ghost" onclick="Actions.dl('/admin/tds?format=csv&'+Actions._range('tx'),'tds_26q.csv')">⬇ 26Q CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/admin/tds?format=xlsx&'+Actions._range('tx'),'tds_26q.xlsx')">⬇ 26Q Excel</button></div>
         <div class="tbl-wrap"><table>
         <thead><tr><th>Member</th><th>Service</th><th>Section</th><th class="right">Gross</th><th>Rate</th><th class="right">TDS</th><th>When</th></tr></thead>
         <tbody>${trows || '<tr><td colspan=7 class=muted>No TDS yet</td></tr>'}</tbody></table></div></div>
       <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <h2 style="margin:0">GST invoices (18% on platform margin)</h2>
-          <button class="btn sm" onclick="Actions.dl('/admin/gst?format=csv&'+Actions._range('tx'),'gst.csv')">⬇ GST CSV</button></div>
+          <button class="btn sm ghost" onclick="Actions.dl('/admin/gst?format=csv&'+Actions._range('tx'),'gst.csv')">⬇ GST CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/admin/gst?format=xlsx&'+Actions._range('tx'),'gst.xlsx')">⬇ GST Excel</button></div>
         <div class="tbl-wrap"><table>
         <thead><tr><th>Service</th><th class="right">Base</th><th class="right">CGST</th><th class="right">SGST</th><th class="right">IGST</th><th>PoS</th></tr></thead>
         <tbody>${grows || '<tr><td colspan=6 class=muted>No GST yet</td></tr>'}</tbody></table></div>
@@ -1556,7 +1649,39 @@ const Screens = {
         <div id="stale_out" class="muted mt">Preview to see how many pendings are stale.</div></div>
       <div class="panel mt"><h2>Recent batches</h2><div class="tbl-wrap"><table>
         <thead><tr><th>Label</th><th>Records</th><th class="right">Matched</th><th class="right">Force-settled</th><th class="right">Exceptions</th><th>When</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan=6 class=muted>No batches yet</td></tr>'}</tbody></table></div></div>`;
+        <tbody>${rows || '<tr><td colspan=6 class=muted>No batches yet</td></tr>'}</tbody></table></div></div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div><h2 style="margin:0">Ledger integrity</h2><p class="muted" style="margin:2px 0 0">Trial balance + journal↔wallet reconciliation from the double-entry books.</p></div>
+          <div class="row" style="gap:8px">
+            <button class="btn sm ghost" onclick="Actions.openDoc('/admin/ledger/trial-balance?format=html')">🧾 Trial balance</button>
+            <button class="btn sm ghost" onclick="Actions.dl('/admin/ledger/trial-balance?format=xlsx','trial_balance.xlsx')">⬇ Excel</button>
+            <button class="btn sm ghost" onclick="Actions.openDoc('/admin/ledger/wallet-recon?format=html')">🧾 Wallet recon</button>
+            <button class="btn sm ghost" onclick="Actions.dl('/admin/ledger/wallet-recon?format=xlsx','wallet_reconciliation.xlsx')">⬇ Excel</button>
+          </div></div>
+        <div id="ledger_out" class="muted mt">Loading ledger status…</div></div>`;
+    Actions._loadLedgerStatus();
+  },
+  // Live trial-balance + wallet-drift headline for the recon screen.
+  async _loadLedgerStatus() {
+    const out = $('ledger_out'); if (!out) return;
+    try {
+      const [tb, rec] = await Promise.all([
+        Api.get('/admin/ledger/trial-balance'),
+        Api.get('/admin/ledger/wallet-recon'),
+      ]);
+      const ok = (v) => `<span style="color:#16a34a;font-weight:700">${v}</span>`;
+      const bad = (v) => `<span style="color:#dc2626;font-weight:700">${v}</span>`;
+      out.innerHTML = `<div class="row" style="gap:18px;flex-wrap:wrap">
+        <div>Books: ${tb.balanced ? ok('BALANCED ✓') : bad('OUT BY ₹' + money(Math.abs(tb.difference_paise) / 100))}
+          <span class="muted">· Σdebit ₹${money(tb.total_debit_paise / 100)} = Σcredit ₹${money(tb.total_credit_paise / 100)}</span></div>
+        <div>Wallets: ${rec.drifted === 0 ? ok(rec.reconciled + ' reconciled ✓') : bad(rec.drifted + ' drifted (₹' + money(rec.total_drift_paise / 100) + ')')}
+          <span class="muted">· ${rec.checked} accounts checked</span></div>
+      </div>${rec.drifted ? `<div class="mt tbl-wrap"><table>
+        <thead><tr><th>Member</th><th>Account</th><th class="right">Ledger</th><th class="right">Wallet</th><th class="right">Drift</th></tr></thead>
+        <tbody>${rec.drift_rows.map(x => `<tr><td>${esc(x.full_name || x.user_id)}</td><td>${esc(x.account)}</td>
+          <td class="right">${money(x.ledger_paise / 100)}</td><td class="right">${money(x.balance_paise / 100)}</td>
+          <td class="right" style="color:#dc2626">${money(x.drift_paise / 100)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+    } catch (err) { out.innerHTML = `<span class="msg err">${esc(err.message)}</span>`; }
   },
 
   // Admin: batch payout engine.
@@ -2559,7 +2684,8 @@ const Screens = {
         <div><h2 style="margin:0">Settlement report</h2><p class="muted" style="margin:2px 0 0">Per-member summary of successful transactions for <b>${esc(d.date||'yesterday')}</b> (T+1). Blank date = yesterday.</p></div>
         <div class="row" style="gap:8px;align-items:end">
           <div class="field" style="margin:0"><label>Date</label><input id="se_date" type="date" value="${esc(date)}" onchange="Actions._settleDate=this.value;App.route()"></div>
-          <button class="btn sm" onclick="Actions.dl('/admin/settlement-report?format=csv'+(Actions._settleDate?'&date='+Actions._settleDate:''),'settlement.csv')">⬇ CSV</button>
+          <button class="btn sm ghost" onclick="Actions.dl('/admin/settlement-report?format=csv'+(Actions._settleDate?'&date='+Actions._settleDate:''),'settlement.csv')">⬇ CSV</button>
+          <button class="btn sm" onclick="Actions.dl('/admin/settlement-report?format=xlsx'+(Actions._settleDate?'&date='+Actions._settleDate:''),'settlement.xlsx')">⬇ Excel</button>
         </div></div>
       <div class="stats mt">
         ${UI.stat('b','🧾','Transactions', t.txns||0, 'Successful, that day')}
@@ -2961,6 +3087,93 @@ const Screens = {
         <tbody>${rr || '<tr><td colspan=5 class=muted>No referrals yet</td></tr>'}</tbody></table></div></div>`;
   },
 
+  // Hierarchy power map: what this member can do, plus the full role matrix.
+  async powers() {
+    const d = await Api.get('/network/powers');
+    const me = d.me, mx = d.matrix;
+    const held = new Set(me.capabilities);
+    const roleLabel = { retailer: 'Retailer', distributor: 'Distributor', master_distributor: 'Master Distributor', admin: 'Admin' };
+    // Group the member's own capabilities.
+    const groups = {};
+    mx.capabilities.forEach(c => { (groups[c.group] = groups[c.group] || []).push(c); });
+    const mine = Object.entries(groups).map(([g, caps]) => `
+      <div class="panel mt"><h3 style="margin:0 0 8px">${esc(g)}</h3>
+        <div style="display:grid;gap:6px">${caps.map(c => {
+          const on = held.has(c.key);
+          return `<div class="row" style="justify-content:space-between;align-items:center;gap:10px;opacity:${on?1:0.5}">
+            <span>${on?'✅':'🔒'} ${esc(c.label)}${c.note?`<br><span class="muted" style="font-size:11px">${esc(c.note)}</span>`:''}</span></div>`;
+        }).join('')}</div></div>`).join('');
+    // Full matrix grid.
+    const head = ['Capability', ...mx.roles.map(r => roleLabel[r] || r)];
+    const rows = mx.capabilities.map(c => `<tr>
+      <td>${esc(c.label)}</td>${mx.roles.map(r => `<td class="right">${mx.grid[c.key][r] ? '✅' : '—'}</td>`).join('')}</tr>`).join('');
+    $('view').innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">My Powers</h2>
+        <span class="muted">You are a <b>${esc(roleLabel[me.role] || me.role)}</b>${me.tenant_owner ? ' · White-label partner' : ''}</span></div>
+      <p class="muted">What your role can do across the hierarchy. 🔒 means a higher role is required. This map is the single source of truth the platform enforces.</p>
+      ${mine}
+      <div class="panel mt"><h3 style="margin:0 0 8px">Full role power map</h3><div class="tbl-wrap"><table>
+        <thead><tr>${head.map((h, i) => `<th${i ? ' class="right"' : ''}>${esc(h)}</th>`).join('')}</tr></thead>
+        <tbody>${rows}</tbody></table></div></div>`;
+  },
+
+  // AI Marketing Studio: generate on-brand promo posts for your services.
+  async marketing() {
+    const svc = await Api.get('/ai/marketing/services').catch(() => ({ services: [] }));
+    const services = svc.services || [];
+    const opts = services.map(s => `<option value="${esc(s)}">${esc(s.replace(/_/g, ' '))}</option>`).join('');
+    $('view').innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center"><h2 style="margin:0">📣 Marketing Studio</h2>
+        <span class="muted">No marketing staff needed — generate ready-to-post content</span></div>
+      <div class="panel mt">
+        <p class="muted">Pick a service you offer and we'll write ready-to-share posts on <b>your</b> brand — WhatsApp, Instagram and SMS — plus an image prompt you can paste into any image generator. Copy, or share straight to WhatsApp.</p>
+        ${services.length ? `
+        <div class="row" style="gap:8px;flex-wrap:wrap;align-items:end">
+          <div class="field" style="margin:0;min-width:180px"><label>Service to promote</label><select id="mk_svc">${opts}</select></div>
+          <div class="field" style="margin:0;min-width:160px"><label>Tone</label><select id="mk_tone">
+            <option value="friendly">Friendly</option><option value="festive">Festive</option>
+            <option value="urgent">Urgent</option><option value="professional">Professional</option></select></div>
+          <div class="field" style="margin:0;flex:1;min-width:200px"><label>Offer / angle (optional)</label><input id="mk_offer" placeholder="e.g. 0% charges this Diwali" maxlength="160"></div>
+          <button class="btn" onclick="Actions.generateMarketing()">✨ Generate posts</button>
+        </div>` : '<p class="msg err">You have no active services yet. Ask your upline to enable a service, then come back to promote it.</p>'}
+      </div>
+      <div id="mk_out"></div>`;
+  },
+  async generateMarketing() {
+    const out = $('mk_out'); if (!out) return;
+    out.innerHTML = '<div class="panel mt"><p class="muted">✨ Writing your posts…</p></div>';
+    try {
+      const r = await Api.post('/ai/marketing/generate', { service: val('mk_svc'), tone: val('mk_tone') || 'friendly', offer: val('mk_offer') || undefined });
+      const chIcon = { whatsapp: '💬', instagram: '📸', facebook: '👍', sms: '✉️' };
+      const cards = (r.posts || []).map((p, i) => {
+        const full = `${p.headline}\n\n${p.body}${p.hashtags && p.hashtags.length ? '\n\n' + p.hashtags.join(' ') : ''}`;
+        const waShare = p.channel === 'whatsapp' || p.channel === 'sms' ? `https://wa.me/?text=${encodeURIComponent(full)}` : '';
+        return `<div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+            <h3 style="margin:0">${chIcon[p.channel] || '📝'} ${esc(p.channel)}</h3>
+            <span class="row" style="gap:6px">
+              <button class="btn sm ghost" onclick="Actions.copyText(Actions._mkPosts[${i}])">Copy</button>
+              ${waShare ? `<a class="btn sm" href="${waShare}" target="_blank">Share to WhatsApp</a>` : ''}</span></div>
+          <p style="font-weight:700;margin:8px 0 4px">${esc(p.headline)}</p>
+          <p style="white-space:pre-wrap;margin:0">${esc(p.body)}</p>
+          ${p.hashtags && p.hashtags.length ? `<p class="muted" style="margin:8px 0 0">${esc(p.hashtags.join(' '))}</p>` : ''}
+          ${p.cta ? `<p class="muted" style="margin:6px 0 0;font-size:12px">CTA: ${esc(p.cta)}</p>` : ''}</div>`;
+      }).join('');
+      // Stash full post text for copy buttons.
+      Actions._mkPosts = (r.posts || []).map(p => `${p.headline}\n\n${p.body}${p.hashtags && p.hashtags.length ? '\n\n' + p.hashtags.join(' ') : ''}`);
+      out.innerHTML = `
+        <div class="panel mt" style="border-left:3px solid var(--brand,#7C3AED)">
+          <div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">🖼️ Image prompt</h3>
+            <button class="btn sm ghost" onclick="Actions.copyText(${JSON.stringify(r.image_prompt)})">Copy</button></div>
+          <p class="muted" style="margin:8px 0 0;white-space:pre-wrap">${esc(r.image_prompt)}</p>
+          <p class="muted" style="font-size:11px;margin:6px 0 0">Paste into any image generator to create a matching banner. ${r.source === 'ai' ? 'Written by AI.' : 'Branded template — set an AI endpoint under API Hub for fresh AI copy.'}</p></div>
+        ${cards}`;
+    } catch (err) { out.innerHTML = `<div class="panel mt"><p class="msg err">${esc(err.message)}</p></div>`; }
+  },
+  copyText(t) {
+    try { navigator.clipboard.writeText(t); UI.toast('Copied to clipboard'); }
+    catch { UI.toast('Copy failed — select and copy manually', 'err'); }
+  },
+
   async myearnings() {
     const days = Actions._anDays || 30;
     const d = await Api.get('/analytics/me?days=' + days);
@@ -3239,13 +3452,14 @@ const Actions = {
       $('bio-status').innerHTML = `<span style="color:#c5221f">${esc(err.message)}</span>`;
     }
   },
-  async submitTxn(mpin) {
+  async submitTxn(auth) {
     const s = SERVICES.find(x => x.key === $('svc').value);
     const v = {}; s.fields.forEach(([n]) => v[n] = document.querySelector(`#svc-fields [name="${n}"]`).value.trim());
     const body = s.build(v);
     if (s.biometric && Actions._bio) Object.assign(body, Actions._bio);
     if (s.provider && Actions._provider) body.provider_id = Actions._provider;
-    if (mpin) body.mpin = mpin;
+    if (auth && auth.mpin) body.mpin = auth.mpin;
+    if (auth && auth.otp) body.otp = auth.otp;
     $('txn-result').innerHTML = '<span class="muted">Processing…</span>';
     try {
       const d = await Api.post(s.path, body);
@@ -3258,10 +3472,16 @@ const Actions = {
       }
       App.refreshWallet();
     } catch (err) {
-      if (err.code === 'txn_mpin_required' || err.code === 'unauthorized' && /MPIN/i.test(err.message)) {
-        const pin = prompt('Enter your transaction MPIN to confirm:');
-        if (pin) return Actions.submitTxn(pin.trim());
+      if (err.code === 'txn_mpin_required' || (err.code === 'unauthorized' && /MPIN/i.test(err.message))) {
+        const pin = await UI.askPin({ title: 'Transaction MPIN', label: 'Enter your 4–6 digit MPIN to confirm this transaction', pattern: '\\d{4,6}' });
+        if (pin) return Actions.submitTxn({ ...(auth || {}), mpin: pin });
         $('txn-result').innerHTML = '<div class="msg err">Transaction cancelled — MPIN required.</div>';
+        return;
+      }
+      if (err.code === 'payout_otp_required') {
+        const otp = await UI.askPin({ title: 'Payout verification', label: 'Enter the 6-digit code sent to your email', pattern: '\\d{6}', hint: err.details && err.details.dev_code ? ('Dev code: ' + err.details.dev_code) : '' });
+        if (otp) return Actions.submitTxn({ ...(auth || {}), otp });
+        $('txn-result').innerHTML = '<div class="msg err">Payout cancelled — verification code required.</div>';
         return;
       }
       if (err.code === 'txn_mpin_not_set') {
@@ -3330,6 +3550,59 @@ const Actions = {
     } catch (err) { UI.toast(err.message, 'err'); }
   },
   _range(pfx) { const f = val(pfx + '_from'), t = val(pfx + '_to'); const qs = []; if (f) qs.push('from=' + f); if (t) qs.push('to=' + t); return qs.join('&'); },
+  // Upline: turn each service on/off for a direct downline member.
+  async memberServices(id, name) {
+    UI.modal(`<h3>Services — ${esc(name)}</h3><div id="msvc_body"><p class="muted">Loading…</p></div>
+      <div class="foot"><button class="btn ghost" onclick="UI.closeModal()">Close</button></div>`);
+    try {
+      const d = await Api.get('/network/members/' + id + '/services');
+      const body = $('msvc_body'); if (!body) return;
+      body.innerHTML = `<p class="muted" style="font-size:12px">Toggle what this member can sell. You can only grant services you hold yourself.</p>
+        <div style="display:grid;gap:6px">${(d.items || []).map(s => `
+        <label class="row" style="justify-content:space-between;align-items:center;border:1px solid var(--line,#e5e9f2);border-radius:8px;padding:8px 12px">
+          <span>${esc(s.name)} <span class="muted" style="font-size:11px">${esc(s.code)}</span>${s.can_grant ? '' : ' <span class="muted" style="font-size:11px">(you lack this)</span>'}</span>
+          <input type="checkbox" ${s.active ? 'checked' : ''} ${s.can_grant ? '' : 'disabled'} onchange="Actions.setMemberService('${id}','${esc(s.code)}',this.checked,this)">
+        </label>`).join('')}</div>`;
+    } catch (err) { const b = $('msvc_body'); if (b) b.innerHTML = `<p class="msg err">${esc(err.message)}</p>`; }
+  },
+  async setMemberService(id, code, active, el) {
+    try { await Api.put(`/network/members/${id}/services/${code}`, { active }); UI.toast(`${code} ${active ? 'enabled' : 'disabled'}`); }
+    catch (err) { if (el) el.checked = !active; UI.toast(err.message, 'err'); }
+  },
+  // Open a branded member document (ID card / certificate / letterhead).
+  myDoc(kind) { Actions.openDoc('/documents/' + kind); },
+
+  // Transaction limits & payout gates — self ('me') or a direct downline member.
+  async memberPolicy(id, name) {
+    const path = id === 'me' ? '/network/me/policy' : '/network/members/' + id + '/policy';
+    Actions._polPath = path;
+    UI.modal(`<h3>Limits & payout policy — ${esc(name)}</h3><div id="pol_body"><p class="muted">Loading…</p></div>`);
+    try {
+      const d = await Api.get(path);
+      const p = d.policy || {};
+      const r = (v) => v ? (v / 100) : '';
+      $('pol_body').innerHTML = `
+        <p class="muted" style="font-size:12px">Per-transaction limits (0 = no limit). The KYC band applies when verified; the non-KYC band otherwise.</p>
+        <div class="row"><div class="field"><label>Min / txn (KYC) ₹</label><input id="pol_min" inputmode="numeric" value="${r(p.min_txn_paise)}"></div>
+          <div class="field"><label>Max / txn (KYC) ₹</label><input id="pol_max" inputmode="numeric" value="${r(p.max_txn_paise)}"></div></div>
+        <div class="row"><div class="field"><label>Min / txn (non-KYC) ₹</label><input id="pol_minn" inputmode="numeric" value="${r(p.min_txn_nonkyc_paise)}"></div>
+          <div class="field"><label>Max / txn (non-KYC) ₹</label><input id="pol_maxn" inputmode="numeric" value="${r(p.max_txn_nonkyc_paise)}"></div></div>
+        <div class="field"><label><input type="checkbox" id="pol_rkyc" ${p.payout_require_kyc ? 'checked' : ''}> Require KYC for payout</label></div>
+        <div class="field"><label><input type="checkbox" id="pol_rotp" ${p.payout_require_otp ? 'checked' : ''}> Require email OTP for payout</label></div>
+        <div class="foot"><button class="btn" onclick="Actions.saveMemberPolicy()">Save</button>
+          <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`;
+    } catch (err) { const b = $('pol_body'); if (b) b.innerHTML = `<p class="msg err">${esc(err.message)}</p>`; }
+  },
+  async saveMemberPolicy() {
+    const body = {
+      min_txn: +val('pol_min') || 0, max_txn: +val('pol_max') || 0,
+      min_txn_nonkyc: +val('pol_minn') || 0, max_txn_nonkyc: +val('pol_maxn') || 0,
+      payout_require_kyc: $('pol_rkyc').checked, payout_require_otp: $('pol_rotp').checked,
+    };
+    try { await Api.put(Actions._polPath, body); UI.closeModal(); UI.toast('Policy saved'); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+
   addMember(asAdmin) {
     const roleOpts = (asAdmin ? MEMBER_ROLES : MEMBER_ROLES.filter(r => rank(r) < rank(State.user.role)))
       .map(r => `<option value="${r}">${r.replace(/_/g,' ')}</option>`).join('');
@@ -3369,13 +3642,13 @@ const Actions = {
   async pushFloat(id, name) {
     const amt = prompt(`Push float to ${name} (₹):`, '1000');
     if (!amt) return;
-    try { await Api.post('/network/float', { to_user_id: id, amount: +amt }); UI.toast('Float pushed'); App.refreshWallet(); App.route(); }
+    try { await Api.postSecure('/network/float', { to_user_id: id, amount: +amt }); UI.toast('Float pushed'); App.refreshWallet(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async sweep(from, max) {
     const amt = prompt(`Sweep ${from} balance to main wallet (₹, max ${max}):`, String(max));
     if (!amt) return;
-    try { await Api.post('/wallet/sweep', { from, amount: +amt }); UI.toast('Swept to main'); App.refreshWallet(); App.route(); }
+    try { await Api.postSecure('/wallet/sweep', { from, amount: +amt }); UI.toast('Swept to main'); App.refreshWallet(); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async saveTaxProfile() {
@@ -3918,8 +4191,9 @@ const Actions = {
       <div class="field"><label>Label</label><input id="dev_label" value="${k ? esc(k.label || '') : ''}" placeholder="My storefront"></div>
       ${k ? '' : `<div class="field"><label>Environment</label><select id="dev_env"><option value="live">live</option><option value="test">test</option></select></div>`}
       <div class="field"><label>Scopes (services this key may call)</label>
-        <label style="display:block;margin-bottom:4px"><input type="checkbox" id="dev_all" ${all ? 'checked' : ''} onchange="document.querySelectorAll('.dev_scope').forEach(c=>{c.disabled=this.checked})"> <b>All services (*)</b></label>
-        <div>${boxes}</div></div>
+        <label style="display:block;margin-bottom:4px"><input type="checkbox" id="dev_all" ${all ? 'checked' : ''} onchange="document.querySelectorAll('.dev_scope').forEach(c=>{c.disabled=this.checked})"> <b>All my enabled services (*)</b></label>
+        <div>${boxes || '<span class="muted" style="font-size:12px">No services enabled on your account yet — ask your upline to enable one.</span>'}</div>
+        <p class="muted" style="font-size:11px;margin:4px 0 0">You can only scope a key to services you have active. Each call is still checked per-service at run time.</p></div>
       <div class="field"><label>Callback URL (optional — receives signed settlement webhooks)</label>
         <input id="dev_cb" value="${k ? esc(k.callback_url || '') : ''}" placeholder="https://yourapp.com/tutipays/webhook"></div>
       <div class="row" style="gap:8px">
@@ -4760,7 +5034,7 @@ const Actions = {
   },
   async approveIncoming(id) {
     if (!confirm('Approve and transfer from your wallet to the member?')) return;
-    try { const r = await Api.post(`/topup/incoming/${id}/approve`, {}); UI.toast('Approved — ' + r.amount + ' transferred'); App.route(); }
+    try { const r = await Api.postSecure(`/topup/incoming/${id}/approve`, {}); UI.toast('Approved — ' + r.amount + ' transferred'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async rejectIncoming(id) {

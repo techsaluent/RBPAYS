@@ -154,6 +154,29 @@ export async function settleByReference(
           });
         }
       }
+      // Debit-flow charge: journal the member's spend and the platform's take
+      // so the double-entry ledger records the movement the fast wallet made.
+      // (Credit-flow cash-out is journaled above.) Posted ONLY when the lines
+      // provably balance, so a ledger entry can never roll back a settlement.
+      if (txn.direction === 'debit') {
+        const netPaise = Number(txn.net_paise);
+        const amountPaise = Number(txn.amount_paise);
+        const platformTake = netPaise - amountPaise; // charge net of retailer commission
+        const credits = (amountPaise > 0 ? amountPaise : 0) + (platformTake > 0 ? platformTake : 0);
+        if (netPaise > 0 && credits === netPaise) {
+          const lines: JournalLine[] = [
+            { account: 'member_wallet', direction: 'debit', amountPaise: netPaise, walletUserId: txn.user_id },
+          ];
+          if (amountPaise > 0) lines.push({ account: 'payout_escrow', direction: 'credit', amountPaise });
+          if (platformTake > 0) lines.push({ account: 'platform_margin', direction: 'credit', amountPaise: platformTake });
+          await postJournal(client, {
+            source: txn.service,
+            reference: txn.id,
+            narration: `${txn.service} charge settled (${reference})`,
+            lines,
+          });
+        }
+      }
       // Upline commissions (retailer's own commission is already realised:
       // netted into the debit, or included in the credit above).
       if (txn.commission_breakdown?.length) {

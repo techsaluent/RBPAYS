@@ -6,7 +6,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query } from '../../../db';
 import { bigintToNumber, paiseToRupees } from '../../utils/money';
-import { toCsv, statementHtml } from '../reports/reports.service';
+import { toCsv, statementHtml, sendXlsx } from '../reports/reports.service';
 
 /** Member-facing tax profile + my TDS statement. */
 const router = Router();
@@ -98,7 +98,7 @@ router.get(
 // TDS + 194N cash TDS, itemised, with the member's PAN on the header.
 const tdsStatementSchema = z.object({
   fy: z.coerce.number().int().min(2000).max(2100).optional(),
-  format: z.enum(['html', 'csv']).default('html'),
+  format: z.enum(['html', 'csv', 'xlsx']).default('html'),
 });
 router.get(
   '/tds/statement',
@@ -137,6 +137,19 @@ router.get(
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="tds_${fy.label.replace(/\s/g, '_')}.csv"`);
       res.send(csv);
+      return;
+    }
+    if (q.format === 'xlsx') {
+      sendXlsx(
+        res,
+        `tds_${fy.label.replace(/\s/g, '_')}.xlsx`,
+        ['Date', 'Section', 'Service', 'Gross (₹)', 'Rate %', 'TDS (₹)', 'Net (₹)'],
+        rows.map((x) => [
+          new Date(x.created_at).toISOString().slice(0, 10), x.section, String(x.service_code || '').replace(/_/g, ' '),
+          Number(r(Number(x.gross_paise))), Number((x.rate_bps / 100).toFixed(2)), Number(r(Number(x.tds_paise))), Number(r(Number(x.net_paise))),
+        ]),
+        `TDS ${fy.label}`,
+      );
       return;
     }
     res.type('html').send(

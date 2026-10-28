@@ -7,7 +7,7 @@ import { ApiError } from '../../utils/ApiError';
 import { query } from '../../../db';
 import { paiseToRupees } from '../../utils/money';
 import { receiptData, receiptHtml } from './receipt';
-import { toCsv, statementHtml } from '../reports/reports.service';
+import { toCsv, statementHtml, sendXlsx } from '../reports/reports.service';
 import { resolveBranding } from '../tenant/tenant.service';
 
 const router = Router();
@@ -88,7 +88,7 @@ const stmtSchema = z.object({
   from: z.string().trim().optional(),
   to: z.string().trim().optional(),
   status: z.enum(['pending', 'success', 'failed', 'refunded']).optional(),
-  format: z.enum(['csv', 'html']).default('html'),
+  format: z.enum(['csv', 'html', 'xlsx']).default('html'),
   user_id: z.string().uuid().optional(),
 });
 router.get(
@@ -123,6 +123,19 @@ router.get(
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="statement_${q.from || 'all'}_${q.to || 'now'}.csv"`);
       res.send(csv);
+      return;
+    }
+    if (q.format === 'xlsx') {
+      sendXlsx(
+        res,
+        `statement_${q.from || 'all'}_${q.to || 'now'}.xlsx`,
+        ['Date', 'Service', 'Reference', 'Direction', 'Status', 'Amount (₹)', 'Charge (₹)', 'Commission (₹)', 'Net (₹)'],
+        rows.map((t) => [
+          new Date(t.created_at).toLocaleString('en-IN'), String(t.service).replace(/_/g, ' '), t.reference, t.direction, t.status,
+          Number(r(t.amount_paise)), Number(r(t.charge_paise)), Number(r(t.commission_paise)), Number(r(t.net_paise)),
+        ]),
+        'Transactions',
+      );
       return;
     }
     res.type('html').send(

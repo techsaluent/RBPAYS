@@ -12,6 +12,27 @@ import { verifyPassword } from '../utils/password';
 const NETWORK_SELF_SERVICE = new Set<string>(['payout', 'wallet_transfer']);
 
 /**
+ * Transaction-MPIN check for ANY money-moving flow that doesn't go through
+ * requireService (withdrawal, float push, sweep, upline top-up approval).
+ * When `security_require_txn_mpin` is on, verifies the member's MPIN. Admins
+ * are exempt. Throws the same txn_mpin_* codes as the service guard.
+ */
+export async function assertTxnMpin(userId: string, role: string, mpin: unknown): Promise<void> {
+  if (role === 'admin') return;
+  const { rows } = await query<{ mpin_hash: string | null; require: string | null }>(
+    `SELECT u.mpin_hash,
+            (SELECT value FROM site_settings WHERE key = 'security_require_txn_mpin') AS require
+       FROM users u WHERE u.id = $1`,
+    [userId],
+  );
+  const row = rows[0];
+  if (!row || row.require !== 'true') return;
+  if (!row.mpin_hash) throw new ApiError(403, 'txn_mpin_not_set', 'Set a transaction MPIN in Security before transacting');
+  if (typeof mpin !== 'string' || !/^\d{4,6}$/.test(mpin)) throw new ApiError(401, 'txn_mpin_required', 'Transaction MPIN required');
+  if (!(await verifyPassword(mpin, row.mpin_hash))) throw ApiError.unauthorized('Invalid transaction MPIN');
+}
+
+/**
  * Guard a service route: the account must be active, the service globally
  * enabled, and (if the member has a user_services row) that row must be active.
  * Members created via onboarding get explicit rows; plain signup users have

@@ -318,7 +318,7 @@ function maskEmail(email: string): string {
  * prior unused codes and sends a fresh one. In non-prod the code is returned so
  * the flow is testable without a live mailer.
  */
-async function issueLoginOtp(userId: string, email: string): Promise<{ delivered: boolean; dev_code?: string }> {
+export async function issueLoginOtp(userId: string, email: string): Promise<{ delivered: boolean; dev_code?: string }> {
   const recent = await query<{ id: string }>(
     `SELECT id FROM login_otps
        WHERE user_id = $1 AND used_at IS NULL AND created_at > now() - interval '90 seconds'
@@ -344,7 +344,7 @@ async function issueLoginOtp(userId: string, email: string): Promise<{ delivered
 }
 
 /** Verify (and consume) the latest live login OTP for a user. */
-async function consumeLoginOtp(userId: string, code: string): Promise<boolean> {
+export async function consumeLoginOtp(userId: string, code: string): Promise<boolean> {
   const { rows } = await query<{ id: string; code_hash: string; attempts: number }>(
     `SELECT id, code_hash, attempts FROM login_otps
        WHERE user_id = $1 AND used_at IS NULL AND expires_at > now()
