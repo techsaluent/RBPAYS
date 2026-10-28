@@ -59,6 +59,40 @@ router.get(
   }),
 );
 
+// Fetch the outstanding bill for a biller + consumer number (no money moves).
+// Returns fetch_supported=false for billers/providers that can't fetch — the
+// agent then enters the amount manually.
+router.post(
+  '/fetch',
+  validate(z.object({
+    biller_id: z.string().trim().min(1).max(64),
+    consumer_number: z.string().trim().min(1).max(64),
+    category: z.string().trim().max(60).optional(),
+    provider_id: z.string().uuid().optional(),
+  })),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as { biller_id: string; consumer_number: string; category?: string; provider_id?: string };
+    const providerId = resolveProviderChoice('bbps', b.provider_id);
+    const provider = getBbpsProvider(providerId);
+    if (!provider.fetchBill) {
+      res.json({ fetch_supported: false, message: 'This biller does not support bill fetch — enter the amount manually.' });
+      return;
+    }
+    const bill = await provider.fetchBill({ billerId: b.biller_id, consumerNumber: b.consumer_number, category: b.category, providerId });
+    res.json({
+      fetch_supported: bill.fetchSupported,
+      amount: bill.amountPaise != null ? bill.amountPaise / 100 : undefined,
+      amount_paise: bill.amountPaise,
+      customer_name: bill.customerName,
+      due_date: bill.dueDate,
+      bill_number: bill.billNumber,
+      bill_date: bill.billDate,
+      message: bill.message,
+    });
+  }),
+);
+
 // Pay a bill via BBPS: debit wallet (amount + charge), record the payment.
 router.post(
   '/pay',

@@ -324,6 +324,7 @@ const NETWORK_ROLES = ['retailer', 'user', 'distributor', 'master_distributor'];
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', roles: '*' },
   { key: 'new', label: 'New Transaction', roles: TXN_ROLES },
+  { key: 'billpay', label: '🧾 Bill Pay (BBPS)', roles: TXN_ROLES },
   { key: 'beneficiaries', label: 'Beneficiaries', roles: TXN_ROLES },
   { key: 'devices', label: 'My Devices', roles: TXN_ROLES },
   { key: 'wallet', label: 'Wallet', roles: NETWORK_ROLES },
@@ -574,6 +575,26 @@ const Screens = {
           <a class="btn sm ghost" href="#/kyc">🪪 KYC</a>
         </div></div>`;
   },
+  // Bharat BillPay flow: category → biller → consumer number → fetch → pay.
+  async billpay() {
+    const cats = await Api.get('/bbps/categories').catch(() => ({ items: [] }));
+    const catOpts = ['<option value="">Select category…</option>']
+      .concat((cats.items || []).map(c => `<option value="${esc(c.category)}">${esc(String(c.category).replace(/_/g,' '))} (${c.billers})</option>`)).join('');
+    $('view').innerHTML = `
+      <div class="panel" style="max-width:560px">
+        <h2 style="margin:0 0 4px">🧾 Bill Pay (BBPS)</h2>
+        <p class="muted" style="font-size:13px;margin:0 0 12px">Electricity, gas, water, DTH, broadband, FASTag, loan EMI, insurance premium &amp; more — via Bharat BillPay.</p>
+        <div class="field"><label>Category</label><select id="bp_cat" onchange="Actions.bbpsLoadBillers()">${catOpts}</select></div>
+        <div class="field"><label>Biller</label><select id="bp_biller" disabled><option>Pick a category first</option></select></div>
+        <div class="field"><label>Consumer / account number</label><input id="bp_consumer" placeholder="as printed on the bill"></div>
+        <button class="btn sm ghost" onclick="Actions.bbpsFetch()">🔍 Fetch bill</button>
+        <div id="bp_bill" class="mt muted" style="font-size:13px"></div>
+        <div class="field mt"><label>Amount (₹)</label><input id="bp_amount" type="number" min="1" step="0.01"></div>
+        <button class="btn" onclick="Actions.bbpsPay()">Pay bill</button>
+        <div id="bp_result" class="mt"></div>
+      </div>`;
+  },
+
   async dashboard() {
     if (State.user.role === 'staff') {
       // Staff see a focused console: only the sections they're granted.
@@ -4044,6 +4065,42 @@ const Actions = {
     catch (err) { UI.toast(err.message, 'err'); }
   },
   presetSvc(key) { Actions._preset = key; },
+  // ---- Bill Pay (BBPS) flow ----
+  async bbpsLoadBillers() {
+    const cat = val('bp_cat'); const sel = $('bp_biller');
+    if (!cat) { sel.innerHTML = '<option>Pick a category first</option>'; sel.disabled = true; return; }
+    sel.disabled = true; sel.innerHTML = '<option>Loading…</option>';
+    try {
+      const d = await Api.get('/bbps/billers?category=' + encodeURIComponent(cat));
+      sel.innerHTML = ['<option value="">Select biller…</option>']
+        .concat((d.items || []).map(b => `<option value="${esc(b.biller_id)}" data-name="${esc(b.name)}">${esc(b.name)}</option>`)).join('');
+      sel.disabled = false;
+    } catch (e) { sel.innerHTML = '<option>Failed to load</option>'; }
+  },
+  async bbpsFetch() {
+    const biller = val('bp_biller'), consumer = val('bp_consumer'), out = $('bp_bill');
+    if (!biller || !consumer) { out.innerHTML = '<span class="msg err">Pick a biller and enter the consumer number.</span>'; return; }
+    out.innerHTML = 'Fetching…';
+    try {
+      const r = await Api.post('/bbps/fetch', { biller_id: biller, consumer_number: consumer, category: val('bp_cat') });
+      if (r.fetch_supported === false) { out.innerHTML = esc(r.message || 'Fetch not supported — enter the amount manually.'); return; }
+      if (r.amount != null && $('bp_amount')) $('bp_amount').value = r.amount;
+      out.innerHTML = `<span class="msg ok">Bill: <b>₹${money(r.amount)}</b>${r.customer_name ? ' · ' + esc(r.customer_name) : ''}${r.due_date ? ' · due ' + esc(r.due_date) : ''}${r.bill_number ? ' · ' + esc(r.bill_number) : ''}</span>`;
+    } catch (err) { out.innerHTML = `<span class="msg err">${esc(err.message)}</span>`; }
+  },
+  async bbpsPay() {
+    const sel = $('bp_biller'), biller = val('bp_biller');
+    const name = (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].dataset.name) || '';
+    const consumer = val('bp_consumer'), amount = +val('bp_amount'), out = $('bp_result');
+    if (!biller || !consumer || !amount || amount <= 0) { out.innerHTML = '<span class="msg err">Biller, consumer number and a positive amount are required.</span>'; return; }
+    out.innerHTML = 'Processing…';
+    try {
+      const d = await Api.postSecure('/bbps/pay', { biller_id: biller, biller_name: name, category: val('bp_cat'), consumer_number: consumer, amount });
+      const t = d.transaction;
+      out.innerHTML = `<div class="msg ok">Done — status: <b>${esc(t.status)}</b>${t.reference ? ' · ref ' + esc(t.reference) : ''}</div>`;
+      App.refreshWallet();
+    } catch (err) { out.innerHTML = `<span class="msg err">${esc(err.message)}</span>`; }
+  },
   async saveProfile() {
     const body = {};
     if (val('pf_name')) body.full_name = val('pf_name');

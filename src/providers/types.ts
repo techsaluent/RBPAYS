@@ -95,9 +95,29 @@ export interface PayoutProvider {
   payout(input: PayoutInput): Promise<ProviderResult>;
 }
 
+export interface BbpsFetchInput {
+  providerId?: string;
+  billerId: string;
+  consumerNumber: string;
+  category?: string;
+}
+
+export interface BbpsBill {
+  /** True when the biller supports bill fetch; false → the agent enters the amount. */
+  fetchSupported: boolean;
+  amountPaise?: number;
+  customerName?: string;
+  dueDate?: string;
+  billNumber?: string;
+  billDate?: string;
+  message?: string;
+}
+
 export interface BbpsProvider {
   readonly name: string;
   pay(input: BbpsPayInput): Promise<ProviderResult>;
+  /** Optional bill fetch (outstanding amount lookup). Not all billers support it. */
+  fetchBill?(input: BbpsFetchInput): Promise<BbpsBill>;
 }
 
 export interface RechargeProvider {
