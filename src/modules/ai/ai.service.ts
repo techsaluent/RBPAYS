@@ -67,6 +67,50 @@ export async function aiChat(system: string, user: string): Promise<string | nul
   }
 }
 
+/**
+ * Vision chat for document OCR / review. Sends an image URL alongside the
+ * prompt to an OpenAI-compatible vision endpoint and returns the raw text.
+ * Returns null when AI is not configured or the endpoint rejects the request
+ * (e.g. the model has no vision support) — callers then fall back to manual.
+ */
+export async function aiVisionChat(system: string, user: string, imageUrl: string): Promise<string | null> {
+  const cfg = await aiConfig();
+  if (!cfg) return null;
+  try {
+    const res = await httpJson<{ choices?: Array<{ message?: { content?: string } }> }>(
+      `${cfg.baseUrl}/chat/completions`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${cfg.apiKey}` },
+        body: {
+          model: cfg.model,
+          temperature: 0,
+          messages: [
+            { role: 'system', content: system },
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: user },
+                { type: 'image_url', image_url: { url: imageUrl } },
+              ],
+            },
+          ],
+        },
+        timeoutMs: 60000,
+      },
+    );
+    return res.choices?.[0]?.message?.content ?? null;
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'ai vision chat failed');
+    return null;
+  }
+}
+
+/** Pull the first JSON object out of a model response (handles code fences). */
+export function extractJsonPublic(text: string): Record<string, unknown> | null {
+  return extractJson(text);
+}
+
 /** Pull the first JSON object out of a model response (handles code fences). */
 function extractJson(text: string): Record<string, unknown> | null {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);

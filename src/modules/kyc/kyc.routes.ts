@@ -9,6 +9,8 @@ import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
 import { notifyKyc } from '../notify/alerts';
 import { verifyPan, aadhaarSendOtp, aadhaarVerifyOtp } from './verify.service';
+import { reviewKycDocument, kycAiReviewEnabled } from './kyc-ai.service';
+import { logger } from '../../config/logger';
 
 const router = Router();
 router.use(requireAuth);
@@ -31,7 +33,14 @@ router.post(
        VALUES ($1,$2,$3,$4) RETURNING *`,
       [req.user.id, b.doc_type, b.doc_number ?? null, b.file_url ?? null],
     );
-    res.status(201).json({ document: rows[0] });
+    const document = rows[0];
+    // AI-assist (opt-in): pre-compute a review recommendation for the admin,
+    // best-effort and non-blocking. The AI never changes status.
+    if (b.file_url && (await kycAiReviewEnabled())) {
+      void reviewKycDocument(document.id as string).catch((err) =>
+        logger.warn({ err: (err as Error).message, docId: document.id }, 'kyc ai review (on upload) failed'));
+    }
+    res.status(201).json({ document });
   }),
 );
 
@@ -179,6 +188,20 @@ router.post(
     await logAudit({ actorId: reviewerId, actorRole: req.user.role, action: 'kyc.review',
       targetType: 'kyc', targetId: document.id, detail: { status: b.status, remarks: b.remarks ?? null, user_id: document.user_id } });
     res.json({ document });
+  }),
+);
+
+// Run (or re-run) the AI recommendation for a document on demand (admin).
+// Returns the recommendation; the human still confirms via /:id/review.
+router.post(
+  '/:id/ai-review',
+  asyncHandler(requirePermission('kyc.review')),
+  asyncHandler(async (req: Request, res: Response) => {
+    const rec = await reviewKycDocument(req.params.id);
+    if (!rec) {
+      throw ApiError.unprocessable('AI review unavailable — set a vision-capable AI endpoint in API Hub, and ensure the document has an image.');
+    }
+    res.json({ recommendation: rec });
   }),
 );
 
