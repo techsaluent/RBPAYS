@@ -10,6 +10,14 @@ const router = Router();
 router.post('/signup/request-otp', validate(requestSignupOtpSchema), asyncHandler(controller.requestSignupOtp));
 router.post('/signup', validate(signupSchema), asyncHandler(controller.signup));
 router.get('/captcha', asyncHandler(controller.captcha));
+// Passkeys (WebAuthn): registration requires an authenticated session; login
+// endpoints are public (they ARE the authentication).
+router.post('/passkey/register/options', requireAuth, asyncHandler(controller.passkeyRegisterOptions));
+router.post('/passkey/register/verify', requireAuth, asyncHandler(controller.passkeyRegisterVerify));
+router.post('/passkey/login/options', asyncHandler(controller.passkeyLoginOptions));
+router.post('/passkey/login/verify', asyncHandler(controller.passkeyLoginVerify));
+router.get('/passkey', requireAuth, asyncHandler(controller.passkeyList));
+router.delete('/passkey/:id', requireAuth, asyncHandler(controller.passkeyDelete));
 router.post('/login', validate(loginSchema), asyncHandler(controller.login));
 router.post('/refresh', validate(refreshSchema), asyncHandler(controller.refresh));
 router.post('/logout', validate(refreshSchema), asyncHandler(controller.logout));

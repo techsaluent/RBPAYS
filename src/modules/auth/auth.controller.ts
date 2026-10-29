@@ -24,6 +24,43 @@ export async function captcha(_req: Request, res: Response): Promise<void> {
   res.json(issueCaptcha());
 }
 
+// ---- Passkeys (WebAuthn) ---------------------------------------------
+function rpCtx(req: Request): { host: string; proto: string } {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  return { host: req.get('host') || '', proto };
+}
+export async function passkeyRegisterOptions(req: Request, res: Response): Promise<void> {
+  if (!req.user) throw ApiError.unauthorized();
+  const svc = await import('./passkey.service');
+  res.json(await svc.registerOptions(req.user.id, rpCtx(req)));
+}
+export async function passkeyRegisterVerify(req: Request, res: Response): Promise<void> {
+  if (!req.user) throw ApiError.unauthorized();
+  const svc = await import('./passkey.service');
+  res.json(await svc.registerVerify(req.user.id, req.body.handle, req.body.response, req.body.device_name, rpCtx(req)));
+}
+export async function passkeyLoginOptions(req: Request, res: Response): Promise<void> {
+  const svc = await import('./passkey.service');
+  res.json(await svc.loginOptions(String(req.body.identifier || '').trim(), rpCtx(req)));
+}
+export async function passkeyLoginVerify(req: Request, res: Response): Promise<void> {
+  const svc = await import('./passkey.service');
+  const userId = await svc.loginVerify(req.body.handle, req.body.response, rpCtx(req));
+  const result = await authService.issueSessionForUser(userId, { ip: req.ip, userAgent: req.get('user-agent') ?? undefined });
+  res.json(result);
+}
+export async function passkeyList(req: Request, res: Response): Promise<void> {
+  if (!req.user) throw ApiError.unauthorized();
+  const svc = await import('./passkey.service');
+  res.json({ items: await svc.listCredentials(req.user.id) });
+}
+export async function passkeyDelete(req: Request, res: Response): Promise<void> {
+  if (!req.user) throw ApiError.unauthorized();
+  const svc = await import('./passkey.service');
+  await svc.deleteCredential(req.user.id, req.params.id);
+  res.status(204).send();
+}
+
 export async function refresh(req: Request, res: Response): Promise<void> {
   const result = await authService.refresh(req.body.refresh_token);
   res.status(200).json(result);

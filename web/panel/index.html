@@ -319,6 +319,8 @@
         <div class="field hidden" id="captcha-field"><label id="captcha-q">Human verification</label><input name="captcha_answer" type="text" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="Answer" /></div>
         <div style="text-align:right;margin:-6px 0 12px"><a href="#" onclick="return Auth.forgotPassword()" style="font-size:12px">Forgot password?</a></div>
         <button class="btn" type="submit">Login</button>
+        <div style="text-align:center;margin:10px 0 0"><span class="muted" style="font-size:12px">or</span></div>
+        <button class="btn ghost" type="button" style="width:100%;margin-top:8px" onclick="Auth.loginPasskey()">🔑 Sign in with a passkey</button>
       </form>
       <form id="signup-form" class="hidden" onsubmit="return Auth.signup(event)">
         <div class="field"><label>Register as</label>

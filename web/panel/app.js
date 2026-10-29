@@ -258,6 +258,56 @@ const Auth = {
       if (fld) { fld.classList.remove('hidden'); const i = fld.querySelector('input'); if (i) { i.value = ''; i.focus(); } }
     } catch (e) { /* captcha endpoint unavailable — leave as-is */ }
   },
+  // ---- Passkeys (WebAuthn) --------------------------------------------
+  supportsPasskeys() { return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create); },
+  _b64urlToBuf(s) {
+    s = String(s).replace(/-/g, '+').replace(/_/g, '/');
+    const pad = s.length % 4 ? '='.repeat(4 - (s.length % 4)) : '';
+    const bin = atob(s + pad); const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return buf.buffer;
+  },
+  _bufToB64url(buf) {
+    const bytes = new Uint8Array(buf); let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  },
+  // Enforce the admin/partner portal separation (shared with Auth.login).
+  _portalOk(d) {
+    const isConsole = d.user.role === 'admin' || d.user.role === 'staff';
+    if (ADMIN_PORTAL && !isConsole) { Auth.wipe(); UI.authMsg('This is the administrator console. Partners, please log in at the main panel.', 'err'); return false; }
+    if (!ADMIN_PORTAL && isConsole) { Auth.wipe(); $('auth-msg').innerHTML = `<div class="msg err">Administrators &amp; staff sign in at the admin console. <a href="admin.html" style="font-weight:600;text-decoration:underline">Open admin console →</a></div>`; return false; }
+    return true;
+  },
+  async loginPasskey() {
+    if (!Auth.supportsPasskeys()) return UI.authMsg('This device/browser does not support passkeys.', 'err');
+    const f = document.getElementById('login-form');
+    const identifier = (f && f.identifier.value.trim()) || '';
+    try {
+      const o = await Api.post('/auth/passkey/login/options', { identifier }, false);
+      const opt = o.options;
+      const publicKey = { ...opt, challenge: Auth._b64urlToBuf(opt.challenge),
+        allowCredentials: (opt.allowCredentials || []).map(c => ({ ...c, id: Auth._b64urlToBuf(c.id) })) };
+      const cred = await navigator.credentials.get({ publicKey });
+      const response = {
+        id: cred.id, rawId: Auth._bufToB64url(cred.rawId), type: cred.type,
+        response: {
+          clientDataJSON: Auth._bufToB64url(cred.response.clientDataJSON),
+          authenticatorData: Auth._bufToB64url(cred.response.authenticatorData),
+          signature: Auth._bufToB64url(cred.response.signature),
+          userHandle: cred.response.userHandle ? Auth._bufToB64url(cred.response.userHandle) : undefined,
+        },
+        clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+        authenticatorAttachment: cred.authenticatorAttachment || undefined,
+      };
+      const d = await Api.post('/auth/passkey/login/verify', { handle: o.handle, response }, false);
+      if (!Auth._portalOk(d)) return;
+      Auth.save(d); await App.boot();
+    } catch (err) {
+      if (err && err.name === 'NotAllowedError') return UI.authMsg('Passkey sign-in was cancelled.', 'err');
+      UI.authMsg((err && err.message) || 'Passkey sign-in failed. Enter your username first, then try again.', 'err');
+    }
+  },
   save(d) {
     State.token = d.access_token; State.refresh = d.refresh_token; State.user = d.user;
     localStorage.setItem('rb_token', d.access_token);
@@ -1046,11 +1096,32 @@ const Screens = {
           <div id="tf_setup"><button class="btn" onclick="Actions.start2fa()">Set up authenticator</button></div>
         `}</div>
 
+      <div class="panel mt" style="max-width:640px"><h2>🔑 Passkeys (passwordless)</h2>
+        <p class="muted">Sign in with your fingerprint, face or device PIN — no password, no OTP, and nothing to phish. Add a passkey on each device you use.</p>
+        <div id="pk_list" class="muted">Loading…</div>
+        <button class="btn mt" onclick="Actions.addPasskey()">＋ Add a passkey</button></div>
+
       <div class="panel mt" style="max-width:640px"><h2>Active sessions</h2>
         <p class="muted">Devices currently signed in to your account. Revoke any you don't recognise.</p>
         <div id="sess_list" class="muted">Loading…</div>
         <button class="btn ghost mt" onclick="Actions.revokeAllSessions()">Log out of all sessions</button></div>`;
     this._loadSessions();
+    this._loadPasskeys();
+  },
+
+  async _loadPasskeys() {
+    const box = $('pk_list'); if (!box) return;
+    if (!Auth.supportsPasskeys()) { box.innerHTML = '<span class="muted">This browser does not support passkeys.</span>'; return; }
+    try {
+      const { items } = await Api.get('/auth/passkey');
+      if (!items.length) { box.innerHTML = '<span class="muted">No passkeys yet. Add one to sign in without a password.</span>'; return; }
+      box.innerHTML = `<table class="tbl"><thead><tr><th>Device</th><th>Added</th><th>Last used</th><th></th></tr></thead><tbody>${
+        items.map(p => `<tr><td>${esc(p.device_name || 'Passkey')}</td>
+          <td class="muted">${new Date(p.created_at).toLocaleDateString('en-IN')}</td>
+          <td class="muted">${p.last_used_at ? new Date(p.last_used_at).toLocaleDateString('en-IN') : '—'}</td>
+          <td><button class="btn sm ghost" onclick="Actions.removePasskey('${p.id}')">Remove</button></td></tr>`).join('')
+      }</tbody></table>`;
+    } catch (err) { box.innerHTML = `<span class="muted">${esc(err.message)}</span>`; }
   },
 
   async _loadSessions() {
@@ -4202,6 +4273,40 @@ const Actions = {
     const body = { current_password: val('mp_pw'), mpin: val('mp_pin') };
     if (!/^\d{4,6}$/.test(body.mpin)) return UI.toast('MPIN must be 4-6 digits', 'err');
     try { await Api.post('/security/mpin', body); UI.toast('MPIN set — required at next login'); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async addPasskey() {
+    if (!Auth.supportsPasskeys()) return UI.toast('This browser does not support passkeys', 'err');
+    try {
+      const o = await Api.post('/auth/passkey/register/options', {});
+      const opt = o.options;
+      const publicKey = { ...opt,
+        challenge: Auth._b64urlToBuf(opt.challenge),
+        user: { ...opt.user, id: Auth._b64urlToBuf(opt.user.id) },
+        excludeCredentials: (opt.excludeCredentials || []).map(c => ({ ...c, id: Auth._b64urlToBuf(c.id) })) };
+      const cred = await navigator.credentials.create({ publicKey });
+      const response = {
+        id: cred.id, rawId: Auth._bufToB64url(cred.rawId), type: cred.type,
+        response: {
+          clientDataJSON: Auth._bufToB64url(cred.response.clientDataJSON),
+          attestationObject: Auth._bufToB64url(cred.response.attestationObject),
+          transports: cred.response.getTransports ? cred.response.getTransports() : [],
+        },
+        clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+        authenticatorAttachment: cred.authenticatorAttachment || undefined,
+      };
+      const name = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || 'This device';
+      await Api.post('/auth/passkey/register/verify', { handle: o.handle, response, device_name: name });
+      UI.toast('Passkey added — you can now sign in without a password');
+      this._loadPasskeys();
+    } catch (err) {
+      if (err && err.name === 'NotAllowedError') return UI.toast('Passkey setup cancelled', 'err');
+      UI.toast((err && err.message) || 'Could not add passkey', 'err');
+    }
+  },
+  async removePasskey(id) {
+    if (!confirm('Remove this passkey? You will no longer be able to sign in with it.')) return;
+    try { await Api.del('/auth/passkey/' + id); UI.toast('Passkey removed'); this._loadPasskeys(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   async removeMpin() {

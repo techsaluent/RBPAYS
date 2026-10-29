@@ -509,6 +509,38 @@ export async function login(input: LoginInput, meta: SessionMeta = {}) {
   });
 }
 
+/**
+ * Issue a session for an already-authenticated user — used by passkey login,
+ * where WebAuthn has already proven the member's identity. Applies the same
+ * account-status and admin-IP-allowlist guards and returns the same payload as
+ * a password login.
+ */
+export async function issueSessionForUser(userId: string, meta: SessionMeta = {}) {
+  const { rows } = await query<UserRow>(
+    `SELECT ${PUBLIC_COLUMNS}, password_hash, mpin_hash, totp_secret, totp_enabled FROM users WHERE id = $1 LIMIT 1`,
+    [userId],
+  );
+  const user = rows[0];
+  if (!user) throw ApiError.unauthorized('User not found');
+  if (user.status !== 'active') throw ApiError.forbidden(`Account is ${user.status}`);
+  if (user.role === 'admin') await enforceAdminIpAllowlist(meta.ip);
+  await recordLoginAttempt(user.email || user.phone || user.username || user.id, meta.ip, true);
+  const { password_hash, mpin_hash, totp_secret, totp_enabled, ...publicUser } = user;
+  void password_hash;
+  void mpin_hash;
+  void totp_secret;
+  return withTransaction(async (client) => {
+    const refresh_token = await issueRefreshToken(client, publicUser.id, meta);
+    return {
+      user: publicUser,
+      ...toTokens(publicUser),
+      refresh_token,
+      mpin_set: !!user.mpin_hash,
+      totp_enabled: !!totp_enabled,
+    };
+  });
+}
+
 // ---------------------------------------------------------------------
 // Account security: password change, MPIN, forgot/reset password
 // ---------------------------------------------------------------------
