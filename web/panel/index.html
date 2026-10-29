@@ -316,8 +316,11 @@
         <div class="field hidden" id="mpin-field"><label>MPIN (PIN)</label><input name="mpin" type="password" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="4-6 digit PIN" /></div>
         <div class="field hidden" id="totp-field"><label>Authenticator code</label><input name="totp" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6-digit code" /></div>
         <div class="field hidden" id="emailotp-field"><label>Email verification code</label><input name="email_otp" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="6-digit code" /><p class="muted" id="emailotp-hint" style="font-size:12px;margin:4px 0 0"></p></div>
+        <div class="field hidden" id="captcha-field"><label id="captcha-q">Human verification</label><input name="captcha_answer" type="text" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="Answer" /></div>
         <div style="text-align:right;margin:-6px 0 12px"><a href="#" onclick="return Auth.forgotPassword()" style="font-size:12px">Forgot password?</a></div>
         <button class="btn" type="submit">Login</button>
+        <div style="text-align:center;margin:10px 0 0"><span class="muted" style="font-size:12px">or</span></div>
+        <button class="btn ghost" type="button" style="width:100%;margin-top:8px" onclick="Auth.loginPasskey()">🔑 Sign in with a passkey</button>
       </form>
       <form id="signup-form" class="hidden" onsubmit="return Auth.signup(event)">
         <div class="field"><label>Register as</label>
@@ -340,6 +343,7 @@
           </div>
           <div id="signup-otp-msg" class="muted" style="margin-top:6px">Verify your mobile to continue.</div>
         </div>
+        <div class="field hidden" id="su-captcha-field"><label id="su-captcha-q">Human verification</label><input name="captcha_answer" type="text" inputmode="numeric" maxlength="12" autocomplete="off" placeholder="Answer" /></div>
         <button class="btn" type="submit">Create account</button>
         <p class="muted" style="font-size:12px;margin:10px 0 0">Distributor / Master Distributor accounts are activated after KYC review.</p>
       </form>

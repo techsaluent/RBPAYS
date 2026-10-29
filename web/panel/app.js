@@ -150,6 +150,7 @@ const Auth = {
     if (f.mpin && f.mpin.value.trim()) body.mpin = f.mpin.value.trim();
     if (f.totp && f.totp.value.trim()) body.totp = f.totp.value.trim();
     if (f.email_otp && f.email_otp.value.trim()) body.email_otp = f.email_otp.value.trim();
+    if (f.captcha_answer && f.captcha_answer.value.trim()) { body.captcha_answer = f.captcha_answer.value.trim(); if (Auth._captchaToken) body.captcha_token = Auth._captchaToken; }
     try {
       const d = await Api.post('/auth/login', body, false);
       // Keep the two portals separate: the admin console (super admin + staff)
@@ -180,11 +181,19 @@ const Auth = {
         const d = err.details || {};
         $('emailotp-field').classList.remove('hidden');
         $('emailotp-field').querySelector('input').focus();
-        let hint = d.email_masked ? `Code sent to ${d.email_masked}.` : 'A verification code was sent to your email.';
-        if (d.delivered === false) hint += ' If no email arrives, check the mailer configuration with your admin.';
+        const to = d.destination || d.email_masked;
+        let hint = to ? `Code sent to ${to}.` : 'A verification code was sent to you.';
+        if (d.delivered === false) hint += ' If nothing arrives, ask your admin to configure Email/SMS in API Hub.';
         if (d.dev_code) hint += ` (Test code: ${d.dev_code})`;
         $('emailotp-hint').textContent = hint;
-        UI.authMsg('Enter the verification code we emailed you.', 'ok');
+        UI.authMsg('Enter the verification code we sent you.', 'ok');
+      } else if (err.code === 'otp_delivery_failed') {
+        const d = err.details || {};
+        UI.authMsg((err.message || 'We could not send your login code.') +
+          (d.destination ? ' (tried ' + d.destination + ')' : ''), 'err');
+      } else if (err.code === 'captcha_required') {
+        await Auth.showCaptcha();
+        UI.authMsg('Please solve the verification question, then log in.', 'ok');
       } else if (err.code === 'account_locked') {
         UI.authMsg(err.message, 'err');
       } else { UI.authMsg(err.message, 'err'); }
@@ -228,11 +237,76 @@ const Auth = {
     if (f.username.value.trim()) body.username = f.username.value.trim();
     if (f.sponsor.value.trim()) body.sponsor = f.sponsor.value.trim();
     if (f.otp && f.otp.value.trim()) body.otp = f.otp.value.trim();
+    if (f.captcha_answer && f.captcha_answer.value.trim()) { body.captcha_answer = f.captcha_answer.value.trim(); if (Auth._captchaToken) body.captcha_token = Auth._captchaToken; }
     try {
       const d = await Api.post('/auth/signup', body, false);
       Auth.save(d); await App.boot();
-    } catch (err) { UI.authMsg(err.message, 'err'); }
+    } catch (err) {
+      if (err.code === 'captcha_required') { await Auth.showCaptcha('su-'); UI.authMsg('Please solve the verification question, then sign up.', 'ok'); }
+      else UI.authMsg(err.message, 'err');
+    }
     return false;
+  },
+  // Fetch a math captcha and reveal the field (prefix '' = login, 'su-' = signup).
+  async showCaptcha(prefix) {
+    prefix = prefix || '';
+    try {
+      const q = await Api.call('/auth/captcha', { auth: false });
+      Auth._captchaToken = q.token;
+      const lbl = $(prefix + 'captcha-q'); if (lbl) lbl.textContent = `Human verification: what is ${q.a} ${q.op} ${q.b}?`;
+      const fld = $(prefix + 'captcha-field');
+      if (fld) { fld.classList.remove('hidden'); const i = fld.querySelector('input'); if (i) { i.value = ''; i.focus(); } }
+    } catch (e) { /* captcha endpoint unavailable — leave as-is */ }
+  },
+  // ---- Passkeys (WebAuthn) --------------------------------------------
+  supportsPasskeys() { return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create); },
+  _b64urlToBuf(s) {
+    s = String(s).replace(/-/g, '+').replace(/_/g, '/');
+    const pad = s.length % 4 ? '='.repeat(4 - (s.length % 4)) : '';
+    const bin = atob(s + pad); const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return buf.buffer;
+  },
+  _bufToB64url(buf) {
+    const bytes = new Uint8Array(buf); let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  },
+  // Enforce the admin/partner portal separation (shared with Auth.login).
+  _portalOk(d) {
+    const isConsole = d.user.role === 'admin' || d.user.role === 'staff';
+    if (ADMIN_PORTAL && !isConsole) { Auth.wipe(); UI.authMsg('This is the administrator console. Partners, please log in at the main panel.', 'err'); return false; }
+    if (!ADMIN_PORTAL && isConsole) { Auth.wipe(); $('auth-msg').innerHTML = `<div class="msg err">Administrators &amp; staff sign in at the admin console. <a href="admin.html" style="font-weight:600;text-decoration:underline">Open admin console →</a></div>`; return false; }
+    return true;
+  },
+  async loginPasskey() {
+    if (!Auth.supportsPasskeys()) return UI.authMsg('This device/browser does not support passkeys.', 'err');
+    const f = document.getElementById('login-form');
+    const identifier = (f && f.identifier.value.trim()) || '';
+    try {
+      const o = await Api.post('/auth/passkey/login/options', { identifier }, false);
+      const opt = o.options;
+      const publicKey = { ...opt, challenge: Auth._b64urlToBuf(opt.challenge),
+        allowCredentials: (opt.allowCredentials || []).map(c => ({ ...c, id: Auth._b64urlToBuf(c.id) })) };
+      const cred = await navigator.credentials.get({ publicKey });
+      const response = {
+        id: cred.id, rawId: Auth._bufToB64url(cred.rawId), type: cred.type,
+        response: {
+          clientDataJSON: Auth._bufToB64url(cred.response.clientDataJSON),
+          authenticatorData: Auth._bufToB64url(cred.response.authenticatorData),
+          signature: Auth._bufToB64url(cred.response.signature),
+          userHandle: cred.response.userHandle ? Auth._bufToB64url(cred.response.userHandle) : undefined,
+        },
+        clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+        authenticatorAttachment: cred.authenticatorAttachment || undefined,
+      };
+      const d = await Api.post('/auth/passkey/login/verify', { handle: o.handle, response }, false);
+      if (!Auth._portalOk(d)) return;
+      Auth.save(d); await App.boot();
+    } catch (err) {
+      if (err && err.name === 'NotAllowedError') return UI.authMsg('Passkey sign-in was cancelled.', 'err');
+      UI.authMsg((err && err.message) || 'Passkey sign-in failed. Enter your username first, then try again.', 'err');
+    }
   },
   save(d) {
     State.token = d.access_token; State.refresh = d.refresh_token; State.user = d.user;
@@ -1022,11 +1096,32 @@ const Screens = {
           <div id="tf_setup"><button class="btn" onclick="Actions.start2fa()">Set up authenticator</button></div>
         `}</div>
 
+      <div class="panel mt" style="max-width:640px"><h2>🔑 Passkeys (passwordless)</h2>
+        <p class="muted">Sign in with your fingerprint, face or device PIN — no password, no OTP, and nothing to phish. Add a passkey on each device you use.</p>
+        <div id="pk_list" class="muted">Loading…</div>
+        <button class="btn mt" onclick="Actions.addPasskey()">＋ Add a passkey</button></div>
+
       <div class="panel mt" style="max-width:640px"><h2>Active sessions</h2>
         <p class="muted">Devices currently signed in to your account. Revoke any you don't recognise.</p>
         <div id="sess_list" class="muted">Loading…</div>
         <button class="btn ghost mt" onclick="Actions.revokeAllSessions()">Log out of all sessions</button></div>`;
     this._loadSessions();
+    this._loadPasskeys();
+  },
+
+  async _loadPasskeys() {
+    const box = $('pk_list'); if (!box) return;
+    if (!Auth.supportsPasskeys()) { box.innerHTML = '<span class="muted">This browser does not support passkeys.</span>'; return; }
+    try {
+      const { items } = await Api.get('/auth/passkey');
+      if (!items.length) { box.innerHTML = '<span class="muted">No passkeys yet. Add one to sign in without a password.</span>'; return; }
+      box.innerHTML = `<table class="tbl"><thead><tr><th>Device</th><th>Added</th><th>Last used</th><th></th></tr></thead><tbody>${
+        items.map(p => `<tr><td>${esc(p.device_name || 'Passkey')}</td>
+          <td class="muted">${new Date(p.created_at).toLocaleDateString('en-IN')}</td>
+          <td class="muted">${p.last_used_at ? new Date(p.last_used_at).toLocaleDateString('en-IN') : '—'}</td>
+          <td><button class="btn sm ghost" onclick="Actions.removePasskey('${p.id}')">Remove</button></td></tr>`).join('')
+      }</tbody></table>`;
+    } catch (err) { box.innerHTML = `<span class="muted">${esc(err.message)}</span>`; }
   },
 
   async _loadSessions() {
@@ -1081,6 +1176,23 @@ const Screens = {
           <button class="btn sm" onclick="Actions.aadhaarVerifyOtpNow()">Verify OTP</button>
         </div>
         <div id="va_out" class="muted" style="font-size:12px;margin-top:6px"></div>
+        <div class="sechead" style="margin-top:14px">GSTIN (business)</div>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0;flex:1"><label>GSTIN (15 char)</label><input id="vg_num" maxlength="15" placeholder="27AAPFU0939F1ZV" style="text-transform:uppercase"></div>
+          <button class="btn sm" onclick="Actions.verifyGstinNow()">Verify GSTIN</button>
+        </div>
+        <div id="vg_out" class="muted" style="font-size:12px;margin-top:6px"></div>
+      </div>
+      <div class="panel mt" style="max-width:560px"><h2>🪪 Aadhaar Offline e-KYC <span class="muted" style="font-size:12px;font-weight:400">(free, UIDAI-signed)</span></h2>
+        <p class="muted">Download your signed <b>Offline e-KYC</b> XML from the
+          <a href="https://myaadhaar.uidai.gov.in/offline-ekyc" target="_blank" rel="noopener">UIDAI portal</a>
+          (you set a 4-digit share phrase there), then upload it here. We read your name, DOB and address and verify UIDAI's digital signature — no OTP, no fee.</p>
+        <div class="row" style="gap:8px;align-items:end;flex-wrap:wrap">
+          <div class="field" style="margin:0;flex:1;min-width:200px"><label>Offline e-KYC XML file</label><input type="file" id="ao_file" accept=".xml,text/xml"></div>
+          <div class="field" style="margin:0"><label>Share phrase (4-digit)</label><input id="ao_code" inputmode="numeric" maxlength="6" placeholder="optional"></div>
+          <button class="btn sm" onclick="Actions.verifyAadhaarOfflineNow()">Verify</button>
+        </div>
+        <div id="ao_out" style="font-size:12px;margin-top:8px"></div>
       </div>
       <div class="panel mt" style="max-width:520px"><h2>Submit a document</h2>
         <div class="field"><label>Document type</label>
@@ -2393,8 +2505,14 @@ const Screens = {
         <p class="muted">When on, each uploaded KYC document is read by your AI vision model (<a href="#/integrations">API Hub → AI</a>), which recommends approve/reject with a confidence score and the extracted name/number on the <a href="#/kycreview">KYC Review</a> screen. A human still confirms — the AI never approves on its own. Degrades to manual when AI isn't set. <b>Off by default.</b></p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_signup_otp" ${s.security_require_signup_otp==='true'?'checked':''}> Require OTP verification at sign-up (mandatory)</label></div>
         <p class="muted">When on, new users must verify with a 6-digit OTP before their account is created. The code is sent over <b>every active channel</b> — SMS, WhatsApp and Email — so verify by mobile or inbox; enable the relevant gateways in <a href="#/integrations">Integrations</a> first. Admin-created accounts never need an OTP.</p>
-        <div class="field"><label><input type="checkbox" id="ws_security_require_login_otp" ${s.security_require_login_otp==='true'?'checked':''}> Require email OTP at login (two-factor)</label></div>
-        <p class="muted">⚠️ Turn this on <b>only after</b> the <b>Email</b> provider is set and a <b>Send test</b> email arrives (<a href="#/integrations">API Hub → Email</a>) — otherwise members (and you) can't get the code and can't log in. <b>Off by default.</b></p>
+        <div class="field"><label><input type="checkbox" id="ws_security_require_login_otp" ${s.security_require_login_otp==='true'?'checked':''}> Require OTP at login (two-factor)</label></div>
+        <p class="muted">⚠️ Turn this on <b>only after</b> at least one delivery channel works — <b>Email</b>, <b>SMS</b> or <b>WhatsApp</b> in <a href="#/integrations">API Hub</a>, tested with <b>Send test</b> — otherwise members (and you) can't get the code and can't log in. The code now goes to <b>every active channel</b> (email + mobile), and login refuses with a clear message if none can deliver. <b>Off by default.</b></p>
+        <h2 class="mt">Aadhaar Offline e-KYC (free, UIDAI-signed)</h2>
+        <p class="muted">Members upload the digitally-signed XML they download from the <a href="https://myaadhaar.uidai.gov.in/offline-ekyc" target="_blank" rel="noopener">UIDAI portal</a> (My KYC → Instant verification). Paste UIDAI's <b>public signing certificate</b> (PEM) below to auto-verify the signature; until it's set, uploads are parsed and queued for manual review (never auto-approved). This is free — no UIDAI licence or paid API.</p>
+        <div class="field"><label>UIDAI signing certificate (PEM)</label>
+          <textarea id="ws_uidai_offline_cert" rows="4" style="width:100%;font-family:monospace;font-size:11px" placeholder="-----BEGIN CERTIFICATE-----&#10;…&#10;-----END CERTIFICATE-----">${esc(s.uidai_offline_cert||'')}</textarea></div>
+        <div class="field"><label><input type="checkbox" id="ws_security_require_captcha" ${s.security_require_captcha==='true'?'checked':''}> Human verification (math captcha) at login &amp; sign-up</label></div>
+        <p class="muted">A simple arithmetic question blocks automated bots. No external service or key needed — it works immediately. Safe to leave on. <b>Off by default.</b></p>
         ${field('security_otp_bypass_code','OTP bypass code (break-glass — blank = off)','leave blank to disable')}
         <p class="muted">⚠️ <b>Break-glass only.</b> When set, entering exactly this code at sign-up skips OTP — useful for QA, app-store review or support. Anyone who knows it bypasses verification, so keep it secret and clear it when done. It is never exposed on the public site.</p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_kyc" ${s.security_require_kyc==='true'?'checked':''}> Require KYC verification before a member can transact</label></div>
@@ -4157,6 +4275,40 @@ const Actions = {
     try { await Api.post('/security/mpin', body); UI.toast('MPIN set — required at next login'); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  async addPasskey() {
+    if (!Auth.supportsPasskeys()) return UI.toast('This browser does not support passkeys', 'err');
+    try {
+      const o = await Api.post('/auth/passkey/register/options', {});
+      const opt = o.options;
+      const publicKey = { ...opt,
+        challenge: Auth._b64urlToBuf(opt.challenge),
+        user: { ...opt.user, id: Auth._b64urlToBuf(opt.user.id) },
+        excludeCredentials: (opt.excludeCredentials || []).map(c => ({ ...c, id: Auth._b64urlToBuf(c.id) })) };
+      const cred = await navigator.credentials.create({ publicKey });
+      const response = {
+        id: cred.id, rawId: Auth._bufToB64url(cred.rawId), type: cred.type,
+        response: {
+          clientDataJSON: Auth._bufToB64url(cred.response.clientDataJSON),
+          attestationObject: Auth._bufToB64url(cred.response.attestationObject),
+          transports: cred.response.getTransports ? cred.response.getTransports() : [],
+        },
+        clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+        authenticatorAttachment: cred.authenticatorAttachment || undefined,
+      };
+      const name = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || 'This device';
+      await Api.post('/auth/passkey/register/verify', { handle: o.handle, response, device_name: name });
+      UI.toast('Passkey added — you can now sign in without a password');
+      this._loadPasskeys();
+    } catch (err) {
+      if (err && err.name === 'NotAllowedError') return UI.toast('Passkey setup cancelled', 'err');
+      UI.toast((err && err.message) || 'Could not add passkey', 'err');
+    }
+  },
+  async removePasskey(id) {
+    if (!confirm('Remove this passkey? You will no longer be able to sign in with it.')) return;
+    try { await Api.del('/auth/passkey/' + id); UI.toast('Passkey removed'); this._loadPasskeys(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
   async removeMpin() {
     const pw = prompt('Enter your current password to remove the MPIN:');
     if (!pw) return;
@@ -4585,12 +4737,13 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','security_otp_bypass_code','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours','referral_bonus','custom_domain_target'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','security_otp_bypass_code','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours','referral_bonus','custom_domain_target','uidai_offline_cert'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     if ($('ws_kyc_ai_review')) values['kyc_ai_review'] = $('ws_kyc_ai_review').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
     values['security_require_login_otp'] = $('ws_security_require_login_otp').checked ? 'true' : 'false';
+    if ($('ws_security_require_captcha')) values['security_require_captcha'] = $('ws_security_require_captcha').checked ? 'true' : 'false';
     values['security_require_kyc'] = $('ws_security_require_kyc').checked ? 'true' : 'false';
     values['notify_txn_sms'] = $('ws_notify_txn_sms').checked ? 'true' : 'false';
     values['notify_low_balance'] = $('ws_notify_low_balance').checked ? 'true' : 'false';
@@ -5170,6 +5323,51 @@ const Actions = {
       $('va_out').innerHTML = r.verified ? `<span style="color:#12a35a">✅ ${esc(r.message)}</span>` : `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
       if (r.verified) { UI.toast('Aadhaar verified'); setTimeout(() => App.route(), 900); }
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async verifyAadhaarOfflineNow() {
+    const fileEl = $('ao_file'), out = $('ao_out');
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    if (!file) return UI.toast('Choose your Offline e-KYC XML file first', 'err');
+    if (file.size > 850000) return UI.toast('That file is too large for an offline e-KYC XML', 'err');
+    out.innerHTML = '<span class="muted">Reading & verifying…</span>';
+    let xml;
+    try { xml = await file.text(); } catch { return UI.toast('Could not read the file', 'err'); }
+    try {
+      const body = { xml };
+      const code = val('ao_code'); if (code) body.share_code = code;
+      const r = await Api.post('/kyc/verify/aadhaar-offline', body);
+      const d = r.data || {};
+      const badge = r.signature_verified
+        ? '<span style="color:#12a35a;font-weight:600">✅ UIDAI signature verified</span>'
+        : r.signature_checked
+          ? '<span style="color:#c5342b;font-weight:600">✕ Signature did not verify</span>'
+          : '<span style="color:#b8860b;font-weight:600">🕒 Extracted — awaiting admin review</span>';
+      const rows = [
+        ['Name', d.name], ['DOB', d.dob], ['Gender', d.gender],
+        ['Aadhaar', d.aadhaar_last4 ? 'XXXX XXXX ' + d.aadhaar_last4 : ''],
+        ['Address', d.address],
+      ].filter(x => x[1]).map(x => `<tr><td class="muted" style="padding:2px 10px 2px 0;vertical-align:top">${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join('');
+      const photo = d.photo_base64 ? `<img src="data:image/jpeg;base64,${esc(d.photo_base64)}" alt="photo" style="width:84px;height:auto;border-radius:6px;float:right;margin-left:10px">` : '';
+      out.innerHTML = `${badge}<div class="muted" style="margin:4px 0">${esc(r.message)}</div>${photo}<table style="font-size:12px">${rows}</table>`;
+      if (r.signature_verified) { UI.toast('Aadhaar verified'); setTimeout(() => App.route(), 1400); }
+    } catch (err) { out.innerHTML = ''; UI.toast(err.message, 'err'); }
+  },
+  async verifyGstinNow() {
+    const gstin = (val('vg_num')||'').toUpperCase().replace(/\s+/g,'');
+    if (gstin.length !== 15) return UI.toast('Enter a 15-character GSTIN', 'err');
+    $('vg_out').textContent = 'Checking…';
+    try {
+      const r = await Api.post('/kyc/verify/gstin', { gstin });
+      if (r.valid) {
+        const extra = [r.state && ('State: ' + r.state), r.pan && ('PAN: ' + r.pan),
+          r.legal_name && ('Legal name: ' + r.legal_name), r.status && ('Status: ' + r.status)]
+          .filter(Boolean).map(esc).join(' · ');
+        $('vg_out').innerHTML = `<span style="color:#12a35a">✅ ${esc(r.message)}</span>${extra?'<br>'+extra:''}`;
+        UI.toast('GSTIN verified'); setTimeout(() => App.route(), 1100);
+      } else {
+        $('vg_out').innerHTML = `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
+      }
+    } catch (err) { $('vg_out').textContent = ''; UI.toast(err.message, 'err'); }
   },
   async toggleService(code, enabled) {
     try { await Api.patch(`/admin/services/${code}`, { enabled }); App.route(); }
