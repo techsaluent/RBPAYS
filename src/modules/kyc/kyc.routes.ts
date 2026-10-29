@@ -9,6 +9,7 @@ import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
 import { notifyKyc } from '../notify/alerts';
 import { verifyPan, aadhaarSendOtp, aadhaarVerifyOtp, verifyGstin } from './verify.service';
+import { processOfflineKyc } from './aadhaar-offline.service';
 import { reviewKycDocument, kycAiReviewEnabled } from './kyc-ai.service';
 import { logger } from '../../config/logger';
 
@@ -46,12 +47,12 @@ router.post(
 
 // ---- Digital KYC: instant PAN + Aadhaar-OTP verification (self-service) ----
 /** Record a digitally-verified document and recompute the member's KYC. */
-async function recordVerified(userId: string, docType: string, docNumber: string): Promise<string> {
+async function recordVerified(userId: string, docType: string, docNumber: string, remarks = 'Digitally verified'): Promise<string> {
   return withTransaction(async (client) => {
     await client.query(
       `INSERT INTO kyc_documents (user_id, doc_type, doc_number, status, remarks, reviewed_at)
-       VALUES ($1,$2,$3,'verified','Digitally verified', now())`,
-      [userId, docType, docNumber],
+       VALUES ($1,$2,$3,'verified',$4, now())`,
+      [userId, docType, docNumber, remarks],
     );
     return recomputeUserKyc(client, userId);
   });
@@ -102,6 +103,50 @@ router.post(
       if (status === 'verified') void notifyKyc(req.user.id, 'verified');
     }
     res.json(result);
+  }),
+);
+
+// Aadhaar Paperless Offline e-KYC: upload the UIDAI-signed XML + share phrase.
+const offlineSchema = z.object({
+  xml: z.string().min(50).max(900000),
+  share_code: z.string().trim().max(32).optional(),
+  mobile: z.string().trim().max(15).optional(),
+});
+router.post(
+  '/verify/aadhaar-offline',
+  validate(offlineSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof offlineSchema>;
+    const result = await processOfflineKyc(b.xml, { share_code: b.share_code, mobile: b.mobile });
+    if (!result.ok || !result.data) throw ApiError.unprocessable(result.message);
+    const d = result.data;
+    const masked = 'XXXXXXXX' + d.aadhaar_last4;
+    if (result.signature_verified) {
+      const status = await recordVerified(req.user.id, 'aadhaar', masked,
+        `Offline e-KYC · ${d.name || ''}${d.dob ? ' · DOB ' + d.dob : ''}`.trim());
+      if (status === 'verified') void notifyKyc(req.user.id, 'verified');
+    } else {
+      // Parsed but not cryptographically verified → queue for a human with the
+      // extracted details; never auto-approved.
+      await query(
+        `INSERT INTO kyc_documents (user_id, doc_type, doc_number, status, remarks)
+         VALUES ($1,'aadhaar',$2,'pending',$3)`,
+        [req.user.id, masked, `Offline e-KYC (needs review) · ${d.name || ''}${d.dob ? ' · DOB ' + d.dob : ''} · ${result.signature_checked ? 'signature FAILED' : 'no UIDAI cert configured'}`],
+      );
+    }
+    res.json({
+      ok: result.ok,
+      signature_checked: result.signature_checked,
+      signature_verified: result.signature_verified,
+      mobile_confirmed: result.mobile_confirmed,
+      message: result.message,
+      data: {
+        name: d.name, dob: d.dob, gender: d.gender, care_of: d.care_of,
+        address: d.address_text, aadhaar_last4: d.aadhaar_last4,
+        reference_id: d.reference_id, photo_base64: d.photo_base64,
+      },
+    });
   }),
 );
 

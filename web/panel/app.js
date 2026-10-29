@@ -1112,6 +1112,17 @@ const Screens = {
         </div>
         <div id="vg_out" class="muted" style="font-size:12px;margin-top:6px"></div>
       </div>
+      <div class="panel mt" style="max-width:560px"><h2>🪪 Aadhaar Offline e-KYC <span class="muted" style="font-size:12px;font-weight:400">(free, UIDAI-signed)</span></h2>
+        <p class="muted">Download your signed <b>Offline e-KYC</b> XML from the
+          <a href="https://myaadhaar.uidai.gov.in/offline-ekyc" target="_blank" rel="noopener">UIDAI portal</a>
+          (you set a 4-digit share phrase there), then upload it here. We read your name, DOB and address and verify UIDAI's digital signature — no OTP, no fee.</p>
+        <div class="row" style="gap:8px;align-items:end;flex-wrap:wrap">
+          <div class="field" style="margin:0;flex:1;min-width:200px"><label>Offline e-KYC XML file</label><input type="file" id="ao_file" accept=".xml,text/xml"></div>
+          <div class="field" style="margin:0"><label>Share phrase (4-digit)</label><input id="ao_code" inputmode="numeric" maxlength="6" placeholder="optional"></div>
+          <button class="btn sm" onclick="Actions.verifyAadhaarOfflineNow()">Verify</button>
+        </div>
+        <div id="ao_out" style="font-size:12px;margin-top:8px"></div>
+      </div>
       <div class="panel mt" style="max-width:520px"><h2>Submit a document</h2>
         <div class="field"><label>Document type</label>
           <select id="k_type"><option value="aadhaar">Aadhaar</option><option value="pan">PAN</option>
@@ -2423,8 +2434,12 @@ const Screens = {
         <p class="muted">When on, each uploaded KYC document is read by your AI vision model (<a href="#/integrations">API Hub → AI</a>), which recommends approve/reject with a confidence score and the extracted name/number on the <a href="#/kycreview">KYC Review</a> screen. A human still confirms — the AI never approves on its own. Degrades to manual when AI isn't set. <b>Off by default.</b></p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_signup_otp" ${s.security_require_signup_otp==='true'?'checked':''}> Require OTP verification at sign-up (mandatory)</label></div>
         <p class="muted">When on, new users must verify with a 6-digit OTP before their account is created. The code is sent over <b>every active channel</b> — SMS, WhatsApp and Email — so verify by mobile or inbox; enable the relevant gateways in <a href="#/integrations">Integrations</a> first. Admin-created accounts never need an OTP.</p>
-        <div class="field"><label><input type="checkbox" id="ws_security_require_login_otp" ${s.security_require_login_otp==='true'?'checked':''}> Require email OTP at login (two-factor)</label></div>
-        <p class="muted">⚠️ Turn this on <b>only after</b> the <b>Email</b> provider is set and a <b>Send test</b> email arrives (<a href="#/integrations">API Hub → Email</a>) — otherwise members (and you) can't get the code and can't log in. <b>Off by default.</b></p>
+        <div class="field"><label><input type="checkbox" id="ws_security_require_login_otp" ${s.security_require_login_otp==='true'?'checked':''}> Require OTP at login (two-factor)</label></div>
+        <p class="muted">⚠️ Turn this on <b>only after</b> at least one delivery channel works — <b>Email</b>, <b>SMS</b> or <b>WhatsApp</b> in <a href="#/integrations">API Hub</a>, tested with <b>Send test</b> — otherwise members (and you) can't get the code and can't log in. The code now goes to <b>every active channel</b> (email + mobile), and login refuses with a clear message if none can deliver. <b>Off by default.</b></p>
+        <h2 class="mt">Aadhaar Offline e-KYC (free, UIDAI-signed)</h2>
+        <p class="muted">Members upload the digitally-signed XML they download from the <a href="https://myaadhaar.uidai.gov.in/offline-ekyc" target="_blank" rel="noopener">UIDAI portal</a> (My KYC → Instant verification). Paste UIDAI's <b>public signing certificate</b> (PEM) below to auto-verify the signature; until it's set, uploads are parsed and queued for manual review (never auto-approved). This is free — no UIDAI licence or paid API.</p>
+        <div class="field"><label>UIDAI signing certificate (PEM)</label>
+          <textarea id="ws_uidai_offline_cert" rows="4" style="width:100%;font-family:monospace;font-size:11px" placeholder="-----BEGIN CERTIFICATE-----&#10;…&#10;-----END CERTIFICATE-----">${esc(s.uidai_offline_cert||'')}</textarea></div>
         <div class="field"><label><input type="checkbox" id="ws_security_require_captcha" ${s.security_require_captcha==='true'?'checked':''}> Human verification (math captcha) at login &amp; sign-up</label></div>
         <p class="muted">A simple arithmetic question blocks automated bots. No external service or key needed — it works immediately. Safe to leave on. <b>Off by default.</b></p>
         ${field('security_otp_bypass_code','OTP bypass code (break-glass — blank = off)','leave blank to disable')}
@@ -4617,7 +4632,7 @@ const Actions = {
     } catch { if (msg) msg.textContent = 'Could not read that image.'; }
   },
   async saveSite() {
-    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','security_otp_bypass_code','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours','referral_bonus','custom_domain_target'];
+    const keys = ['brand_name','logo_emoji','logo_url','primary_color','tagline','support_email','admin_email','phone','company_name','company_address','auth_poster_url','auth_poster_title','auth_poster_subtitle','auth_poster_link','security_admin_ip_allowlist','security_otp_bypass_code','duplicate_txn_window_minutes','aggregator_webhook_secret','automation_webhook_url','meta_description','meta_keywords','og_image_url','google_analytics_id','social_facebook','social_instagram','social_twitter','social_youtube','social_whatsapp','low_balance_threshold','dispute_sla_hours','auto_recon_hours','referral_bonus','custom_domain_target','uidai_offline_cert'];
     const values = {}; keys.forEach(k => values[k] = val('ws_'+k));
     values['security_require_txn_mpin'] = $('ws_security_require_txn_mpin').checked ? 'true' : 'false';
     if ($('ws_kyc_ai_review')) values['kyc_ai_review'] = $('ws_kyc_ai_review').checked ? 'true' : 'false';
@@ -5203,6 +5218,34 @@ const Actions = {
       $('va_out').innerHTML = r.verified ? `<span style="color:#12a35a">✅ ${esc(r.message)}</span>` : `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
       if (r.verified) { UI.toast('Aadhaar verified'); setTimeout(() => App.route(), 900); }
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async verifyAadhaarOfflineNow() {
+    const fileEl = $('ao_file'), out = $('ao_out');
+    const file = fileEl && fileEl.files && fileEl.files[0];
+    if (!file) return UI.toast('Choose your Offline e-KYC XML file first', 'err');
+    if (file.size > 850000) return UI.toast('That file is too large for an offline e-KYC XML', 'err');
+    out.innerHTML = '<span class="muted">Reading & verifying…</span>';
+    let xml;
+    try { xml = await file.text(); } catch { return UI.toast('Could not read the file', 'err'); }
+    try {
+      const body = { xml };
+      const code = val('ao_code'); if (code) body.share_code = code;
+      const r = await Api.post('/kyc/verify/aadhaar-offline', body);
+      const d = r.data || {};
+      const badge = r.signature_verified
+        ? '<span style="color:#12a35a;font-weight:600">✅ UIDAI signature verified</span>'
+        : r.signature_checked
+          ? '<span style="color:#c5342b;font-weight:600">✕ Signature did not verify</span>'
+          : '<span style="color:#b8860b;font-weight:600">🕒 Extracted — awaiting admin review</span>';
+      const rows = [
+        ['Name', d.name], ['DOB', d.dob], ['Gender', d.gender],
+        ['Aadhaar', d.aadhaar_last4 ? 'XXXX XXXX ' + d.aadhaar_last4 : ''],
+        ['Address', d.address],
+      ].filter(x => x[1]).map(x => `<tr><td class="muted" style="padding:2px 10px 2px 0;vertical-align:top">${esc(x[0])}</td><td>${esc(x[1])}</td></tr>`).join('');
+      const photo = d.photo_base64 ? `<img src="data:image/jpeg;base64,${esc(d.photo_base64)}" alt="photo" style="width:84px;height:auto;border-radius:6px;float:right;margin-left:10px">` : '';
+      out.innerHTML = `${badge}<div class="muted" style="margin:4px 0">${esc(r.message)}</div>${photo}<table style="font-size:12px">${rows}</table>`;
+      if (r.signature_verified) { UI.toast('Aadhaar verified'); setTimeout(() => App.route(), 1400); }
+    } catch (err) { out.innerHTML = ''; UI.toast(err.message, 'err'); }
   },
   async verifyGstinNow() {
     const gstin = (val('vg_num')||'').toUpperCase().replace(/\s+/g,'');

@@ -21,6 +21,7 @@ const PRIVATE_SETTING_KEYS = new Set([
   'aggregator_webhook_secret',
   'automation_webhook_url',
   'security_otp_bypass_code',
+  'uidai_offline_cert',
 ]);
 
 router.get(
