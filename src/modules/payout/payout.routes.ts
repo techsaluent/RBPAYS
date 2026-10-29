@@ -50,14 +50,14 @@ router.post(
     // Per-member payout gates: require KYC and/or an email OTP before cash-out.
     const policy = await getMemberPolicy(userId);
     if (policy.payout_require_kyc || policy.payout_require_otp) {
-      const u = (await query<{ kyc_status: string; email: string }>('SELECT kyc_status, email FROM users WHERE id = $1', [userId])).rows[0];
+      const u = (await query<{ kyc_status: string; email: string; phone: string }>('SELECT kyc_status, email, phone FROM users WHERE id = $1', [userId])).rows[0];
       if (policy.payout_require_kyc && u?.kyc_status !== 'verified') {
         throw ApiError.unprocessable('Payout is locked until your KYC is verified.');
       }
       if (policy.payout_require_otp) {
         if (!body.otp) {
-          const { dev_code } = await issueLoginOtp(userId, u.email);
-          throw new ApiError(401, 'payout_otp_required', 'A verification code was sent to your email — re-submit with it to pay out.', dev_code ? { dev_code } : undefined);
+          const { dev_code, destination } = await issueLoginOtp(userId, { email: u.email, phone: u.phone });
+          throw new ApiError(401, 'payout_otp_required', `A verification code was sent to ${destination || 'you'} — re-submit with it to pay out.`, dev_code ? { dev_code } : undefined);
         }
         if (!(await consumeLoginOtp(userId, body.otp))) throw ApiError.unauthorized('Invalid or expired payout code');
       }

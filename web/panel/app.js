@@ -181,11 +181,16 @@ const Auth = {
         const d = err.details || {};
         $('emailotp-field').classList.remove('hidden');
         $('emailotp-field').querySelector('input').focus();
-        let hint = d.email_masked ? `Code sent to ${d.email_masked}.` : 'A verification code was sent to your email.';
-        if (d.delivered === false) hint += ' If no email arrives, check the mailer configuration with your admin.';
+        const to = d.destination || d.email_masked;
+        let hint = to ? `Code sent to ${to}.` : 'A verification code was sent to you.';
+        if (d.delivered === false) hint += ' If nothing arrives, ask your admin to configure Email/SMS in API Hub.';
         if (d.dev_code) hint += ` (Test code: ${d.dev_code})`;
         $('emailotp-hint').textContent = hint;
-        UI.authMsg('Enter the verification code we emailed you.', 'ok');
+        UI.authMsg('Enter the verification code we sent you.', 'ok');
+      } else if (err.code === 'otp_delivery_failed') {
+        const d = err.details || {};
+        UI.authMsg((err.message || 'We could not send your login code.') +
+          (d.destination ? ' (tried ' + d.destination + ')' : ''), 'err');
       } else if (err.code === 'captcha_required') {
         await Auth.showCaptcha();
         UI.authMsg('Please solve the verification question, then log in.', 'ok');

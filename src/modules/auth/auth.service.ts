@@ -318,36 +318,64 @@ function maskEmail(email: string): string {
   const head = local.slice(0, 1);
   return `${head}${'*'.repeat(Math.max(1, local.length - 1))}@${domain}`;
 }
+/** +91 ****** 1234 — enough to recognise the number without exposing it. */
+function maskPhone(phone: string): string {
+  const p = phone.replace(/\s+/g, '');
+  if (p.length < 4) return '*'.repeat(p.length);
+  return '*'.repeat(p.length - 4) + p.slice(-4);
+}
 
+export interface LoginOtpResult {
+  delivered: boolean;
+  channels: Record<string, boolean>;
+  destination: string;
+  dev_code?: string;
+}
 /**
- * Issue a login OTP to the member's email. Reuses a code generated in the last
- * 90s (so a double-submit doesn't send two mails); otherwise invalidates any
- * prior unused codes and sends a fresh one. In non-prod the code is returned so
- * the flow is testable without a live mailer.
+ * Issue a login OTP across every channel the member can receive it on — email
+ * AND SMS/WhatsApp when a phone is on file and those providers are active — so
+ * the code still arrives when only one messaging rail is configured. (The old
+ * behaviour was email-only, which stranded members whenever email wasn't set.)
+ *
+ * De-dupes resends inside a 90s window ONLY when the outstanding code was
+ * actually delivered; a previously-failed send is retried, so a transient or
+ * mis-configured provider never leaves the member waiting on a dead code. In
+ * non-prod the code is returned so the flow is testable without a live mailer.
  */
-export async function issueLoginOtp(userId: string, email: string): Promise<{ delivered: boolean; dev_code?: string }> {
+export async function issueLoginOtp(
+  userId: string,
+  contact: { email?: string | null; phone?: string | null },
+): Promise<LoginOtpResult> {
+  const email = contact.email ?? null;
+  const phone = contact.phone ?? null;
+  const dest = [email ? maskEmail(email) : null, phone ? maskPhone(phone) : null].filter(Boolean).join(' / ');
+
   const recent = await query<{ id: string }>(
     `SELECT id FROM login_otps
-       WHERE user_id = $1 AND used_at IS NULL AND created_at > now() - interval '90 seconds'
+       WHERE user_id = $1 AND used_at IS NULL AND delivered = true
+         AND created_at > now() - interval '90 seconds'
        ORDER BY created_at DESC LIMIT 1`,
     [userId],
   );
   if (recent.rowCount) {
-    // A fresh code is already outstanding; do not email another one.
-    return { delivered: true };
+    // A delivered code is already outstanding; do not send another one.
+    return { delivered: true, channels: {}, destination: dest };
   }
   await query('UPDATE login_otps SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [userId]);
   const code = String(Math.floor(100000 + Math.random() * 900000));
   const codeHash = await hashPassword(code);
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-  await query(
-    'INSERT INTO login_otps (user_id, code_hash, expires_at) VALUES ($1,$2,$3)',
+  const { rows } = await query<{ id: string }>(
+    'INSERT INTO login_otps (user_id, code_hash, expires_at) VALUES ($1,$2,$3) RETURNING id',
     [userId, codeHash, expiresAt],
   );
   const text = `Your TutiPays login code is ${code}. It expires in 10 minutes. If you did not try to sign in, change your password immediately.`;
-  const sent = await dispatch({ email, text, subject: 'TutiPays login code', channels: ['email'] });
+  const sent = await dispatch({ email, phone, text, subject: 'TutiPays login code', channels: ['email', 'sms', 'whatsapp'] });
+  const delivered = sent.email || sent.sms || sent.whatsapp;
+  await query('UPDATE login_otps SET delivered = $1 WHERE id = $2', [delivered, rows[0].id]);
   if (!env.isProd) logger.info({ userId, code }, 'login OTP generated');
-  return { delivered: sent.email, dev_code: env.isProd ? undefined : code };
+  if (!delivered) logger.error({ userId }, 'login OTP could not be delivered on any channel — check Email/SMS providers in API Hub');
+  return { delivered, channels: sent, destination: dest, dev_code: env.isProd ? undefined : code };
 }
 
 /** Verify (and consume) the latest live login OTP for a user. */
@@ -438,11 +466,19 @@ export async function login(input: LoginInput, meta: SessionMeta = {}) {
   // emailed to their registered address. First call (no code) emails one and
   // raises an `email_otp_required` challenge; the client resubmits with the
   // code. Admin can disable globally via security_require_login_otp.
-  if (user.email && (await loginOtpRequired())) {
+  if ((user.email || user.phone) && (await loginOtpRequired())) {
     if (!input.email_otp) {
-      const { delivered, dev_code } = await issueLoginOtp(user.id, user.email);
-      throw new ApiError(401, 'email_otp_required', 'A verification code was sent to your email.', {
-        email_masked: maskEmail(user.email),
+      const { delivered, destination, dev_code } = await issueLoginOtp(user.id, { email: user.email, phone: user.phone });
+      // Don't leave the member staring at a code that was never sent: when no
+      // channel could deliver it, say so plainly instead of claiming success.
+      if (!delivered && env.isProd) {
+        throw new ApiError(503, 'otp_delivery_failed',
+          'We could not send your login code right now. Please try again shortly or contact support.',
+          { destination });
+      }
+      throw new ApiError(401, 'email_otp_required', `A verification code was sent to ${destination}.`, {
+        email_masked: user.email ? maskEmail(user.email) : undefined,
+        destination,
         delivered,
         ...(dev_code ? { dev_code } : {}),
       });
