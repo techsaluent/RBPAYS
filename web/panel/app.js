@@ -1100,6 +1100,12 @@ const Screens = {
           <button class="btn sm" onclick="Actions.aadhaarVerifyOtpNow()">Verify OTP</button>
         </div>
         <div id="va_out" class="muted" style="font-size:12px;margin-top:6px"></div>
+        <div class="sechead" style="margin-top:14px">GSTIN (business)</div>
+        <div class="row" style="gap:8px;align-items:end">
+          <div class="field" style="margin:0;flex:1"><label>GSTIN (15 char)</label><input id="vg_num" maxlength="15" placeholder="27AAPFU0939F1ZV" style="text-transform:uppercase"></div>
+          <button class="btn sm" onclick="Actions.verifyGstinNow()">Verify GSTIN</button>
+        </div>
+        <div id="vg_out" class="muted" style="font-size:12px;margin-top:6px"></div>
       </div>
       <div class="panel mt" style="max-width:520px"><h2>Submit a document</h2>
         <div class="field"><label>Document type</label>
@@ -5192,6 +5198,23 @@ const Actions = {
       $('va_out').innerHTML = r.verified ? `<span style="color:#12a35a">✅ ${esc(r.message)}</span>` : `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
       if (r.verified) { UI.toast('Aadhaar verified'); setTimeout(() => App.route(), 900); }
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async verifyGstinNow() {
+    const gstin = (val('vg_num')||'').toUpperCase().replace(/\s+/g,'');
+    if (gstin.length !== 15) return UI.toast('Enter a 15-character GSTIN', 'err');
+    $('vg_out').textContent = 'Checking…';
+    try {
+      const r = await Api.post('/kyc/verify/gstin', { gstin });
+      if (r.valid) {
+        const extra = [r.state && ('State: ' + r.state), r.pan && ('PAN: ' + r.pan),
+          r.legal_name && ('Legal name: ' + r.legal_name), r.status && ('Status: ' + r.status)]
+          .filter(Boolean).map(esc).join(' · ');
+        $('vg_out').innerHTML = `<span style="color:#12a35a">✅ ${esc(r.message)}</span>${extra?'<br>'+extra:''}`;
+        UI.toast('GSTIN verified'); setTimeout(() => App.route(), 1100);
+      } else {
+        $('vg_out').innerHTML = `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
+      }
+    } catch (err) { $('vg_out').textContent = ''; UI.toast(err.message, 'err'); }
   },
   async toggleService(code, enabled) {
     try { await Api.patch(`/admin/services/${code}`, { enabled }); App.route(); }

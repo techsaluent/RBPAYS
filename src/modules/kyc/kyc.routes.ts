@@ -8,7 +8,7 @@ import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
 import { query, withTransaction } from '../../../db';
 import { notifyKyc } from '../notify/alerts';
-import { verifyPan, aadhaarSendOtp, aadhaarVerifyOtp } from './verify.service';
+import { verifyPan, aadhaarSendOtp, aadhaarVerifyOtp, verifyGstin } from './verify.service';
 import { reviewKycDocument, kycAiReviewEnabled } from './kyc-ai.service';
 import { logger } from '../../config/logger';
 
@@ -99,6 +99,24 @@ router.post(
     const result = await aadhaarVerifyOtp(b.aadhaar, b.ref, b.otp);
     if (result.verified) {
       const status = await recordVerified(req.user.id, 'aadhaar', b.aadhaar.slice(0, 4) + 'XXXX' + b.aadhaar.slice(-4));
+      if (status === 'verified') void notifyKyc(req.user.id, 'verified');
+    }
+    res.json(result);
+  }),
+);
+
+const gstinSchema = z.object({ gstin: z.string().trim().min(15).max(20) });
+router.post(
+  '/verify/gstin',
+  validate(gstinSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) throw ApiError.unauthorized();
+    const b = req.body as z.infer<typeof gstinSchema>;
+    const result = await verifyGstin(b.gstin);
+    // Record the GST document only when it is structurally genuine (checksum ok).
+    // A live-verified "active" status is recorded with the legal name as remarks.
+    if (result.valid && result.gstin) {
+      const status = await recordVerified(req.user.id, 'gst', result.gstin);
       if (status === 'verified') void notifyKyc(req.user.id, 'verified');
     }
     res.json(result);
