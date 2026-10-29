@@ -32,6 +32,9 @@ export const signupSchema = z.object({
   otp: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit OTP').optional(),
   // Optional referral code (Refer & Earn).
   ref: z.string().trim().max(16).optional(),
+  // Human-verification (math captcha) — required when security_require_captcha is on.
+  captcha_token: z.string().trim().max(300).optional(),
+  captcha_answer: z.string().trim().max(12).optional(),
 });
 
 // Step 1 of OTP signup: request a code for a mobile (email optional).
@@ -52,6 +55,9 @@ export const loginSchema = z.object({
   // (site setting security_require_login_otp); supplied on the second step after
   // the emailed code is received.
   email_otp: z.string().trim().regex(/^\d{6}$/).optional(),
+  // Human-verification (math captcha) — required when security_require_captcha is on.
+  captcha_token: z.string().trim().max(300).optional(),
+  captcha_answer: z.string().trim().max(12).optional(),
 });
 
 export const enableTotpSchema = z.object({

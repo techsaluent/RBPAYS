@@ -9,6 +9,7 @@ const router = Router();
 
 router.post('/signup/request-otp', validate(requestSignupOtpSchema), asyncHandler(controller.requestSignupOtp));
 router.post('/signup', validate(signupSchema), asyncHandler(controller.signup));
+router.get('/captcha', asyncHandler(controller.captcha));
 router.post('/login', validate(loginSchema), asyncHandler(controller.login));
 router.post('/refresh', validate(refreshSchema), asyncHandler(controller.refresh));
 router.post('/logout', validate(refreshSchema), asyncHandler(controller.logout));

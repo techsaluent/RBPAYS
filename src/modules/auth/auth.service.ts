@@ -14,6 +14,7 @@ import { generateTotpSecret, otpauthUri, verifyTotp } from '../../utils/totp';
 import { dispatch } from '../notify/notify.service';
 import { generateReferralCode, resolveReferrer, linkReferral } from '../rewards/referral.service';
 import { LoginInput, SignupInput } from './auth.schemas';
+import { captchaRequired, verifyCaptcha } from './captcha.service';
 
 export interface PublicUser {
   id: string;
@@ -146,6 +147,12 @@ async function consumeSignupOtp(client: PoolClient, phone: string, code?: string
 }
 
 export async function signup(input: SignupInput) {
+  // Human verification (bot throttle) before creating anything, when enabled.
+  if (await captchaRequired()) {
+    if (!verifyCaptcha(input.captcha_token, input.captcha_answer)) {
+      throw new ApiError(400, 'captcha_required', 'Please solve the verification question.');
+    }
+  }
   const password_hash = await hashPassword(input.password);
 
   return withTransaction(async (client) => {
@@ -365,6 +372,13 @@ export async function consumeLoginOtp(userId: string, code: string): Promise<boo
 export async function login(input: LoginInput, meta: SessionMeta = {}) {
   const identifier = input.identifier.trim();
   await assertNotLockedOut(identifier);
+
+  // Human verification (bot throttle) before any credential work, when enabled.
+  if (await captchaRequired()) {
+    if (!verifyCaptcha(input.captcha_token, input.captcha_answer)) {
+      throw new ApiError(400, 'captcha_required', 'Please solve the verification question.');
+    }
+  }
 
   const { rows } = await query<UserRow>(
     `SELECT ${PUBLIC_COLUMNS}, password_hash, mpin_hash, totp_secret, totp_enabled

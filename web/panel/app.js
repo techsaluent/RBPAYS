@@ -150,6 +150,7 @@ const Auth = {
     if (f.mpin && f.mpin.value.trim()) body.mpin = f.mpin.value.trim();
     if (f.totp && f.totp.value.trim()) body.totp = f.totp.value.trim();
     if (f.email_otp && f.email_otp.value.trim()) body.email_otp = f.email_otp.value.trim();
+    if (f.captcha_answer && f.captcha_answer.value.trim()) { body.captcha_answer = f.captcha_answer.value.trim(); if (Auth._captchaToken) body.captcha_token = Auth._captchaToken; }
     try {
       const d = await Api.post('/auth/login', body, false);
       // Keep the two portals separate: the admin console (super admin + staff)
@@ -185,6 +186,9 @@ const Auth = {
         if (d.dev_code) hint += ` (Test code: ${d.dev_code})`;
         $('emailotp-hint').textContent = hint;
         UI.authMsg('Enter the verification code we emailed you.', 'ok');
+      } else if (err.code === 'captcha_required') {
+        await Auth.showCaptcha();
+        UI.authMsg('Please solve the verification question, then log in.', 'ok');
       } else if (err.code === 'account_locked') {
         UI.authMsg(err.message, 'err');
       } else { UI.authMsg(err.message, 'err'); }
@@ -228,11 +232,26 @@ const Auth = {
     if (f.username.value.trim()) body.username = f.username.value.trim();
     if (f.sponsor.value.trim()) body.sponsor = f.sponsor.value.trim();
     if (f.otp && f.otp.value.trim()) body.otp = f.otp.value.trim();
+    if (f.captcha_answer && f.captcha_answer.value.trim()) { body.captcha_answer = f.captcha_answer.value.trim(); if (Auth._captchaToken) body.captcha_token = Auth._captchaToken; }
     try {
       const d = await Api.post('/auth/signup', body, false);
       Auth.save(d); await App.boot();
-    } catch (err) { UI.authMsg(err.message, 'err'); }
+    } catch (err) {
+      if (err.code === 'captcha_required') { await Auth.showCaptcha('su-'); UI.authMsg('Please solve the verification question, then sign up.', 'ok'); }
+      else UI.authMsg(err.message, 'err');
+    }
     return false;
+  },
+  // Fetch a math captcha and reveal the field (prefix '' = login, 'su-' = signup).
+  async showCaptcha(prefix) {
+    prefix = prefix || '';
+    try {
+      const q = await Api.call('/auth/captcha', { auth: false });
+      Auth._captchaToken = q.token;
+      const lbl = $(prefix + 'captcha-q'); if (lbl) lbl.textContent = `Human verification: what is ${q.a} ${q.op} ${q.b}?`;
+      const fld = $(prefix + 'captcha-field');
+      if (fld) { fld.classList.remove('hidden'); const i = fld.querySelector('input'); if (i) { i.value = ''; i.focus(); } }
+    } catch (e) { /* captcha endpoint unavailable — leave as-is */ }
   },
   save(d) {
     State.token = d.access_token; State.refresh = d.refresh_token; State.user = d.user;
@@ -2395,6 +2414,8 @@ const Screens = {
         <p class="muted">When on, new users must verify with a 6-digit OTP before their account is created. The code is sent over <b>every active channel</b> — SMS, WhatsApp and Email — so verify by mobile or inbox; enable the relevant gateways in <a href="#/integrations">Integrations</a> first. Admin-created accounts never need an OTP.</p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_login_otp" ${s.security_require_login_otp==='true'?'checked':''}> Require email OTP at login (two-factor)</label></div>
         <p class="muted">⚠️ Turn this on <b>only after</b> the <b>Email</b> provider is set and a <b>Send test</b> email arrives (<a href="#/integrations">API Hub → Email</a>) — otherwise members (and you) can't get the code and can't log in. <b>Off by default.</b></p>
+        <div class="field"><label><input type="checkbox" id="ws_security_require_captcha" ${s.security_require_captcha==='true'?'checked':''}> Human verification (math captcha) at login &amp; sign-up</label></div>
+        <p class="muted">A simple arithmetic question blocks automated bots. No external service or key needed — it works immediately. Safe to leave on. <b>Off by default.</b></p>
         ${field('security_otp_bypass_code','OTP bypass code (break-glass — blank = off)','leave blank to disable')}
         <p class="muted">⚠️ <b>Break-glass only.</b> When set, entering exactly this code at sign-up skips OTP — useful for QA, app-store review or support. Anyone who knows it bypasses verification, so keep it secret and clear it when done. It is never exposed on the public site.</p>
         <div class="field"><label><input type="checkbox" id="ws_security_require_kyc" ${s.security_require_kyc==='true'?'checked':''}> Require KYC verification before a member can transact</label></div>
@@ -4591,6 +4612,7 @@ const Actions = {
     if ($('ws_kyc_ai_review')) values['kyc_ai_review'] = $('ws_kyc_ai_review').checked ? 'true' : 'false';
     values['security_require_signup_otp'] = $('ws_security_require_signup_otp').checked ? 'true' : 'false';
     values['security_require_login_otp'] = $('ws_security_require_login_otp').checked ? 'true' : 'false';
+    if ($('ws_security_require_captcha')) values['security_require_captcha'] = $('ws_security_require_captcha').checked ? 'true' : 'false';
     values['security_require_kyc'] = $('ws_security_require_kyc').checked ? 'true' : 'false';
     values['notify_txn_sms'] = $('ws_notify_txn_sms').checked ? 'true' : 'false';
     values['notify_low_balance'] = $('ws_notify_low_balance').checked ? 'true' : 'false';

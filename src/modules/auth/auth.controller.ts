@@ -19,6 +19,11 @@ export async function login(req: Request, res: Response): Promise<void> {
   res.status(200).json(result);
 }
 
+export async function captcha(_req: Request, res: Response): Promise<void> {
+  const { issueCaptcha } = await import('./captcha.service');
+  res.json(issueCaptcha());
+}
+
 export async function refresh(req: Request, res: Response): Promise<void> {
   const result = await authService.refresh(req.body.refresh_token);
   res.status(200).json(result);
