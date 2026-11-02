@@ -13,6 +13,7 @@ import { validate } from '../../middleware/validate';
 import { env } from '../../config/env';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { ApiError } from '../../utils/ApiError';
+import { encryptSecret, decryptSecret, encryptionEnabled, isEncrypted } from '../../utils/secretCrypto';
 import { query, withTransaction } from '../../../db';
 import { rupeesToPaise, bigintToNumber, paiseToRupees } from '../../utils/money';
 import { debit, credit, freezeWallet, unfreezeWallet, recoverChargeback, getWalletByUser } from '../wallet/wallet.service';
@@ -1164,6 +1165,65 @@ router.post(
 );
 
 // ---------------------------------------------------------------------
+// Secrets-at-rest encryption: status + one-time re-encrypt migration.
+// ---------------------------------------------------------------------
+router.get(
+  '/security/encryption',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const sp = await query<{ total: string; enc: string }>(
+      `SELECT COUNT(*) FILTER (WHERE COALESCE(api_key,api_secret,auth_token) IS NOT NULL) AS total,
+              COUNT(*) FILTER (WHERE api_key LIKE 'enc:v1:%' OR api_secret LIKE 'enc:v1:%' OR auth_token LIKE 'enc:v1:%') AS enc
+         FROM service_providers`,
+    );
+    const pi = await query<{ total: string; enc: string }>(
+      `SELECT COUNT(*) FILTER (WHERE COALESCE(api_key,api_secret) IS NOT NULL) AS total,
+              COUNT(*) FILTER (WHERE api_key LIKE 'enc:v1:%' OR api_secret LIKE 'enc:v1:%') AS enc
+         FROM platform_integrations`,
+    );
+    res.json({
+      key_configured: encryptionEnabled(),
+      providers: { with_secrets: Number(sp.rows[0].total), encrypted: Number(sp.rows[0].enc) },
+      integrations: { with_secrets: Number(pi.rows[0].total), encrypted: Number(pi.rows[0].enc) },
+    });
+  }),
+);
+
+// Encrypt any remaining plaintext secrets in place (idempotent — skips rows
+// already encrypted). Requires a configured key.
+router.post(
+  '/security/encrypt-secrets',
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!encryptionEnabled()) {
+      throw ApiError.unprocessable('No encryption key configured. Set DATA_ENC_KEY (32 bytes as 64 hex chars or base64) in the server environment and restart, then retry.');
+    }
+    let providers = 0;
+    let integrations = 0;
+    await withTransaction(async (client) => {
+      const sp = await client.query<{ id: string; api_key: string | null; api_secret: string | null; auth_token: string | null }>(
+        'SELECT id, api_key, api_secret, auth_token FROM service_providers');
+      for (const r of sp.rows) {
+        if (![r.api_key, r.api_secret, r.auth_token].some((v) => v && !isEncrypted(v))) continue;
+        await client.query('UPDATE service_providers SET api_key=$1, api_secret=$2, auth_token=$3 WHERE id=$4',
+          [encryptSecret(r.api_key), encryptSecret(r.api_secret), encryptSecret(r.auth_token), r.id]);
+        providers++;
+      }
+      const pi = await client.query<{ key: string; api_key: string | null; api_secret: string | null }>(
+        'SELECT key, api_key, api_secret FROM platform_integrations');
+      for (const r of pi.rows) {
+        if (![r.api_key, r.api_secret].some((v) => v && !isEncrypted(v))) continue;
+        await client.query('UPDATE platform_integrations SET api_key=$1, api_secret=$2 WHERE key=$3',
+          [encryptSecret(r.api_key), encryptSecret(r.api_secret), r.key]);
+        integrations++;
+      }
+    });
+    await refreshProviderRegistry();
+    await logAudit({ actorId: req.user!.id, actorRole: req.user!.role, action: 'security.encrypt_secrets',
+      targetType: 'secrets', targetId: 'all', detail: { providers, integrations } });
+    res.json({ providers_encrypted: providers, integrations_encrypted: integrations });
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Commission plans + rules
 // ---------------------------------------------------------------------
 router.get(
@@ -2129,7 +2189,7 @@ router.put(
          is_active = COALESCE($10, platform_integrations.is_active)
        RETURNING key, label, category, provider, base_url, sender_id, is_active, updated_at`,
       [req.params.key, b.label ?? null, b.category ?? null, b.provider ?? null, b.base_url ?? null,
-       b.api_key ?? null, b.api_secret ?? null, b.sender_id ?? null,
+       encryptSecret(b.api_key) ?? null, encryptSecret(b.api_secret) ?? null, b.sender_id ?? null,
        b.extra === undefined ? null : JSON.stringify(b.extra), b.is_active ?? null],
     );
     res.json({ integration: rows[0] });
@@ -2177,7 +2237,7 @@ router.post(
         "SELECT api_key, is_active, extra FROM platform_integrations WHERE key = 'telegram'",
       );
       const r = rows[0];
-      const token = (r?.api_key || '').trim();
+      const token = (decryptSecret(r?.api_key) || '').trim();
       const chatId = String((r?.extra?.chat_id as string) || '').trim();
       const missing: string[] = [];
       if (!token) missing.push('Bot token (API key)');
@@ -2953,8 +3013,8 @@ router.post(
         `INSERT INTO service_providers
            (service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, webhook_secret, extra, is_active, priority)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-        [code, b.label, b.driver, b.base_url ?? null, b.api_key ?? null, b.api_secret ?? null,
-         b.auth_token ?? null, b.partner_id ?? null, b.webhook_secret ?? null, JSON.stringify(b.extra ?? {}), b.is_active, b.priority],
+        [code, b.label, b.driver, b.base_url ?? null, encryptSecret(b.api_key) ?? null, encryptSecret(b.api_secret) ?? null,
+         encryptSecret(b.auth_token) ?? null, b.partner_id ?? null, b.webhook_secret ?? null, JSON.stringify(b.extra ?? {}), b.is_active, b.priority],
       );
       return rows[0];
     });
@@ -2991,8 +3051,8 @@ router.patch(
             is_active = COALESCE($9,is_active), priority = COALESCE($10,priority),
             webhook_secret = COALESCE($12,webhook_secret)
           WHERE id = $11 RETURNING *`,
-        [b.label ?? null, b.driver ?? null, b.base_url ?? null, b.api_key ?? null,
-         b.api_secret ?? null, b.auth_token ?? null, b.partner_id ?? null,
+        [b.label ?? null, b.driver ?? null, b.base_url ?? null, encryptSecret(b.api_key) ?? null,
+         encryptSecret(b.api_secret) ?? null, encryptSecret(b.auth_token) ?? null, b.partner_id ?? null,
          b.extra === undefined ? null : JSON.stringify(b.extra),
          b.is_active ?? null, b.priority ?? null, req.params.id, b.webhook_secret ?? null],
       );
@@ -3106,8 +3166,8 @@ router.post(
           `INSERT INTO service_providers
              (service_code, label, driver, base_url, api_key, api_secret, auth_token, partner_id, extra, is_active, connection_id, connection_label)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [code, b.label, b.driver, b.base_url ?? null, b.api_key ?? null, b.api_secret ?? null,
-           b.auth_token ?? null, b.partner_id ?? null, JSON.stringify(b.extra ?? {}), b.activate, id, b.label],
+          [code, b.label, b.driver, b.base_url ?? null, encryptSecret(b.api_key) ?? null, encryptSecret(b.api_secret) ?? null,
+           encryptSecret(b.auth_token) ?? null, b.partner_id ?? null, JSON.stringify(b.extra ?? {}), b.activate, id, b.label],
         );
       }
       return id;
@@ -3155,7 +3215,7 @@ router.put(
             extra = COALESCE($7, extra),
             updated_at = now()
           WHERE connection_id = $8`,
-        [keep(b.label), keep(b.base_url), keep(b.api_key), keep(b.api_secret), keep(b.auth_token),
+        [keep(b.label), keep(b.base_url), encryptSecret(keep(b.api_key)), encryptSecret(keep(b.api_secret)), encryptSecret(keep(b.auth_token)),
          keep(b.partner_id), b.extra === undefined ? null : JSON.stringify(b.extra), connId],
       );
       if (b.service_codes) {

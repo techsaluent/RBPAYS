@@ -17,7 +17,14 @@ export function createApp() {
   // Behind Nginx/Caddy on the VPS — trust the proxy for correct client IPs.
   app.set('trust proxy', 1);
 
-  app.use(helmet());
+  // Strong transport + header defaults for a financial app. helmet() already
+  // sets nosniff, frameguard, etc.; we extend HSTS to 2 years with preload and
+  // tighten the referrer policy so URLs (which can carry ids) don't leak.
+  app.use(helmet({
+    hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
+    referrerPolicy: { policy: 'no-referrer' },
+    crossOriginResourcePolicy: { policy: 'same-site' },
+  }));
   app.use(
     cors({
       origin: env.CORS_ORIGINS === '*' ? true : env.CORS_ORIGINS.split(',').map((s) => s.trim()),
@@ -54,7 +61,8 @@ export function createApp() {
   // Tighter per-IP limiter on credential endpoints (login / signup-OTP /
   // forgot / reset). Stacks with the per-identifier lockout in auth.service.
   app.use(
-    ['/api/v1/auth/login', '/api/v1/auth/forgot-password', '/api/v1/auth/reset-password', '/api/v1/auth/signup/request-otp'],
+    ['/api/v1/auth/login', '/api/v1/auth/forgot-password', '/api/v1/auth/reset-password', '/api/v1/auth/signup/request-otp',
+     '/api/v1/auth/passkey/login/options', '/api/v1/auth/passkey/login/verify'],
     rateLimit({
       windowMs: 15 * 60_000,
       max: 30,

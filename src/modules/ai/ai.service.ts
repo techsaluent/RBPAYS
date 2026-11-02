@@ -1,6 +1,7 @@
 import { query } from '../../../db';
 import { httpJson } from '../../providers/http';
 import { logger } from '../../config/logger';
+import { decryptSecret } from '../../utils/secretCrypto';
 
 /**
  * AI integration assistant.
@@ -36,7 +37,7 @@ async function aiConfig(): Promise<AiConfig | null> {
   const mode = (r.extra && r.extra.mode === 'n8n' ? 'n8n' : 'openai') as AiConfig['mode'];
   if (mode === 'openai' && !r.api_key) return null; // a direct model needs a key
   const model = (r.extra && typeof r.extra.model === 'string' && r.extra.model) || 'gpt-4o-mini';
-  return { mode, baseUrl: r.base_url.replace(/\/+$/, ''), apiKey: r.api_key ?? '', model };
+  return { mode, baseUrl: r.base_url.replace(/\/+$/, ''), apiKey: decryptSecret(r.api_key) ?? '', model };
 }
 
 /** Low-level chat call to an OpenAI-compatible /chat/completions endpoint. */

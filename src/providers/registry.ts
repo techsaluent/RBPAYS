@@ -1,5 +1,6 @@
 import { query } from '../../db';
 import { logger } from '../config/logger';
+import { decryptSecret } from '../utils/secretCrypto';
 
 /**
  * Active-provider registry.
@@ -61,9 +62,9 @@ export async function refreshProviderRegistry(): Promise<void> {
         priority: r.priority ?? 0,
         driver: r.driver,
         baseUrl: r.base_url ?? '',
-        apiKey: r.api_key ?? '',
-        apiSecret: r.api_secret ?? '',
-        authToken: r.auth_token ?? '',
+        apiKey: decryptSecret(r.api_key) ?? '',
+        apiSecret: decryptSecret(r.api_secret) ?? '',
+        authToken: decryptSecret(r.auth_token) ?? '',
         partnerId: r.partner_id ?? '',
         extra: r.extra ?? {},
       };

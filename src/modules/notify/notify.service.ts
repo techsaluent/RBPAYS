@@ -2,6 +2,7 @@ import { query } from '../../../db';
 import nodemailer from 'nodemailer';
 import { httpJson } from '../../providers/http';
 import { logger } from '../../config/logger';
+import { decryptSecret } from '../../utils/secretCrypto';
 
 /**
  * Outbound messaging through the super-admin's configured integrations.
@@ -44,7 +45,7 @@ async function integrationConfig(keys: string[]): Promise<MessagingConfig | null
   if (!r) return null;
   return {
     key: r.key, provider: r.provider, baseUrl: r.base_url,
-    apiKey: r.api_key, apiSecret: r.api_secret, senderId: r.sender_id, extra: r.extra ?? {},
+    apiKey: decryptSecret(r.api_key), apiSecret: decryptSecret(r.api_secret), senderId: r.sender_id, extra: r.extra ?? {},
   };
 }
 
@@ -154,13 +155,15 @@ export async function validateEmailConfig(): Promise<{
   if (!r) return { ok: false, active: false, provider: null, missing: ['the email integration row'], user_set: false, pass_set: false };
 
   const extra = r.extra ?? {};
+  const apiKey = decryptSecret(r.api_key);
+  const apiSecret = decryptSecret(r.api_secret);
   const isSmtp = (r.provider || '').toLowerCase() === 'smtp' || String(extra.transport || '').toLowerCase() === 'smtp';
   const host = String((extra.smtp_host as string) || r.base_url || '').trim();
   const port = Number(extra.smtp_port) || 587;
   const secure = extra.smtp_secure === true || extra.smtp_secure === 'true' || port === 465;
-  const from = r.sender_id || r.api_key || '';
-  const userSet = !!(r.api_key && r.api_key.trim());
-  const passSet = !!(r.api_secret && r.api_secret.trim());
+  const from = r.sender_id || apiKey || '';
+  const userSet = !!(apiKey && apiKey.trim());
+  const passSet = !!(apiSecret && apiSecret.trim());
 
   const missing: string[] = [];
   if (!isSmtp && !r.base_url) missing.push('Base URL (API endpoint)');
@@ -176,7 +179,7 @@ export async function validateEmailConfig(): Promise<{
   // For SMTP, actually connect + authenticate.
   if (isSmtp) {
     try {
-      const transporter = nodemailer.createTransport({ host, port, secure, auth: { user: r.api_key as string, pass: (r.api_secret as string) || '' }, connectionTimeout: 12000 });
+      const transporter = nodemailer.createTransport({ host, port, secure, auth: { user: apiKey as string, pass: (apiSecret as string) || '' }, connectionTimeout: 12000 });
       await transporter.verify();
     } catch (err) {
       return { ok: false, error: (err as Error).message, ...base };

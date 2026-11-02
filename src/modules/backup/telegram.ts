@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { basename } from 'path';
 import { query } from '../../../db';
 import { logger } from '../../config/logger';
+import { decryptSecret } from '../../utils/secretCrypto';
 
 /**
  * Minimal Telegram Bot API client for disaster-recovery backups + alerts.
@@ -18,7 +19,7 @@ export async function telegramConfig(): Promise<TelegramConfig | null> {
     "SELECT api_key, extra FROM platform_integrations WHERE key = 'telegram' AND is_active = true",
   );
   const r = rows[0];
-  const token = (r?.api_key || '').trim();
+  const token = (decryptSecret(r?.api_key) || '').trim();
   const chatId = String((r?.extra?.chat_id as string) || (r?.extra?.chatId as string) || '').trim();
   if (!token || !chatId) return null;
   return { token, chatId };

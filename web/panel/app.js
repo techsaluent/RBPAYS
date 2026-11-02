@@ -1761,7 +1761,10 @@ const Screens = {
   // Go-Live cockpit: one view of what's configured vs missing for retailers
   // to transact, with jump-links to fix each gap.
   async golive() {
-    const r = await Api.get('/admin/readiness');
+    const [r, enc] = await Promise.all([
+      Api.get('/admin/readiness'),
+      Api.get('/admin/security/encryption').catch(() => null),
+    ]);
     const dot = (ok, warn) => ok ? '<span style="color:#12a35a">●</span>' : warn ? '<span style="color:#b8860b">●</span>' : '<span style="color:#c5342b">●</span>';
     const yn = (ok) => ok ? '<span class="tag active">yes</span>' : '<span class="tag blocked">no</span>';
     const su = r.summary;
@@ -1803,6 +1806,18 @@ const Screens = {
         </tbody></table>
         <p class="muted" style="font-size:12px">Configure these under <a href="#/integrations">API Hub</a>. At least one OTP channel is needed for login/sign-up OTP.</p>
       </div>
+      ${enc ? `<div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">🔒 Encryption at rest</h3>
+        ${enc.key_configured ? '<span class="tag active">key set</span>' : '<span class="tag blocked">no key</span>'}</div>
+        <p class="muted" style="font-size:12px">Provider &amp; integration secrets (API secrets, SMTP passwords, bot tokens) are encrypted in the database with AES-256-GCM, so a database dump never exposes them.</p>
+        <table style="max-width:460px"><tbody>
+          <tr><td>Provider credentials encrypted</td><td class="right"><b>${enc.providers.encrypted}/${enc.providers.with_secrets}</b></td></tr>
+          <tr><td>Integration credentials encrypted</td><td class="right"><b>${enc.integrations.encrypted}/${enc.integrations.with_secrets}</b></td></tr>
+        </tbody></table>
+        ${enc.key_configured
+          ? `<button class="btn sm mt" onclick="Actions.encryptSecretsNow()">Encrypt all remaining secrets</button>`
+          : `<p class="msg" style="background:#fef7e0;color:#b06000;font-size:12px;padding:8px 10px;border-radius:8px">Set <code>DATA_ENC_KEY</code> (32 bytes as 64 hex chars or base64) in the server environment and restart, then return here and click Encrypt. New secrets you save after that are encrypted automatically.</p>`}
+      </div>` : ''}
       <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
         <h3 style="margin:0">Services (${su.ready}/${su.total} ready)</h3>
         <div class="row" style="gap:8px">
@@ -5467,6 +5482,14 @@ const Actions = {
     if (!confirm('Switch ON every service? Each still needs an active provider to actually transact.')) return;
     try { const r = await Api.post('/admin/services/enable-all', {}); UI.toast(`Enabled ${r.enabled_count} service(s)`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async encryptSecretsNow() {
+    if (!confirm('Encrypt all remaining plaintext secrets now? Safe to run anytime — already-encrypted values are skipped.')) return;
+    try {
+      const r = await Api.post('/admin/security/encrypt-secrets', {});
+      UI.toast(`Encrypted ${r.providers_encrypted} provider + ${r.integrations_encrypted} integration secret(s)`);
+      App.route();
+    } catch (err) { UI.toast(err.message, 'err'); }
   },
   async sandboxAll() {
     if (!confirm('Attach the built-in Sandbox (test) provider to every service that has no active provider? This makes the whole platform testable immediately. Replace with a real provider before going live.')) return;
