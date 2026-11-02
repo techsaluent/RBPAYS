@@ -418,6 +418,7 @@ const NAV = [
   { key: 'profile', label: 'Profile', roles: '*' },
   { key: 'security', label: 'Security', roles: '*' },
   // Admin console — grouped into sidebar sections; each maps to a staff permission.
+  { key: 'golive', label: '🚀 Go-Live Readiness', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'Go-Live' },
   { key: 'analytics', label: '📊 Analytics', roles: ['admin', 'staff'], section: 'Users & KYC' },
   { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review', section: 'Users & KYC' },
@@ -1731,6 +1732,57 @@ const Screens = {
         <button class="btn sm" onclick="Actions.addRule('${sel}')">+ Add rule</button></div>
       <div class="tbl-wrap mt"><table><thead><tr><th>Service</th><th>Slab</th><th>Charge</th><th>Commission (R/D/MD/A)</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=5 class=muted>No rules — add one so commissions apply</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Go-Live cockpit: one view of what's configured vs missing for retailers
+  // to transact, with jump-links to fix each gap.
+  async golive() {
+    const r = await Api.get('/admin/readiness');
+    const dot = (ok, warn) => ok ? '<span style="color:#12a35a">●</span>' : warn ? '<span style="color:#b8860b">●</span>' : '<span style="color:#c5342b">●</span>';
+    const yn = (ok) => ok ? '<span class="tag active">yes</span>' : '<span class="tag blocked">no</span>';
+    const su = r.summary;
+    const svcRows = r.services.map(s => `<tr>
+      <td>${dot(s.ready, s.enabled && !s.has_provider)} ${esc(s.name)} <span class="muted" style="font-size:11px">${esc(s.code)}</span></td>
+      <td>${s.enabled ? '<span class="tag active">on</span>' : '<span class="tag blocked">off</span>'}</td>
+      <td>${s.has_provider ? '<span class="tag active">linked</span>' : '<span class="tag blocked">none</span>'}</td>
+      <td>${s.ready ? '<b style="color:#12a35a">Ready</b>' : s.enabled ? '<span style="color:#b8860b">Needs a provider</span>' : '<span class="muted">Off</span>'}</td>
+      <td><button class="btn sm ghost" onclick="location.hash='#/providers';Actions._provService='${s.code}'">Providers</button></td>
+    </tr>`).join('');
+    const overall = r.overall_ready
+      ? '<span class="tag active" style="font-size:14px">✅ Ready to transact</span>'
+      : '<span class="tag blocked" style="font-size:14px">⚠️ Not fully ready</span>';
+    $('view').innerHTML = `
+      <div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">🚀 Go-Live Readiness</h2>${overall}</div>
+        <p class="muted">What's configured vs missing before retailers can transact. A service is <b>Ready</b> only when it's switched on <i>and</i> has an active provider linked.</p>
+        <div class="grid cards">
+          <div class="card"><div class="k">Services ready</div><div class="v">${su.ready} / ${su.total}</div>
+            <div class="muted" style="font-size:12px">${su.enabled} on · ${su.with_provider} with a provider</div></div>
+          <div class="card"><div class="k">Provider connections</div><div class="v">${r.provider_connections}</div>
+            <div class="muted" style="font-size:12px"><a href="#/providerconnections">Manage →</a></div></div>
+          <div class="card"><div class="k">Retailers</div><div class="v">${r.members.retailers}</div>
+            <div class="muted" style="font-size:12px">${r.members.kyc_verified} KYC-verified · ${r.members.funded} funded</div></div>
+        </div>
+      </div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">Delivery & KYC</h3></div>
+        <table style="max-width:420px"><tbody>
+          <tr><td>${dot(r.messaging.email||r.messaging.sms||r.messaging.whatsapp)} OTP delivery (Email / SMS / WhatsApp)</td>
+            <td class="right">${yn(r.messaging.email||r.messaging.sms||r.messaging.whatsapp)}</td></tr>
+          <tr><td style="padding-left:18px" class="muted">· Email ${yn(r.messaging.email)} · SMS ${yn(r.messaging.sms)} · WhatsApp ${yn(r.messaging.whatsapp)}</td><td></td></tr>
+          <tr><td>${dot(r.kyc)} KYC verification provider</td><td class="right">${yn(r.kyc)}</td></tr>
+        </tbody></table>
+        <p class="muted" style="font-size:12px">Configure these under <a href="#/integrations">API Hub</a>. At least one OTP channel is needed for login/sign-up OTP.</p>
+      </div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">Services (${su.ready}/${su.total} ready)</h3>
+        <div class="row" style="gap:8px">
+          <button class="btn sm" onclick="Actions.enableAllServices()">Enable all services</button>
+          <a class="btn sm ghost" href="#/providerconnections">Link a provider to many services →</a></div></div>
+        <div class="tbl-wrap"><table><thead><tr><th>Service</th><th>On</th><th>Provider</th><th>Status</th><th></th></tr></thead>
+        <tbody>${svcRows}</tbody></table></div>
+        <p class="muted" style="font-size:12px">“Enable all” only switches services on — each still needs an active provider to transact. Use <a href="#/providerconnections">Provider Connections</a> to link one credential to many services at once.</p>
+      </div>`;
   },
 
   async adminservices() {
@@ -5379,6 +5431,11 @@ const Actions = {
   },
   async toggleService(code, enabled) {
     try { await Api.patch(`/admin/services/${code}`, { enabled }); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async enableAllServices() {
+    if (!confirm('Switch ON every service? Each still needs an active provider to actually transact.')) return;
+    try { const r = await Api.post('/admin/services/enable-all', {}); UI.toast(`Enabled ${r.enabled_count} service(s)`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
   setServiceLimits(code, minPaise, maxRupees) {

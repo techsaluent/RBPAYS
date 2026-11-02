@@ -1053,6 +1053,79 @@ router.patch(
 );
 
 // ---------------------------------------------------------------------
+// Go-Live readiness: a single cockpit view of what's configured vs missing
+// to let retailers transact — per-service provider wiring, messaging/KYC
+// integrations, and the retailer base.
+// ---------------------------------------------------------------------
+router.get(
+  '/readiness',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const svc = await query<{ code: string; name: string; enabled: boolean; has_provider: boolean }>(
+      `SELECT s.code, s.name, s.enabled,
+              EXISTS(SELECT 1 FROM service_providers sp
+                      WHERE sp.service_code = s.code AND sp.is_active) AS has_provider
+         FROM services s ORDER BY s.name`,
+    );
+    const services = svc.rows.map((s) => ({ ...s, ready: s.enabled && s.has_provider }));
+
+    const integ = await query<{ key: string; is_active: boolean }>(
+      `SELECT key, is_active FROM platform_integrations
+        WHERE key = ANY($1)`,
+      [['email', 'sms', 'otp', 'whatsapp', 'pan', 'pan_nsdl', 'aadhaar', 'aadhaar_kyc', 'verification']],
+    );
+    const active = (keys: string[]) => integ.rows.some((r) => r.is_active && keys.includes(r.key));
+
+    const conns = await query<{ n: string }>(
+      `SELECT COUNT(DISTINCT connection_id) AS n FROM service_providers WHERE connection_id IS NOT NULL AND is_active`,
+    );
+    const mem = await query<{ retailers: string; kyc_verified: string; funded: string }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE u.role = 'retailer') AS retailers,
+         COUNT(*) FILTER (WHERE u.role = 'retailer' AND u.kyc_status = 'verified') AS kyc_verified,
+         COUNT(*) FILTER (WHERE u.role = 'retailer' AND w.balance_paise > 0) AS funded
+       FROM users u LEFT JOIN wallets w ON w.user_id = u.id`,
+    );
+    const m = mem.rows[0] || { retailers: '0', kyc_verified: '0', funded: '0' };
+
+    const readyServices = services.filter((s) => s.ready).length;
+    const messaging = { email: active(['email']), sms: active(['sms', 'otp']), whatsapp: active(['whatsapp']) };
+    const kyc = active(['pan', 'pan_nsdl', 'aadhaar', 'aadhaar_kyc', 'verification']);
+    const overall_ready = readyServices > 0 && (messaging.email || messaging.sms || messaging.whatsapp);
+
+    res.json({
+      services,
+      summary: {
+        total: services.length,
+        enabled: services.filter((s) => s.enabled).length,
+        with_provider: services.filter((s) => s.has_provider).length,
+        ready: readyServices,
+      },
+      provider_connections: Number(conns.rows[0]?.n || 0),
+      messaging,
+      kyc,
+      members: {
+        retailers: Number(m.retailers),
+        kyc_verified: Number(m.kyc_verified),
+        funded: Number(m.funded),
+      },
+      overall_ready,
+    });
+  }),
+);
+
+// Enable every service in one click (global on). Does not touch provider
+// wiring — a service still needs an active provider to actually transact.
+router.post(
+  '/services/enable-all',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { rowCount } = await query('UPDATE services SET enabled = true WHERE enabled = false');
+    await logAudit({ actorId: req.user!.id, actorRole: req.user!.role, action: 'services.enable_all',
+      targetType: 'services', targetId: 'all', detail: { enabled_count: rowCount } });
+    res.json({ enabled_count: rowCount });
+  }),
+);
+
+// ---------------------------------------------------------------------
 // Commission plans + rules
 // ---------------------------------------------------------------------
 router.get(
