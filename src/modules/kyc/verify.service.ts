@@ -1,6 +1,7 @@
 import { query } from '../../../db';
 import { httpJson } from '../../providers/http';
 import { logger } from '../../config/logger';
+import { decryptSecret } from '../../utils/secretCrypto';
 
 /**
  * Digital KYC verification.
@@ -27,7 +28,7 @@ async function verifyConfigKeys(keys: string[]): Promise<VerifyConfig | null> {
   );
   const r = rows[0];
   if (!r?.base_url) return null;
-  return { baseUrl: r.base_url, apiKey: r.api_key, apiSecret: r.api_secret };
+  return { baseUrl: r.base_url, apiKey: decryptSecret(r.api_key), apiSecret: decryptSecret(r.api_secret) };
 }
 async function verifyConfig(kind: 'pan' | 'aadhaar'): Promise<VerifyConfig | null> {
   // Accept both the short key and the API-Hub slot key (seeded as pan_nsdl /

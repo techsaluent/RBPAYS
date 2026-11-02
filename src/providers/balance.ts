@@ -1,4 +1,5 @@
 import { httpJson } from './http';
+import { decryptSecret } from '../utils/secretCrypto';
 
 /**
  * Uniform "master wallet" balance fetch for any provider connection.
@@ -46,9 +47,11 @@ export async function fetchProviderBalance(row: ProviderBalanceRow): Promise<Bal
   }
   const base = (row.base_url || '').replace(/\/+$/, '');
   const url = String(bc.url || base + String(bc.path));
+  const apiKey = decryptSecret(row.api_key);
+  const apiSecret = decryptSecret(row.api_secret);
   const headers: Record<string, string> = {
-    ...(row.api_key ? { Authorization: `Bearer ${row.api_key}`, 'X-Api-Key': row.api_key, 'client-id': row.api_key } : {}),
-    ...(row.api_secret ? { 'X-Api-Secret': row.api_secret, 'client-secret': row.api_secret } : {}),
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}`, 'X-Api-Key': apiKey, 'client-id': apiKey } : {}),
+    ...(apiSecret ? { 'X-Api-Secret': apiSecret, 'client-secret': apiSecret } : {}),
     ...((bc.headers as Record<string, string>) || {}),
   };
   try {
