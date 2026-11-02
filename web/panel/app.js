@@ -835,6 +835,29 @@ const Screens = {
       const kycBanner = kstat !== 'verified'
         ? `<div class="msg ${kstat === 'rejected' ? 'err' : ''}" style="background:${kstat==='rejected'?'':'#fef7e0'};color:${kstat==='rejected'?'':'#b06000'}">
              🪪 Your KYC is <b>${esc(kstat)}</b> — verify PAN &amp; Aadhaar to lift your limit and unlock AEPS. <a href="#/kyc">Complete KYC →</a></div>` : '';
+      // Activation checklist — guides a new retailer to transaction-ready.
+      // Hidden once KYC is verified AND the wallet is funded.
+      const fundedOk = (w.wallet.balance_paise || 0) > 0;
+      const actStep = (done, cta, title, sub, href) => `
+        <div class="card" style="display:flex;gap:10px;align-items:flex-start">
+          <div style="font-size:18px">${done ? '✅' : '⬜'}</div>
+          <div><div class="k" style="margin:0">${esc(title)}</div>
+            <div class="muted" style="font-size:12px">${sub}</div>
+            ${!done && href ? `<a class="btn sm mt" href="${href}">${esc(cta)}</a>` : ''}</div>
+        </div>`;
+      const doneCount = 1 + (kstat === 'verified' ? 1 : 0) + (fundedOk ? 1 : 0);
+      const activationCard = (kstat === 'verified' && fundedOk) ? '' : `
+        <div class="panel" style="border-left:4px solid var(--accent,#7C3AED)">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <h2 style="margin:0">🚀 Get ready to transact</h2>
+            <span class="muted" style="font-size:12px">${doneCount}/4 steps</span></div>
+          <div class="grid cards">
+            ${actStep(true, '', 'Account created', "You're signed in", '')}
+            ${actStep(kstat === 'verified', 'Verify now', 'Complete KYC', kstat === 'verified' ? 'Verified' : 'PAN, Aadhaar or GSTIN', '#/kyc')}
+            ${actStep(fundedOk, 'Add money', 'Fund your wallet', fundedOk ? money(w.wallet.balance) + ' available' : 'Load money to start', '#/addmoney')}
+            ${actStep(false, 'Start now', 'Run a transaction', 'Recharge, BBPS, DMT, AePS…', '#/new')}
+          </div>
+        </div>`;
       const sw = w.sub_wallets || { settlement: '0.00', commission: '0.00' };
       const s = st || {};
       const wl = w.wallet;
@@ -843,6 +866,7 @@ const Screens = {
       const openDisputes = (dp.items || []).filter(d => ['open','in_review'].includes(d.status)).slice(0, 4);
       $('view').innerHTML = `
         ${kycBanner}
+        ${activationCard}
         <div class="stats">
           ${UI.stat('b','👛','Wallet balance', money(wl.balance), `Available <b>${money(avail)}</b> · Held ${money(held)}`)}
           ${UI.stat('p','💳','Today\'s business', money((s.today_amount_paise||0)/100), `<b>${s.today_count||0}</b> transactions`)}
