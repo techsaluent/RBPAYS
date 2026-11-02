@@ -1763,6 +1763,11 @@ const Screens = {
           <div class="card"><div class="k">Retailers</div><div class="v">${r.members.retailers}</div>
             <div class="muted" style="font-size:12px">${r.members.kyc_verified} KYC-verified · ${r.members.funded} funded</div></div>
         </div>
+        <div class="row" style="gap:8px;margin-top:10px">
+          <button class="btn sm" onclick="Actions.makeDemoRetailer()">🧪 Create ready-to-test retailer</button>
+          <span class="muted" style="font-size:12px;align-self:center">KYC-verified, wallet funded ₹50,000 — log in and run test transactions.</span>
+        </div>
+        <div id="demo_out" style="font-size:12px;margin-top:6px"></div>
       </div>
       <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
         <h3 style="margin:0">Delivery & KYC</h3></div>
@@ -1778,7 +1783,8 @@ const Screens = {
         <h3 style="margin:0">Services (${su.ready}/${su.total} ready)</h3>
         <div class="row" style="gap:8px">
           <button class="btn sm" onclick="Actions.enableAllServices()">Enable all services</button>
-          <a class="btn sm ghost" href="#/providerconnections">Link a provider to many services →</a></div></div>
+          <button class="btn sm ghost" onclick="Actions.sandboxAll()">Add Sandbox to unlinked</button>
+          <a class="btn sm ghost" href="#/providerconnections">Link a real provider →</a></div></div>
         <div class="tbl-wrap"><table><thead><tr><th>Service</th><th>On</th><th>Provider</th><th>Status</th><th></th></tr></thead>
         <tbody>${svcRows}</tbody></table></div>
         <p class="muted" style="font-size:12px">“Enable all” only switches services on — each still needs an active provider to transact. Use <a href="#/providerconnections">Provider Connections</a> to link one credential to many services at once.</p>
@@ -5437,6 +5443,23 @@ const Actions = {
     if (!confirm('Switch ON every service? Each still needs an active provider to actually transact.')) return;
     try { const r = await Api.post('/admin/services/enable-all', {}); UI.toast(`Enabled ${r.enabled_count} service(s)`); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async sandboxAll() {
+    if (!confirm('Attach the built-in Sandbox (test) provider to every service that has no active provider? This makes the whole platform testable immediately. Replace with a real provider before going live.')) return;
+    try { const r = await Api.post('/admin/providers/sandbox-all', {}); UI.toast(`Sandbox added to ${r.added} service(s)`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async makeDemoRetailer() {
+    const out = $('demo_out'); if (out) out.innerHTML = '<span class="muted">Setting up…</span>';
+    try {
+      const r = await Api.post('/admin/demo-retailer', {});
+      if (out) out.innerHTML = `<div class="panel" style="padding:10px;margin-top:4px">
+        <b>${r.created ? '✅ Demo retailer created' : 'ℹ️ Demo retailer ready'}</b> — log in at the main panel:<br>
+        Email: <b>${esc(r.email)}</b> · Phone: <b>${esc(r.phone)}</b> · Password: <b>${esc(r.password)}</b><br>
+        KYC: <b>${esc(r.kyc_status)}</b> · Wallet: <b>${money(r.wallet_rupees)}</b><br>
+        <span class="muted">Tip: in Sandbox, ₹13 → failed, ₹7 → pending, any other amount → success.</span></div>`;
+      UI.toast('Demo retailer ready');
+    } catch (err) { if (out) out.innerHTML = ''; UI.toast(err.message, 'err'); }
   },
   setServiceLimits(code, minPaise, maxRupees) {
     UI.modal(`<h3>Commission limits — ${esc(code)}</h3>

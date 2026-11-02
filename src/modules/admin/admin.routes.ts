@@ -1125,6 +1125,44 @@ router.post(
   }),
 );
 
+// Attach the built-in Sandbox (test) provider to every service that has no
+// active provider — so the whole platform is immediately testable end-to-end.
+// Sandbox routes by amount: ₹13 → failed, ₹7 → pending, else success.
+router.post(
+  '/providers/sandbox-all',
+  asyncHandler(async (req: Request, res: Response) => {
+    const svcs = await query<{ code: string }>(
+      `SELECT code FROM services s
+        WHERE NOT EXISTS (SELECT 1 FROM service_providers sp WHERE sp.service_code = s.code AND sp.is_active)`,
+    );
+    await withTransaction(async (client) => {
+      for (const s of svcs.rows) {
+        await client.query(
+          `INSERT INTO service_providers (service_code, label, driver, extra, is_active, priority)
+           VALUES ($1, 'Sandbox (test)', 'sandbox', '{}'::jsonb, true, 0)`,
+          [s.code],
+        );
+      }
+    });
+    await refreshProviderRegistry();
+    await logAudit({ actorId: req.user!.id, actorRole: req.user!.role, action: 'providers.sandbox_all',
+      targetType: 'service_providers', targetId: 'all', detail: { added: svcs.rowCount } });
+    res.json({ added: svcs.rowCount });
+  }),
+);
+
+// One-click ready-to-test demo retailer (KYC verified + funded wallet).
+router.post(
+  '/demo-retailer',
+  asyncHandler(async (req: Request, res: Response) => {
+    const { ensureDemoRetailer } = await import('./demo.service');
+    const result = await ensureDemoRetailer();
+    await logAudit({ actorId: req.user!.id, actorRole: req.user!.role, action: 'demo.retailer',
+      targetType: 'user', targetId: result.email, detail: { created: result.created } });
+    res.json(result);
+  }),
+);
+
 // ---------------------------------------------------------------------
 // Commission plans + rules
 // ---------------------------------------------------------------------
