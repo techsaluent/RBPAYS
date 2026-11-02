@@ -21,6 +21,7 @@ import insuranceRoutes from './modules/insurance/insurance.routes';
 import loanRoutes from './modules/loan/loan.routes';
 import creditCardRoutes from './modules/credit_card/credit_card.routes';
 import kycRoutes from './modules/kyc/kyc.routes';
+import digilockerRoutes from './modules/kyc/digilocker.routes';
 import taxRoutes from './modules/tax/tax.routes';
 import analyticsRoutes from './modules/analytics/analytics.routes';
 import rewardsRoutes from './modules/rewards/rewards.routes';
@@ -66,6 +67,9 @@ router.use('/loan', loanRoutes);
 router.use('/credit-card', creditCardRoutes);
 router.use('/transactions', transactionRoutes);
 router.use('/kyc', kycRoutes);
+// DigiLocker OAuth lives at its own path: the public callback must not sit
+// behind the KYC router's requireAuth.
+router.use('/digilocker', digilockerRoutes);
 router.use('/tax', taxRoutes);
 router.use('/analytics', analyticsRoutes);
 router.use('/rewards', rewardsRoutes);

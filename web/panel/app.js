@@ -1175,9 +1175,17 @@ const Screens = {
 
   // Member self-service KYC: submit documents and see status.
   async kyc() {
-    const [d, reqs] = await Promise.all([
+    // Surface the DigiLocker redirect outcome (?digilocker=success|error|cancelled).
+    const dlParam = (location.hash.split('?')[1] || '').match(/digilocker=(\w+)/);
+    if (dlParam) {
+      const v = dlParam[1];
+      UI.toast(v === 'success' ? '✅ DigiLocker verification complete' : v === 'cancelled' ? 'DigiLocker verification cancelled' : 'DigiLocker verification could not be completed', v === 'success' ? 'ok' : 'err');
+      history.replaceState(null, '', location.pathname + '#/kyc');
+    }
+    const [d, reqs, dl] = await Promise.all([
       Api.get('/kyc').catch(() => ({ kyc_status: 'pending', documents: [] })),
       Api.get('/onboarding/requirements').catch(() => ({ requirements: [], mandatory_pending: 0 })),
+      Api.get('/digilocker/status').catch(() => ({ enabled: false })),
     ]);
     const rows = (d.documents || []).map(k => `<tr><td>${esc(k.doc_type)}</td><td>${esc(k.doc_number||'')}</td>
       <td>${UI.statusTag(k.status)}</td><td class="muted">${esc(k.remarks||'')}</td></tr>`).join('');
@@ -1190,6 +1198,10 @@ const Screens = {
       <div class="panel mt"><h2>Required for your role (${esc(reqs.role||State.user.role)})</h2>
         <div class="tbl-wrap"><table><thead><tr><th></th><th>Document</th><th></th></tr></thead>
         <tbody>${reqRows || '<tr><td colspan=3 class=muted>—</td></tr>'}</tbody></table></div></div>
+      ${dl.enabled ? `<div class="panel mt" style="max-width:560px"><h2>🪪 Verify with DigiLocker</h2>
+        <p class="muted">The official, government way — sign in on DigiLocker with your own Aadhaar/OTP and consent. Your name, DOB and verified identity are fetched securely and your KYC is approved automatically. Free.</p>
+        <button class="btn" onclick="Actions.startDigilocker()">Verify with DigiLocker →</button>
+        <div id="dl_out" class="muted" style="font-size:12px;margin-top:6px"></div></div>` : ''}
       <div class="panel mt" style="max-width:560px"><h2>⚡ Instant verification</h2>
         <p class="muted">Verify PAN and Aadhaar digitally — your KYC is approved automatically on a match.</p>
         <div class="sechead" style="margin-top:6px">PAN</div>
@@ -5428,6 +5440,14 @@ const Actions = {
       $('va_out').innerHTML = r.verified ? `<span style="color:#12a35a">✅ ${esc(r.message)}</span>` : `<span style="color:#c5342b">✕ ${esc(r.message)}</span>`;
       if (r.verified) { UI.toast('Aadhaar verified'); setTimeout(() => App.route(), 900); }
     } catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async startDigilocker() {
+    const out = $('dl_out'); if (out) out.innerHTML = '<span class="muted">Redirecting to DigiLocker…</span>';
+    try {
+      const r = await Api.post('/digilocker/start', { return_url: location.origin + location.pathname + '#/kyc?digilocker=success' });
+      if (r.authorize_url) window.location.href = r.authorize_url;
+      else { if (out) out.innerHTML = ''; UI.toast('Could not start DigiLocker', 'err'); }
+    } catch (err) { if (out) out.innerHTML = ''; UI.toast(err.message, 'err'); }
   },
   async verifyAadhaarOfflineNow() {
     const fileEl = $('ao_file'), out = $('ao_out');
