@@ -6131,7 +6131,9 @@ const Actions = {
           <input id="pc_wips" value="${esc(((c.extra||{}).webhook_ips||[]).join ? ((c.extra||{}).webhook_ips||[]).join(', ') : ((c.extra||{}).webhook_ips||''))}" placeholder="e.g. 13.235.0.0/16, 52.66.12.34"></div>
         <p class="muted" style="font-size:12px">Ask the provider for the IPs/CIDRs their webhook posts <b>from</b> (AeronPay → Partner Console → Developer → Whitelisting lists these). Callbacks from any other IP are rejected.</p>
       </div>
-      <div class="field"><label>Services this connection powers</label><div>${svcBoxes}</div></div>
+      <div class="field"><label>Services this connection powers</label>
+        <div style="margin:2px 0 4px"><a href="#" onclick="Actions.pcSelectAllServices(true);return false" style="font-size:12px">Select all</a> · <a href="#" onclick="Actions.pcSelectAllServices(false);return false" style="font-size:12px">none</a></div>
+        <div>${svcBoxes}</div></div>
       <div class="field"><label><input type="checkbox" id="pc_activate" checked> Make it the live provider for these services</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveConnection('${id || ''}')">Save connection</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
@@ -6204,6 +6206,11 @@ const Actions = {
         note: 'Sandbox — no credentials. Save to test the whole flow end-to-end, then swap in a live provider.' },
     })[dv];
   },
+  pcSelectAllServices(on) {
+    (Actions._pcServices || []).forEach(s => { const el = $('pc_svc_' + s.code); if (el) el.checked = !!on; });
+    // Fallback: toggle any pc_svc_* checkboxes present even if the list is empty.
+    document.querySelectorAll('[id^="pc_svc_"]').forEach(el => { el.checked = !!on; });
+  },
   async quickConnect() {
     const svcList = Actions._pcServices || ((await Api.get('/admin/services')).items.map(s => ({ code: s.code, name: s.name })));
     Actions._pcServices = svcList;
@@ -6241,6 +6248,7 @@ const Actions = {
       ${creds}
       ${D.partner ? `<div class="field"><label>${esc(D.partnerLabel)}</label><input id="pc_partner_id" placeholder="from your ${esc(D.label)} console"></div>` : ''}
       <details style="margin:6px 0"><summary class="muted" style="font-size:12px;cursor:pointer">Services — ${D.services.length} preselected (tap to change)</summary>
+        <div style="margin:6px 0 2px"><a href="#" onclick="Actions.pcSelectAllServices(true);return false" style="font-size:12px">Select all</a> · <a href="#" onclick="Actions.pcSelectAllServices(false);return false" style="font-size:12px">none</a></div>
         <div style="margin-top:6px">${svcBoxes}</div></details>
       <details style="margin:6px 0"><summary class="muted" style="font-size:12px;cursor:pointer">Advanced — endpoint &amp; webhook security</summary>
         <div class="field"><label>Base URL</label><input id="pc_base_url" value="${esc(D.base)}"></div>
