@@ -559,7 +559,9 @@ const App = {
       else if (!i.section) lastSection = null;
       return `${head}<a href="#/${i.key}" data-k="${i.key}" data-label="${esc((i.label || '').toLowerCase())} ${esc((i.section || '').toLowerCase())}">${i.label}</a>`;
     }).join('');
-    $('nav').innerHTML = `<input id="nav-search" class="nav-search" type="search" placeholder="🔍 Search features…" oninput="App.filterNav(this.value)" autocomplete="off">${navItems}`;
+    // name + ignore hints keep password managers from autofilling an email
+    // into the feature filter (which would otherwise hide the whole menu).
+    $('nav').innerHTML = `<input id="nav-search" class="nav-search" type="search" name="rbx-feature-filter" placeholder="🔍 Search features…" oninput="App.filterNav(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-autocomplete="none" data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other">${navItems}`;
     await App.refreshWallet();
     App.refreshNotifBadge();
     if (!App._notifTimer) App._notifTimer = setInterval(App.refreshNotifBadge, 60000);
@@ -591,9 +593,15 @@ const App = {
   },
   // Live-filter the sidebar menu by feature name / section.
   filterNav(q) {
-    const term = (q || '').trim().toLowerCase();
+    let term = (q || '').trim().toLowerCase();
+    // Ignore an email-like value (e.g. a password manager autofilling the box).
+    if (term.includes('@')) term = '';
     const links = document.querySelectorAll('#nav a');
-    links.forEach(a => { a.style.display = (!term || (a.dataset.label || '').includes(term)) ? '' : 'none'; });
+    // Fail-safe: if the term matches nothing, show the full menu instead of
+    // hiding every link (so the sidebar can never end up empty / "broken").
+    const anyMatch = !term || Array.from(links).some(a => (a.dataset.label || '').includes(term));
+    const eff = anyMatch ? term : '';
+    links.forEach(a => { a.style.display = (!eff || (a.dataset.label || '').includes(eff)) ? '' : 'none'; });
     // Hide a section header when none of its items match.
     document.querySelectorAll('#nav .nav-sec').forEach(sec => {
       let any = false;
