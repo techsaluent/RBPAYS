@@ -418,6 +418,7 @@ const NAV = [
   { key: 'profile', label: 'Profile', roles: '*' },
   { key: 'security', label: 'Security', roles: '*' },
   // Admin console — grouped into sidebar sections; each maps to a staff permission.
+  { key: 'golive', label: '🚀 Go-Live Readiness', roles: ['admin', 'staff'], perm: 'providers.manage', section: 'Go-Live' },
   { key: 'analytics', label: '📊 Analytics', roles: ['admin', 'staff'], section: 'Users & KYC' },
   { key: 'members', label: 'Users', roles: ['admin', 'staff'], perm: 'users.view', section: 'Users & KYC' },
   { key: 'kycreview', label: 'KYC Review', roles: ['admin', 'staff'], perm: 'kyc.review', section: 'Users & KYC' },
@@ -559,7 +560,9 @@ const App = {
       else if (!i.section) lastSection = null;
       return `${head}<a href="#/${i.key}" data-k="${i.key}" data-label="${esc((i.label || '').toLowerCase())} ${esc((i.section || '').toLowerCase())}">${i.label}</a>`;
     }).join('');
-    $('nav').innerHTML = `<input id="nav-search" class="nav-search" type="search" placeholder="🔍 Search features…" oninput="App.filterNav(this.value)" autocomplete="off">${navItems}`;
+    // name + ignore hints keep password managers from autofilling an email
+    // into the feature filter (which would otherwise hide the whole menu).
+    $('nav').innerHTML = `<input id="nav-search" class="nav-search" type="search" name="rbx-feature-filter" placeholder="🔍 Search features…" oninput="App.filterNav(this.value)" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-autocomplete="none" data-lpignore="true" data-1p-ignore data-bwignore data-form-type="other">${navItems}`;
     await App.refreshWallet();
     App.refreshNotifBadge();
     if (!App._notifTimer) App._notifTimer = setInterval(App.refreshNotifBadge, 60000);
@@ -591,9 +594,15 @@ const App = {
   },
   // Live-filter the sidebar menu by feature name / section.
   filterNav(q) {
-    const term = (q || '').trim().toLowerCase();
+    let term = (q || '').trim().toLowerCase();
+    // Ignore an email-like value (e.g. a password manager autofilling the box).
+    if (term.includes('@')) term = '';
     const links = document.querySelectorAll('#nav a');
-    links.forEach(a => { a.style.display = (!term || (a.dataset.label || '').includes(term)) ? '' : 'none'; });
+    // Fail-safe: if the term matches nothing, show the full menu instead of
+    // hiding every link (so the sidebar can never end up empty / "broken").
+    const anyMatch = !term || Array.from(links).some(a => (a.dataset.label || '').includes(term));
+    const eff = anyMatch ? term : '';
+    links.forEach(a => { a.style.display = (!eff || (a.dataset.label || '').includes(eff)) ? '' : 'none'; });
     // Hide a section header when none of its items match.
     document.querySelectorAll('#nav .nav-sec').forEach(sec => {
       let any = false;
@@ -826,6 +835,29 @@ const Screens = {
       const kycBanner = kstat !== 'verified'
         ? `<div class="msg ${kstat === 'rejected' ? 'err' : ''}" style="background:${kstat==='rejected'?'':'#fef7e0'};color:${kstat==='rejected'?'':'#b06000'}">
              🪪 Your KYC is <b>${esc(kstat)}</b> — verify PAN &amp; Aadhaar to lift your limit and unlock AEPS. <a href="#/kyc">Complete KYC →</a></div>` : '';
+      // Activation checklist — guides a new retailer to transaction-ready.
+      // Hidden once KYC is verified AND the wallet is funded.
+      const fundedOk = (w.wallet.balance_paise || 0) > 0;
+      const actStep = (done, cta, title, sub, href) => `
+        <div class="card" style="display:flex;gap:10px;align-items:flex-start">
+          <div style="font-size:18px">${done ? '✅' : '⬜'}</div>
+          <div><div class="k" style="margin:0">${esc(title)}</div>
+            <div class="muted" style="font-size:12px">${sub}</div>
+            ${!done && href ? `<a class="btn sm mt" href="${href}">${esc(cta)}</a>` : ''}</div>
+        </div>`;
+      const doneCount = 1 + (kstat === 'verified' ? 1 : 0) + (fundedOk ? 1 : 0);
+      const activationCard = (kstat === 'verified' && fundedOk) ? '' : `
+        <div class="panel" style="border-left:4px solid var(--accent,#7C3AED)">
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <h2 style="margin:0">🚀 Get ready to transact</h2>
+            <span class="muted" style="font-size:12px">${doneCount}/4 steps</span></div>
+          <div class="grid cards">
+            ${actStep(true, '', 'Account created', "You're signed in", '')}
+            ${actStep(kstat === 'verified', 'Verify now', 'Complete KYC', kstat === 'verified' ? 'Verified' : 'PAN, Aadhaar or GSTIN', '#/kyc')}
+            ${actStep(fundedOk, 'Add money', 'Fund your wallet', fundedOk ? money(w.wallet.balance) + ' available' : 'Load money to start', '#/addmoney')}
+            ${actStep(false, 'Start now', 'Run a transaction', 'Recharge, BBPS, DMT, AePS…', '#/new')}
+          </div>
+        </div>`;
       const sw = w.sub_wallets || { settlement: '0.00', commission: '0.00' };
       const s = st || {};
       const wl = w.wallet;
@@ -834,6 +866,7 @@ const Screens = {
       const openDisputes = (dp.items || []).filter(d => ['open','in_review'].includes(d.status)).slice(0, 4);
       $('view').innerHTML = `
         ${kycBanner}
+        ${activationCard}
         <div class="stats">
           ${UI.stat('b','👛','Wallet balance', money(wl.balance), `Available <b>${money(avail)}</b> · Held ${money(held)}`)}
           ${UI.stat('p','💳','Today\'s business', money((s.today_amount_paise||0)/100), `<b>${s.today_count||0}</b> transactions`)}
@@ -1723,6 +1756,63 @@ const Screens = {
         <button class="btn sm" onclick="Actions.addRule('${sel}')">+ Add rule</button></div>
       <div class="tbl-wrap mt"><table><thead><tr><th>Service</th><th>Slab</th><th>Charge</th><th>Commission (R/D/MD/A)</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan=5 class=muted>No rules — add one so commissions apply</td></tr>'}</tbody></table></div></div>`;
+  },
+
+  // Go-Live cockpit: one view of what's configured vs missing for retailers
+  // to transact, with jump-links to fix each gap.
+  async golive() {
+    const r = await Api.get('/admin/readiness');
+    const dot = (ok, warn) => ok ? '<span style="color:#12a35a">●</span>' : warn ? '<span style="color:#b8860b">●</span>' : '<span style="color:#c5342b">●</span>';
+    const yn = (ok) => ok ? '<span class="tag active">yes</span>' : '<span class="tag blocked">no</span>';
+    const su = r.summary;
+    const svcRows = r.services.map(s => `<tr>
+      <td>${dot(s.ready, s.enabled && !s.has_provider)} ${esc(s.name)} <span class="muted" style="font-size:11px">${esc(s.code)}</span></td>
+      <td>${s.enabled ? '<span class="tag active">on</span>' : '<span class="tag blocked">off</span>'}</td>
+      <td>${s.has_provider ? '<span class="tag active">linked</span>' : '<span class="tag blocked">none</span>'}</td>
+      <td>${s.ready ? '<b style="color:#12a35a">Ready</b>' : s.enabled ? '<span style="color:#b8860b">Needs a provider</span>' : '<span class="muted">Off</span>'}</td>
+      <td><button class="btn sm ghost" onclick="location.hash='#/providers';Actions._provService='${s.code}'">Providers</button></td>
+    </tr>`).join('');
+    const overall = r.overall_ready
+      ? '<span class="tag active" style="font-size:14px">✅ Ready to transact</span>'
+      : '<span class="tag blocked" style="font-size:14px">⚠️ Not fully ready</span>';
+    $('view').innerHTML = `
+      <div class="panel"><div class="row" style="justify-content:space-between;align-items:center">
+        <h2 style="margin:0">🚀 Go-Live Readiness</h2>${overall}</div>
+        <p class="muted">What's configured vs missing before retailers can transact. A service is <b>Ready</b> only when it's switched on <i>and</i> has an active provider linked.</p>
+        <div class="grid cards">
+          <div class="card"><div class="k">Services ready</div><div class="v">${su.ready} / ${su.total}</div>
+            <div class="muted" style="font-size:12px">${su.enabled} on · ${su.with_provider} with a provider</div></div>
+          <div class="card"><div class="k">Provider connections</div><div class="v">${r.provider_connections}</div>
+            <div class="muted" style="font-size:12px"><a href="#/providerconnections">Manage →</a></div></div>
+          <div class="card"><div class="k">Retailers</div><div class="v">${r.members.retailers}</div>
+            <div class="muted" style="font-size:12px">${r.members.kyc_verified} KYC-verified · ${r.members.funded} funded</div></div>
+        </div>
+        <div class="row" style="gap:8px;margin-top:10px">
+          <button class="btn sm" onclick="Actions.makeDemoRetailer()">🧪 Create ready-to-test retailer</button>
+          <span class="muted" style="font-size:12px;align-self:center">KYC-verified, wallet funded ₹50,000 — log in and run test transactions.</span>
+        </div>
+        <div id="demo_out" style="font-size:12px;margin-top:6px"></div>
+      </div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">Delivery & KYC</h3></div>
+        <table style="max-width:420px"><tbody>
+          <tr><td>${dot(r.messaging.email||r.messaging.sms||r.messaging.whatsapp)} OTP delivery (Email / SMS / WhatsApp)</td>
+            <td class="right">${yn(r.messaging.email||r.messaging.sms||r.messaging.whatsapp)}</td></tr>
+          <tr><td style="padding-left:18px" class="muted">· Email ${yn(r.messaging.email)} · SMS ${yn(r.messaging.sms)} · WhatsApp ${yn(r.messaging.whatsapp)}</td><td></td></tr>
+          <tr><td>${dot(r.kyc)} KYC verification provider</td><td class="right">${yn(r.kyc)}</td></tr>
+        </tbody></table>
+        <p class="muted" style="font-size:12px">Configure these under <a href="#/integrations">API Hub</a>. At least one OTP channel is needed for login/sign-up OTP.</p>
+      </div>
+      <div class="panel mt"><div class="row" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">Services (${su.ready}/${su.total} ready)</h3>
+        <div class="row" style="gap:8px">
+          <button class="btn sm" onclick="Actions.enableAllServices()">Enable all services</button>
+          <button class="btn sm ghost" onclick="Actions.sandboxAll()">Add Sandbox to unlinked</button>
+          <a class="btn sm ghost" href="#/providerconnections">Link a real provider →</a></div></div>
+        <div class="tbl-wrap"><table><thead><tr><th>Service</th><th>On</th><th>Provider</th><th>Status</th><th></th></tr></thead>
+        <tbody>${svcRows}</tbody></table></div>
+        <p class="muted" style="font-size:12px">“Enable all” only switches services on — each still needs an active provider to transact. Use <a href="#/providerconnections">Provider Connections</a> to link one credential to many services at once.</p>
+      </div>`;
   },
 
   async adminservices() {
@@ -5373,6 +5463,28 @@ const Actions = {
     try { await Api.patch(`/admin/services/${code}`, { enabled }); App.route(); }
     catch (err) { UI.toast(err.message, 'err'); }
   },
+  async enableAllServices() {
+    if (!confirm('Switch ON every service? Each still needs an active provider to actually transact.')) return;
+    try { const r = await Api.post('/admin/services/enable-all', {}); UI.toast(`Enabled ${r.enabled_count} service(s)`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async sandboxAll() {
+    if (!confirm('Attach the built-in Sandbox (test) provider to every service that has no active provider? This makes the whole platform testable immediately. Replace with a real provider before going live.')) return;
+    try { const r = await Api.post('/admin/providers/sandbox-all', {}); UI.toast(`Sandbox added to ${r.added} service(s)`); App.route(); }
+    catch (err) { UI.toast(err.message, 'err'); }
+  },
+  async makeDemoRetailer() {
+    const out = $('demo_out'); if (out) out.innerHTML = '<span class="muted">Setting up…</span>';
+    try {
+      const r = await Api.post('/admin/demo-retailer', {});
+      if (out) out.innerHTML = `<div class="panel" style="padding:10px;margin-top:4px">
+        <b>${r.created ? '✅ Demo retailer created' : 'ℹ️ Demo retailer ready'}</b> — log in at the main panel:<br>
+        Email: <b>${esc(r.email)}</b> · Phone: <b>${esc(r.phone)}</b> · Password: <b>${esc(r.password)}</b><br>
+        KYC: <b>${esc(r.kyc_status)}</b> · Wallet: <b>${money(r.wallet_rupees)}</b><br>
+        <span class="muted">Tip: in Sandbox, ₹13 → failed, ₹7 → pending, any other amount → success.</span></div>`;
+      UI.toast('Demo retailer ready');
+    } catch (err) { if (out) out.innerHTML = ''; UI.toast(err.message, 'err'); }
+  },
   setServiceLimits(code, minPaise, maxRupees) {
     UI.modal(`<h3>Commission limits — ${esc(code)}</h3>
       <p class="muted">Total commission distributed per transaction must fall between these bounds (in ₹). Leave max blank for no ceiling.</p>
@@ -6043,7 +6155,9 @@ const Actions = {
           <input id="pc_wips" value="${esc(((c.extra||{}).webhook_ips||[]).join ? ((c.extra||{}).webhook_ips||[]).join(', ') : ((c.extra||{}).webhook_ips||''))}" placeholder="e.g. 13.235.0.0/16, 52.66.12.34"></div>
         <p class="muted" style="font-size:12px">Ask the provider for the IPs/CIDRs their webhook posts <b>from</b> (AeronPay → Partner Console → Developer → Whitelisting lists these). Callbacks from any other IP are rejected.</p>
       </div>
-      <div class="field"><label>Services this connection powers</label><div>${svcBoxes}</div></div>
+      <div class="field"><label>Services this connection powers</label>
+        <div style="margin:2px 0 4px"><a href="#" onclick="Actions.pcSelectAllServices(true);return false" style="font-size:12px">Select all</a> · <a href="#" onclick="Actions.pcSelectAllServices(false);return false" style="font-size:12px">none</a></div>
+        <div>${svcBoxes}</div></div>
       <div class="field"><label><input type="checkbox" id="pc_activate" checked> Make it the live provider for these services</label></div>
       <div class="foot"><button class="btn" onclick="Actions.saveConnection('${id || ''}')">Save connection</button>
         <button class="btn ghost" onclick="UI.closeModal()">Cancel</button></div>`);
@@ -6116,6 +6230,11 @@ const Actions = {
         note: 'Sandbox — no credentials. Save to test the whole flow end-to-end, then swap in a live provider.' },
     })[dv];
   },
+  pcSelectAllServices(on) {
+    (Actions._pcServices || []).forEach(s => { const el = $('pc_svc_' + s.code); if (el) el.checked = !!on; });
+    // Fallback: toggle any pc_svc_* checkboxes present even if the list is empty.
+    document.querySelectorAll('[id^="pc_svc_"]').forEach(el => { el.checked = !!on; });
+  },
   async quickConnect() {
     const svcList = Actions._pcServices || ((await Api.get('/admin/services')).items.map(s => ({ code: s.code, name: s.name })));
     Actions._pcServices = svcList;
@@ -6153,6 +6272,7 @@ const Actions = {
       ${creds}
       ${D.partner ? `<div class="field"><label>${esc(D.partnerLabel)}</label><input id="pc_partner_id" placeholder="from your ${esc(D.label)} console"></div>` : ''}
       <details style="margin:6px 0"><summary class="muted" style="font-size:12px;cursor:pointer">Services — ${D.services.length} preselected (tap to change)</summary>
+        <div style="margin:6px 0 2px"><a href="#" onclick="Actions.pcSelectAllServices(true);return false" style="font-size:12px">Select all</a> · <a href="#" onclick="Actions.pcSelectAllServices(false);return false" style="font-size:12px">none</a></div>
         <div style="margin-top:6px">${svcBoxes}</div></details>
       <details style="margin:6px 0"><summary class="muted" style="font-size:12px;cursor:pointer">Advanced — endpoint &amp; webhook security</summary>
         <div class="field"><label>Base URL</label><input id="pc_base_url" value="${esc(D.base)}"></div>
